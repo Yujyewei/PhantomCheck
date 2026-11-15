@@ -1,0 +1,18 @@
+# 機密檔案——永遠不進倉庫
+local.properties
+*.keystore
+*.jks
+google-services.json
+
+# 建置產物
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
