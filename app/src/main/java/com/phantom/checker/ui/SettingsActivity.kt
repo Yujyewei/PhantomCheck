@@ -962,7 +962,7 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                                         ctx,
                                         { _, h, m ->
                                             quietStartMinute = h * 60 + m
-                                            PhantomPrefs.setQuietHoursStartMinute(appCtx, quietStartMinute)
+                                            PhantomPrefs.setQuietHoursRange(appCtx, quietStartMinute, quietEndMinute)
                                         },
                                         quietStartMinute / 60,
                                         quietStartMinute % 60,
@@ -986,7 +986,7 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                                         ctx,
                                         { _, h, m ->
                                             quietEndMinute = h * 60 + m
-                                            PhantomPrefs.setQuietHoursEndMinute(appCtx, quietEndMinute)
+                                            PhantomPrefs.setQuietHoursRange(appCtx, quietStartMinute, quietEndMinute)
                                         },
                                         quietEndMinute / 60,
                                         quietEndMinute % 60,
