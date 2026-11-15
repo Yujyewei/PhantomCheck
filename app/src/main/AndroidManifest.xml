@@ -6,6 +6,16 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:label="幻訊"
@@ -26,6 +36,17 @@
         <activity android:name=".ui.ApiKeySettingsActivity" android:exported="false" />
         <activity android:name=".ui.AppThreadsActivity" android:exported="false" />
         <activity android:name=".ui.ConversationActivity" android:exported="false" />
+        <activity android:name=".ui.MessageDetailActivity" android:exported="false" />
+        <activity android:name=".ui.TagManagementActivity" android:exported="false" />
+
+        <service
+            android:name=".service.StatsForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="persistent_message_stats" />
+        </service>
 
         <service
             android:name=".service.NotificationCollectorService"

@@ -1,9 +1,17 @@
 package com.phantom.checker.ui
 
+import android.app.TimePickerDialog
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,23 +35,28 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,23 +66,145 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.room.withTransaction
+import com.phantom.checker.data.AppGroupRow
 import com.phantom.checker.data.FilterRule
 import com.phantom.checker.service.AppDatabaseHolder
-import com.phantom.checker.service.NotificationCollectorService
+import com.phantom.checker.service.DailySummaryPolicy
 import com.phantom.checker.service.RetentionConfig
 import com.phantom.checker.service.RetentionPolicy
+import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.ui.components.FluidSwitch
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.glassSource
 import com.phantom.checker.ui.components.pressableScale
+import com.phantom.checker.util.FontScaleMode
 import com.phantom.checker.util.MessageExporter
+import com.phantom.checker.util.MuteMode
+import com.phantom.checker.util.NotifClickBehavior
 import com.phantom.checker.util.PhantomPrefs
 import com.phantom.checker.util.PresetKeywords
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.math.roundToInt
+
+private data class InstalledAppInfo(
+    val packageName: String,
+    val label: String
+)
+
+private data class OemGuideInfo(
+    val brandTitle: String,
+    val steps: String,
+    val intents: List<Intent>
+)
+
+private fun buildOemGuide(ctx: Context): OemGuideInfo {
+    val manufacturer = Build.MANUFACTURER.lowercase(Locale.US)
+    val pkg = ctx.packageName
+    val appDetailsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.parse("package:$pkg")
+    }
+    return when {
+        manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco") ->
+            OemGuideInfo(
+                brandTitle = "小米 / Redmi / POCO（HyperOS / MIUI）保活指引",
+                steps = "1. 開啟「自啟動」權限\n2. 省電策略改為「無限制」\n3. 最近任務下拉鎖定幻訊卡片",
+                intents = listOf(
+                    Intent().setComponent(
+                        ComponentName(
+                            "com.miui.securitycenter",
+                            "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                        )
+                    ),
+                    appDetailsIntent
+                )
+            )
+        manufacturer.contains("samsung") ->
+            OemGuideInfo(
+                brandTitle = "Samsung（One UI）保活指引",
+                steps = "前往「設定 → 電池 → 背景使用限制 → 永不休眠的應用程式」，將幻訊加入名單。",
+                intents = listOf(
+                    Intent("com.samsung.android.sm.ACTION_OPEN_APP_BATTERY_USAGE"),
+                    appDetailsIntent
+                )
+            )
+        manufacturer.contains("huawei") || manufacturer.contains("honor") ->
+            OemGuideInfo(
+                brandTitle = "華為 / 榮耀（EMUI / MagicOS）保活指引",
+                steps = "前往「手機管家 → 應用程式啟動管理」，關閉幻訊自動管理並開啟「允許自啟動／關聯啟動／背景活動」三開關。",
+                intents = listOf(
+                    Intent().setComponent(
+                        ComponentName(
+                            "com.huawei.systemmanager",
+                            "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"
+                        )
+                    ),
+                    appDetailsIntent
+                )
+            )
+        manufacturer.contains("oppo") || manufacturer.contains("realme") || manufacturer.contains("oneplus") ->
+            OemGuideInfo(
+                brandTitle = "OPPO / realme / OnePlus（ColorOS）保活指引",
+                steps = "開啟「自啟動」並於電池設定中允許「完全背景行為」。",
+                intents = listOf(
+                    Intent().setComponent(
+                        ComponentName(
+                            "com.coloros.safecenter",
+                            "com.coloros.safecenter.permission.startup.StartupAppListActivity"
+                        )
+                    ),
+                    appDetailsIntent
+                )
+            )
+        manufacturer.contains("vivo") || manufacturer.contains("iqoo") ->
+            OemGuideInfo(
+                brandTitle = "vivo / iQOO（OriginOS / FuntouchOS）保活指引",
+                steps = "前往「i 管家 → 應用程式管理 → 權限管理 → 自啟動」，開啟幻訊自啟動與高耗電背景執行。",
+                intents = listOf(
+                    Intent().setComponent(
+                        ComponentName(
+                            "com.iqoo.secure",
+                            "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
+                        )
+                    ),
+                    appDetailsIntent
+                )
+            )
+        else ->
+            OemGuideInfo(
+                brandTitle = "系統背景保活建議",
+                steps = "請在「應用程式資訊 → 電池」中將幻訊設為「無限制」或「不受電池最佳化限制」，避免系統凍結統計服務。",
+                intents = listOf(appDetailsIntent)
+            )
+    }
+}
+
+private fun tryLaunchIntents(ctx: Context, intents: List<Intent>) {
+    for (intent in intents) {
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            return
+        } catch (_: Exception) {
+        }
+    }
+}
+
+private fun isIgnoringBatteryOptimizations(ctx: Context): Boolean {
+    val pm = ctx.getSystemService(PowerManager::class.java) ?: return true
+    return pm.isIgnoringBatteryOptimizations(ctx.packageName)
+}
 
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,27 +225,149 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // 規則與資料
     var rules by remember { mutableStateOf(listOf<FilterRule>()) }
+    var appGroups by remember { mutableStateOf(listOf<AppGroupRow>()) }
     var newKeyword by remember { mutableStateOf("") }
+    var newRuleAction by remember { mutableStateOf(FilterRule.ACTION_FILTER) }
     var isAllApps by remember { mutableStateOf(true) }
     var targetPackageName by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(true) }
-    var isExporting by remember { mutableStateOf(false) }
+    var isLoadingRules by remember { mutableStateOf(true) }
     var showPresetDialog by remember { mutableStateOf(false) }
     var isImportingPresets by remember { mutableStateOf(false) }
-    var retentionDays by remember { mutableIntStateOf(RetentionConfig.getRetentionDays(appCtx)) }
+
+    // 通知設定
     var persistentStats by remember { mutableStateOf(PhantomPrefs.isPersistentStatsEnabled(appCtx)) }
+    var scamAlertNotif by remember { mutableStateOf(PhantomPrefs.isScamAlertNotifEnabled(appCtx)) }
     var recordOngoing by remember { mutableStateOf(PhantomPrefs.isRecordOngoingEnabled(appCtx)) }
+    var clickBehavior by remember { mutableStateOf(PhantomPrefs.getNotifClickBehavior(appCtx)) }
+    var throttleSec by remember { mutableFloatStateOf(PhantomPrefs.getSameKeyThrottleSeconds(appCtx).toFloat()) }
+    var alertKeywords by remember { mutableStateOf(PhantomPrefs.getAlertKeywords(appCtx)) }
+    var newAlertKeyword by remember { mutableStateOf("") }
+
+    // AI 與分析設定
+    var aiRiskEnabled by remember { mutableStateOf(PhantomPrefs.isAiRiskEnabled(appCtx)) }
+    var dailyAiLimit by remember { mutableIntStateOf(PhantomPrefs.getDailyAiLimit(appCtx)) }
+    val todayAiUsage = remember { PhantomPrefs.getTodayAiUsage(appCtx) }
+    var dailySummaryEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryEnabled(appCtx)) }
+    var summaryHour by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryHour(appCtx)) }
+    var summaryMinute by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryMinute(appCtx)) }
+
+    // 資料與靜音管理
+    var retentionDays by remember { mutableIntStateOf(RetentionConfig.getRetentionDays(appCtx)) }
+    var retentionMaxCount by remember { mutableIntStateOf(PhantomPrefs.getRetentionMaxCount(appCtx)) }
     var mutedApps by remember { mutableStateOf(PhantomPrefs.getMutedApps(appCtx).sorted()) }
-    var newMutedPkg by remember { mutableStateOf("") }
+    var muteModes by remember { mutableStateOf(PhantomPrefs.getAppMuteModeMap(appCtx)) }
+    var showAppPickerDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var isExporting by remember { mutableStateOf(false) }
+    var showDeleteAllConfirm by remember { mutableStateOf(false) }
+
+    // 外觀
     val currentThemeMode = ThemePreferences.getThemeMode(appCtx)
+    val dynamicColorEnabled = ThemePreferences.isDynamicColor(appCtx)
+    val fontScaleMode = ThemePreferences.getFontScaleMode(appCtx)
+
+    // 保持運作狀態
+    var listenerEnabled by remember {
+        mutableStateOf(NotificationManagerCompat.getEnabledListenerPackages(appCtx).contains(appCtx.packageName))
+    }
+    var batteryWhitelisted by remember { mutableStateOf(isIgnoringBatteryOptimizations(appCtx)) }
+    val oemGuide = remember { buildOemGuide(appCtx) }
+
+    val lifecycleOwner = ctx as? LifecycleOwner
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                listenerEnabled = NotificationManagerCompat.getEnabledListenerPackages(appCtx)
+                    .contains(appCtx.packageName)
+                batteryWhitelisted = isIgnoringBatteryOptimizations(appCtx)
+                mutedApps = PhantomPrefs.getMutedApps(appCtx).sorted()
+                muteModes = PhantomPrefs.getAppMuteModeMap(appCtx)
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
+    }
 
     LaunchedEffect(Unit) {
-        isLoading = true
-        rules = withContext(Dispatchers.IO) {
-            AppDatabaseHolder.db(appCtx).filterDao().all()
+        isLoadingRules = true
+        withContext(Dispatchers.IO) {
+            val db = AppDatabaseHolder.db(appCtx)
+            rules = db.filterDao().all()
+            appGroups = db.messageDao().groupByApp()
         }
-        isLoading = false
+        isLoadingRules = false
+    }
+
+    if (showAppPickerDialog) {
+        AppMutePickerDialog(
+            currentlyMuted = mutedApps.toSet(),
+            onDismiss = { showAppPickerDialog = false },
+            onSelectApp = { pkg, mode ->
+                PhantomPrefs.setAppMuted(appCtx, pkg, true, mode)
+                mutedApps = PhantomPrefs.getMutedApps(appCtx).sorted()
+                muteModes = PhantomPrefs.getAppMuteModeMap(appCtx)
+                showAppPickerDialog = false
+                scope.launch { snackbarHostState.showSnackbar("已將 $pkg 設為靜音（${mode.label}）") }
+            }
+        )
+    }
+
+    if (showExportDialog) {
+        ExportCsvDialog(
+            appGroups = appGroups,
+            onDismiss = { showExportDialog = false },
+            onConfirm = { pkg, daysBack ->
+                showExportDialog = false
+                if (isExporting) return@ExportCsvDialog
+                scope.launch {
+                    isExporting = true
+                    val result = MessageExporter.exportToDownloads(appCtx, pkg, daysBack)
+                    isExporting = false
+                    result.onSuccess { fileName ->
+                        snackbarHostState.showSnackbar("匯出成功：$fileName")
+                    }.onFailure { err ->
+                        val reason = err.localizedMessage?.takeIf { it.isNotBlank() } ?: err.javaClass.simpleName
+                        snackbarHostState.showSnackbar("匯出失敗：$reason")
+                    }
+                }
+            }
+        )
+    }
+
+    if (showDeleteAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAllConfirm = false },
+            title = { Text("刪除全部訊息", color = MaterialTheme.colorScheme.error) },
+            text = { Text("確定要永久刪除所有攔截到的訊息與標籤關聯嗎？此操作無法復原。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteAllCrossRefs()
+                                    db.messageDao().deleteAll()
+                                }
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            }
+                            showDeleteAllConfirm = false
+                            snackbarHostState.showSnackbar("已刪除全部訊息")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認全部刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     if (showPresetDialog) {
@@ -166,7 +423,8 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                                             FilterRule(
                                                 keyword = kw,
                                                 isActive = true,
-                                                packageName = null
+                                                packageName = null,
+                                                action = FilterRule.ACTION_FILTER
                                             )
                                         )
                                         addedCount++
@@ -204,13 +462,10 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("過濾與進階設定") },
+                title = { Text("全部設定") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 }
             )
@@ -225,228 +480,355 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                 .glassSource(glassState)
                 .padding(padding)
                 .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                OutlinedButton(
-                    onClick = {
-                        ctx.startActivity(Intent(ctx, AutoReplySettingsActivity::class.java))
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("SMS 自動回覆設定")
-                }
-            }
-
-            item {
-                OutlinedButton(
-                    onClick = {
-                        if (isExporting) return@OutlinedButton
-                        scope.launch {
-                            isExporting = true
-                            val result = MessageExporter.exportToDownloads(appCtx)
-                            isExporting = false
-                            result.onSuccess { fileName ->
-                                snackbarHostState.showSnackbar("匯出成功：$fileName")
-                            }.onFailure { err ->
-                                val reason = err.localizedMessage?.takeIf { it.isNotBlank() }
-                                    ?: err.javaClass.simpleName
-                                snackbarHostState.showSnackbar("匯出失敗：$reason")
-                            }
-                        }
-                    },
-                    enabled = !isExporting,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text(if (isExporting) "匯出中…" else "匯出訊息 CSV")
-                }
-            }
-
+            // 1. 通知分組卡
             item {
                 GlassCard(
                     glassState = glassState,
                     modifier = Modifier.fillMaxWidth(),
                     cornerRadius = 20.dp,
-                    contentPadding = 12.dp
+                    contentPadding = 14.dp
                 ) {
-                    Text(
-                        text = "通知攔截與統計設定",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("常駐統計通知", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "在通知欄即時顯示今日訊息、未讀與詐騙數量",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        FluidSwitch(
-                            checked = persistentStats,
-                            onCheckedChange = { checked ->
-                                persistentStats = checked
-                                PhantomPrefs.setPersistentStatsEnabled(appCtx, checked)
-                                NotificationCollectorService.requestStatsUpdate(appCtx)
-                            }
-                        )
-                    }
+                    Text("通知", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("記錄持續性通知", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "關閉時略過系統/前景服務等持續刷新通知（如流量監控）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
+
+                    SettingSwitchRow(
+                        title = "常駐統計通知",
+                        subtitle = "以獨立前景服務維持通知欄即時統計",
+                        checked = persistentStats,
+                        onCheckedChange = { checked ->
+                            persistentStats = checked
+                            PhantomPrefs.setPersistentStatsEnabled(appCtx, checked)
+                            if (checked) {
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            } else {
+                                StatsForegroundService.stop(appCtx)
+                            }
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "詐騙警示彈出通知",
+                        subtitle = "偵測到 scam 高風險訊息時立即推送通知",
+                        checked = scamAlertNotif,
+                        onCheckedChange = { checked ->
+                            scamAlertNotif = checked
+                            PhantomPrefs.setScamAlertNotifEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "記錄持續性通知",
+                        subtitle = "關閉時略過系統／前景服務等持續刷新的通知",
+                        checked = recordOngoing,
+                        onCheckedChange = { checked ->
+                            recordOngoing = checked
+                            PhantomPrefs.setRecordOngoingEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    Text("通知點擊行為", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NotifClickBehavior.entries.forEach { behavior ->
+                            FilterChip(
+                                selected = clickBehavior == behavior,
+                                onClick = {
+                                    clickBehavior = behavior
+                                    PhantomPrefs.setNotifClickBehavior(appCtx, behavior)
+                                },
+                                label = { Text(behavior.label) }
                             )
                         }
-                        Spacer(Modifier.width(8.dp))
-                        FluidSwitch(
-                            checked = recordOngoing,
-                            onCheckedChange = { checked ->
-                                recordOngoing = checked
-                                PhantomPrefs.setRecordOngoingEnabled(appCtx, checked)
-                            }
-                        )
                     }
-                }
-            }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
-            item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 12.dp
-                ) {
+                    val secInt = throttleSec.roundToInt()
                     Text(
-                        text = "App 管理（靜音清單）",
-                        style = MaterialTheme.typography.titleSmall
+                        text = if (secInt == 0) "同 key 更新節流：已關閉" else "同 key 更新節流：$secInt 秒",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
                     )
-                    Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "靜音名單內的 App 通知將完全不記錄；也可於主畫面長按 App 卡片快速切換。",
+                        text = "避免監控類通知（如流量統計）在短時間內重複洗版",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Slider(
+                        value = throttleSec,
+                        onValueChange = { throttleSec = it },
+                        onValueChangeFinished = {
+                            PhantomPrefs.setSameKeyThrottleSeconds(appCtx, throttleSec.roundToInt())
+                        },
+                        valueRange = 0f..300f,
+                        steps = 29
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    Text(
+                        text = "即時提醒關鍵字（${alertKeywords.size}/${PhantomPrefs.MAX_ALERT_KEYWORDS}）",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "獨立於過濾規則，命中即發送高優先「🔔 重要訊息」通知",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                    Spacer(Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedTextField(
-                            value = newMutedPkg,
-                            onValueChange = { newMutedPkg = it },
+                            value = newAlertKeyword,
+                            onValueChange = { newAlertKeyword = it },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
-                            placeholder = { Text("輸入 Package 名稱（例如 com.example.app）") }
+                            placeholder = { Text("輸入重要提醒關鍵字…") }
                         )
                         Spacer(Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                val pkg = newMutedPkg.trim()
-                                if (pkg.isNotEmpty()) {
-                                    PhantomPrefs.setAppMuted(appCtx, pkg, true)
-                                    mutedApps = PhantomPrefs.getMutedApps(appCtx).sorted()
-                                    newMutedPkg = ""
+                                if (PhantomPrefs.addAlertKeyword(appCtx, newAlertKeyword)) {
+                                    alertKeywords = PhantomPrefs.getAlertKeywords(appCtx)
+                                    newAlertKeyword = ""
+                                } else {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("關鍵字重複或已達 20 組上限")
+                                    }
                                 }
                             },
-                            enabled = newMutedPkg.isNotBlank()
+                            enabled = newAlertKeyword.isNotBlank() &&
+                                alertKeywords.size < PhantomPrefs.MAX_ALERT_KEYWORDS
                         ) {
-                            Text("靜音")
+                            Text("新增")
+                        }
+                    }
+                    if (alertKeywords.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            alertKeywords.forEach { kw ->
+                                FilterChip(
+                                    selected = true,
+                                    onClick = {
+                                        PhantomPrefs.removeAlertKeyword(appCtx, kw)
+                                        alertKeywords = PhantomPrefs.getAlertKeywords(appCtx)
+                                    },
+                                    label = { Text("$kw ✕") }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. AI 與分析分組卡
+            item {
+                GlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text("AI 與分析", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(Intent(ctx, ApiKeySettingsActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("多 Provider AI 與 API Key 設定")
+                    }
+                    Spacer(Modifier.height(10.dp))
+
+                    SettingSwitchRow(
+                        title = "AI 風險分析",
+                        subtitle = "內文滿 10 字元且未命中過濾規則時自動評估風險",
+                        checked = aiRiskEnabled,
+                        onCheckedChange = { checked ->
+                            aiRiskEnabled = checked
+                            PhantomPrefs.setAiRiskEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    Text(
+                        text = "每日 AI 分析上限（今日已用 $todayAiUsage 次）",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0, 20, 50, 100).forEach { limit ->
+                            FilterChip(
+                                selected = dailyAiLimit == limit,
+                                onClick = {
+                                    dailyAiLimit = limit
+                                    PhantomPrefs.setDailyAiLimit(appCtx, limit)
+                                },
+                                label = { Text(if (limit == 0) "不限" else "$limit 則") }
+                            )
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "每日 AI 摘要",
+                        subtitle = String.format(Locale.getDefault(), "排程時間：每日 %02d:%02d", summaryHour, summaryMinute),
+                        checked = dailySummaryEnabled,
+                        onCheckedChange = { checked ->
+                            dailySummaryEnabled = checked
+                            PhantomPrefs.setDailySummaryEnabled(appCtx, checked)
+                            DailySummaryPolicy.schedule(appCtx)
+                        }
+                    )
+                    if (dailySummaryEnabled) {
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(
+                            onClick = {
+                                TimePickerDialog(
+                                    ctx,
+                                    { _, h, m ->
+                                        summaryHour = h
+                                        summaryMinute = m
+                                        PhantomPrefs.setDailySummaryTime(appCtx, h, m)
+                                        DailySummaryPolicy.schedule(appCtx)
+                                    },
+                                    summaryHour,
+                                    summaryMinute,
+                                    true
+                                ).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(String.format(Locale.getDefault(), "調整摘要排程時間（%02d:%02d）", summaryHour, summaryMinute))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(Intent(ctx, AutoReplySettingsActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("SMS 自動回覆設定")
+                    }
+                }
+            }
+
+            // 3. 資料管理分組卡
+            item {
+                GlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text("資料管理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(Intent(ctx, TagManagementActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("自訂標籤管理")
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = { showExportDialog = true },
+                        enabled = !isExporting,
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text(if (isExporting) "匯出中…" else "匯出訊息 CSV（可選範圍）")
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+
+                    // App 靜音清單
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("App 靜音清單", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(
+                                "已靜音 App 可選擇完全不記錄或僅靜默記錄（不影響既有歷史訊息）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { showAppPickerDialog = true }) {
+                            Text("選擇 App")
                         }
                     }
                     if (mutedApps.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         mutedApps.forEach { pkg ->
+                            val mode = MuteMode.fromPref(muteModes[pkg])
+                            val appLabel = remember(pkg) {
+                                try {
+                                    ctx.packageManager.getApplicationLabel(
+                                        ctx.packageManager.getApplicationInfo(pkg, 0)
+                                    ).toString()
+                                } catch (_: Exception) {
+                                    pkg
+                                }
+                            }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text(
-                                    text = pkg,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AppIconImage(
+                                        packageName = pkg,
+                                        contentDescription = appLabel,
+                                        size = 32.dp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = appLabel,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = mode.label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
                                 TextButton(onClick = {
                                     PhantomPrefs.setAppMuted(appCtx, pkg, false)
                                     mutedApps = PhantomPrefs.getMutedApps(appCtx).sorted()
+                                    muteModes = PhantomPrefs.getAppMuteModeMap(appCtx)
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("已解除靜音：$appLabel")
+                                    }
                                 }) {
                                     Text("解除靜音")
                                 }
                             }
                         }
                     }
-                }
-            }
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
-            item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 12.dp
-                ) {
-                    Text(
-                        text = "外觀主題",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ThemeMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = currentThemeMode == mode,
-                                onClick = { ThemePreferences.setThemeMode(appCtx, mode) },
-                                label = { Text(mode.label) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 12.dp
-                ) {
-                    Text(
-                        text = "訊息保留天數",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "超過保留天數的舊訊息將每日自動清理（詐騙警示記錄將永久保留）。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    // 保留天數與則數上限
+                    Text("訊息保留天數（詐騙記錄永久保留）", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         RetentionConfig.OPTIONS.forEach { days ->
                             FilterChip(
                                 selected = retentionDays == days,
@@ -454,38 +836,40 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                                     retentionDays = days
                                     RetentionConfig.setRetentionDays(appCtx, days)
                                     RetentionPolicy.scheduleOrUpdate(appCtx)
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar(
-                                            "已設定訊息保留：${RetentionConfig.labelForDays(days)}"
-                                        )
-                                    }
                                 },
                                 label = { Text(RetentionConfig.labelForDays(days)) }
                             )
                         }
                     }
-                }
-            }
-
-            item {
-                OutlinedButton(
-                    onClick = { showPresetDialog = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("匯入預設關鍵字")
-                }
-            }
-
-            item {
-                Column {
-                    Text(
-                        text = "符合以下啟用關鍵字的通知將直接標記為已過濾，不送交 AI 分析。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
                     Spacer(Modifier.height(8.dp))
+                    Text("訊息保留則數上限", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RetentionConfig.MAX_COUNT_OPTIONS.forEach { cnt ->
+                            FilterChip(
+                                selected = retentionMaxCount == cnt,
+                                onClick = {
+                                    retentionMaxCount = cnt
+                                    PhantomPrefs.setRetentionMaxCount(appCtx, cnt)
+                                    RetentionPolicy.scheduleOrUpdate(appCtx)
+                                },
+                                label = { Text(RetentionConfig.labelForMaxCount(cnt)) }
+                            )
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+
+                    // 過濾規則新增
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("過濾關鍵字規則", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        TextButton(onClick = { showPresetDialog = true }) {
+                            Text("匯入預設關鍵字")
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -517,7 +901,8 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                                             FilterRule(
                                                 keyword = trimmedKeyword,
                                                 isActive = true,
-                                                packageName = resolvedPkg
+                                                packageName = resolvedPkg,
+                                                action = newRuleAction
                                             )
                                         )
                                         dao.all()
@@ -528,22 +913,25 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                             },
                             enabled = canAdd
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "新增"
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("新增")
+                            Icon(Icons.Default.Add, contentDescription = "新增")
                         }
                     }
-
-                    Spacer(Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("命中動作：", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            FilterRule.ACTION_FILTER to "標記已過濾",
+                            FilterRule.ACTION_DROP to "不記錄",
+                            FilterRule.ACTION_SCAM to "標記詐騙警示"
+                        ).forEach { (act, label) ->
+                            FilterChip(
+                                selected = newRuleAction == act,
+                                onClick = { newRuleAction = act },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = isAllApps,
                             onClick = { isAllApps = true },
@@ -555,9 +943,7 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                             label = { Text("指定 App") }
                         )
                     }
-
                     if (!isAllApps) {
-                        Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = targetPackageName,
                             onValueChange = { targetPackageName = it },
@@ -566,75 +952,172 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                             label = { Text("來源 App Package 名稱") },
                             placeholder = { Text("例如：com.android.mms") }
                         )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "查找方式：手機「設定 → 應用程式 → 選擇 App → 應用程式資訊」即可查看套件名稱（如 com.android.mms）。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
-                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (isLoadingRules) {
+                        CircularProgressIndicator()
+                    } else if (rules.isEmpty()) {
+                        Text("目前尚無過濾關鍵字", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    } else {
+                        rules.forEach { rule ->
+                            FilterRuleRow(
+                                rule = rule,
+                                onToggleActive = { checked ->
+                                    scope.launch {
+                                        val updated = rule.copy(isActive = checked)
+                                        withContext(Dispatchers.IO) {
+                                            AppDatabaseHolder.db(appCtx).filterDao().update(updated)
+                                        }
+                                        rules = rules.map { if (it.id == rule.id) updated else it }
+                                    }
+                                },
+                                onDelete = {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            AppDatabaseHolder.db(appCtx).filterDao().delete(rule)
+                                        }
+                                        rules = rules.filterNot { it.id == rule.id }
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+
+                    OutlinedButton(
+                        onClick = { showDeleteAllConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("刪除全部訊息")
                     }
                 }
             }
 
-            when {
-                isLoading -> {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
+            // 4. 外觀分組卡
+            item {
+                GlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text("外觀", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+
+                    Text("主題模式", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThemeMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = currentThemeMode == mode,
+                                onClick = { ThemePreferences.setThemeMode(appCtx, mode) },
+                                label = { Text(mode.label) }
+                            )
                         }
                     }
-                }
-                rules.isEmpty() -> {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "目前尚無過濾關鍵字",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.Gray
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        SettingSwitchRow(
+                            title = "Material You 動態色",
+                            subtitle = "依系統桌布配色（保留 Phantom 紫為主色調）",
+                            checked = dynamicColorEnabled,
+                            onCheckedChange = { checked ->
+                                ThemePreferences.setDynamicColor(appCtx, checked)
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text("字體大小", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FontScaleMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = fontScaleMode == mode,
+                                onClick = { ThemePreferences.setFontScaleMode(appCtx, mode) },
+                                label = { Text(mode.label) }
                             )
                         }
                     }
                 }
-                else -> {
-                    items(
-                        rules,
-                        key = { "${it.id}_${it.keyword}_${it.packageName.orEmpty()}" }
-                    ) { rule ->
-                        FilterRuleCard(
-                            rule = rule,
-                            glassState = glassState,
-                            onToggleActive = { checked ->
-                                scope.launch {
-                                    val updated = rule.copy(isActive = checked)
-                                    withContext(Dispatchers.IO) {
-                                        AppDatabaseHolder.db(appCtx).filterDao().update(updated)
+            }
+
+            // 5. 保持運作（OEM 保活）分組卡
+            item {
+                GlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text("保持運作（背景保活與權限）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+
+                    Text(
+                        text = if (listenerEnabled) "通知存取權限：已開啟 ✓" else "通知存取權限：尚未開啟 ⚠",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (listenerEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                    if (!listenerEnabled) {
+                        Spacer(Modifier.height(6.dp))
+                        Button(
+                            onClick = {
+                                ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("前往開啟通知存取權限")
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    Text(
+                        text = if (batteryWhitelisted) "電池優化白名單：已豁免 ✓" else "電池優化白名單：尚未豁免（建議開啟）",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (batteryWhitelisted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                    if (!batteryWhitelisted) {
+                        Spacer(Modifier.height(6.dp))
+                        Button(
+                            onClick = {
+                                try {
+                                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                        data = Uri.parse("package:${appCtx.packageName}")
                                     }
-                                    rules = rules.map {
-                                        if (it.id == rule.id) updated else it
-                                    }
+                                    ctx.startActivity(intent)
+                                } catch (_: Exception) {
+                                    tryLaunchIntents(ctx, oemGuide.intents)
                                 }
                             },
-                            onDelete = {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        AppDatabaseHolder.db(appCtx).filterDao().delete(rule)
-                                    }
-                                    rules = rules.filterNot {
-                                        it.id == rule.id
-                                    }
-                                }
-                            }
-                        )
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("申請忽略電池最佳化")
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    Text(
+                        text = oemGuide.brandTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = oemGuide.steps,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { tryLaunchIntents(ctx, oemGuide.intents) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("開啟系統設定 / 應用程式詳情")
                     }
                 }
             }
@@ -643,52 +1126,166 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun FilterRuleCard(
+private fun SettingSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+        Spacer(Modifier.width(8.dp))
+        FluidSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun FilterRuleRow(
     rule: FilterRule,
-    glassState: HazeState,
     onToggleActive: (Boolean) -> Unit,
     onDelete: () -> Unit
 ) {
-    GlassCard(
-        glassState = glassState,
+    val actionLabel = when (rule.action) {
+        FilterRule.ACTION_DROP -> "不記錄"
+        FilterRule.ACTION_SCAM -> "標記詐騙警示"
+        else -> "標記已過濾"
+    }
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        cornerRadius = 18.dp,
-        contentPadding = 12.dp
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = rule.keyword,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (rule.isActive) MaterialTheme.colorScheme.onSurface else Color.Gray
-                )
-                Text(
-                    text = if (rule.packageName.isNullOrBlank()) {
-                        "適用範圍：全部 App"
-                    } else {
-                        "適用範圍：${rule.packageName}"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
-                )
-            }
-            FluidSwitch(
-                checked = rule.isActive,
-                onCheckedChange = onToggleActive
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = rule.keyword,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (rule.isActive) MaterialTheme.colorScheme.onSurface else Color.Gray
             )
-            IconButton(onClick = onDelete) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "刪除關鍵字",
-                    tint = MaterialTheme.colorScheme.error
-                )
-            }
+            Text(
+                text = "${if (rule.packageName.isNullOrBlank()) "全部 App" else rule.packageName}・$actionLabel",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.Gray
+            )
+        }
+        FluidSwitch(checked = rule.isActive, onCheckedChange = onToggleActive)
+        IconButton(onClick = onDelete) {
+            Icon(
+                imageVector = Icons.Default.Delete,
+                contentDescription = "刪除關鍵字",
+                tint = MaterialTheme.colorScheme.error
+            )
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppMutePickerDialog(
+    currentlyMuted: Set<String>,
+    onDismiss: () -> Unit,
+    onSelectApp: (String, MuteMode) -> Unit
+) {
+    val ctx = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var selectedMode by remember { mutableStateOf(MuteMode.BLOCK_RECORD) }
+    var apps by remember { mutableStateOf(listOf<InstalledAppInfo>()) }
+
+    LaunchedEffect(Unit) {
+        apps = withContext(Dispatchers.IO) {
+            val pm = ctx.packageManager
+            val mainIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            pm.queryIntentActivities(mainIntent, 0)
+                .mapNotNull { ri ->
+                    val pkg = ri.activityInfo?.packageName ?: return@mapNotNull null
+                    if (pkg == ctx.packageName) return@mapNotNull null
+                    InstalledAppInfo(
+                        packageName = pkg,
+                        label = ri.loadLabel(pm)?.toString()?.ifBlank { pkg } ?: pkg
+                    )
+                }
+                .distinctBy { it.packageName }
+                .sortedBy { it.label.lowercase(Locale.getDefault()) }
+        }
+    }
+
+    val filtered = remember(apps, query) {
+        val q = query.trim()
+        if (q.isEmpty()) apps else apps.filter {
+            it.label.contains(q, ignoreCase = true) || it.packageName.contains(q, ignoreCase = true)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("選擇要靜音的 App") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("靜音模式：", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MuteMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = selectedMode == mode,
+                            onClick = { selectedMode = mode },
+                            label = { Text(mode.label) }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("搜尋 App 名稱或套件…") }
+                )
+                LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
+                    items(filtered, key = { it.packageName }) { app ->
+                        val alreadyMuted = app.packageName in currentlyMuted
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelectApp(app.packageName, selectedMode) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppIconImage(
+                                packageName = app.packageName,
+                                contentDescription = app.label,
+                                size = 32.dp
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(app.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1)
+                            }
+                            if (alreadyMuted) {
+                                Text("已靜音", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("關閉")
+            }
+        }
+    )
 }

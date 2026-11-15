@@ -1,0 +1,474 @@
+package com.phantom.checker.ui
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.room.withTransaction
+import com.phantom.checker.data.MessageEntity
+import com.phantom.checker.data.MessageTagCrossRef
+import com.phantom.checker.data.TagEntity
+import com.phantom.checker.network.AiClient
+import com.phantom.checker.service.AppDatabaseHolder
+import com.phantom.checker.service.StatsForegroundService
+import com.phantom.checker.ui.components.GlassCard
+import com.phantom.checker.ui.components.glassSource
+import com.phantom.checker.ui.components.pressableScale
+import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class MessageDetailActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        AiClient.init(applicationContext)
+        val messageId = intent.getLongExtra(EXTRA_MESSAGE_ID, -1L)
+        setContent {
+            PhantomCheckTheme {
+                MessageDetailScreen(
+                    messageId = messageId,
+                    onBack = { finish() }
+                )
+            }
+        }
+    }
+
+    companion object {
+        private const val EXTRA_MESSAGE_ID = "extra_message_id"
+
+        fun createIntent(ctx: Context, messageId: Long): Intent {
+            return Intent(ctx, MessageDetailActivity::class.java).apply {
+                putExtra(EXTRA_MESSAGE_ID, messageId)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun MessageDetailScreen(
+    messageId: Long,
+    onBack: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val appCtx = ctx.applicationContext
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    var message by remember { mutableStateOf<MessageEntity?>(null) }
+    var allTags by remember { mutableStateOf(listOf<TagEntity>()) }
+    var selectedTagIds by remember { mutableStateOf(setOf<Long>()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var isAnalyzing by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    LaunchedEffect(messageId) {
+        isLoading = true
+        withContext(Dispatchers.IO) {
+            val db = AppDatabaseHolder.db(appCtx)
+            val loaded = db.messageDao().byId(messageId)
+            if (loaded != null && !loaded.isRead) {
+                db.messageDao().update(loaded.copy(isRead = true))
+                StatsForegroundService.startOrRefresh(appCtx)
+            }
+            message = loaded?.copy(isRead = true)
+            allTags = db.tagDao().all()
+            selectedTagIds = db.tagDao().tagsForMessage(messageId).map { it.id }.toSet()
+        }
+        isLoading = false
+    }
+
+    if (showDeleteConfirm && message != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("刪除訊息") },
+            text = { Text("確定要永久刪除這則訊息嗎？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByMessage(messageId)
+                                    db.messageDao().deleteById(messageId)
+                                }
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            }
+                            showDeleteConfirm = false
+                            onBack()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("訊息詳情") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    message?.let { msg ->
+                        IconButton(onClick = {
+                            val nextStar = !msg.isStarred
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    AppDatabaseHolder.db(appCtx).messageDao().setStarred(msg.id, nextStar)
+                                }
+                                message = msg.copy(isStarred = nextStar)
+                                snackbarHostState.showSnackbar(if (nextStar) "已加入星標" else "已移除星標")
+                            }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = "星標",
+                                tint = if (msg.isStarred) Color(0xFFE6A100) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = { showDeleteConfirm = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "刪除",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            )
+        },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+    ) { padding ->
+        val glassState = remember { HazeState() }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .glassSource(glassState)
+                .padding(padding)
+                .padding(14.dp)
+        ) {
+            when {
+                isLoading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+                message == null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("找不到此訊息（可能已被刪除）", color = Color.Gray)
+                    }
+                }
+                else -> {
+                    val msg = message!!
+                    val timeStr = remember(msg.timestamp) {
+                        SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.getDefault())
+                            .format(Date(msg.timestamp))
+                    }
+                    val launchIntent = remember(msg.packageName) {
+                        try {
+                            ctx.packageManager.getLaunchIntentForPackage(msg.packageName)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        GlassCard(
+                            glassState = glassState,
+                            modifier = Modifier.fillMaxWidth(),
+                            cornerRadius = 20.dp,
+                            contentPadding = 14.dp
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                AppIconImage(
+                                    packageName = msg.packageName,
+                                    contentDescription = msg.appLabel,
+                                    size = 44.dp
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = msg.sender,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "${msg.appLabel}・$timeStr",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                text = msg.content,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+
+                        // 風險分數條與 AI 分析
+                        GlassCard(
+                            glassState = glassState,
+                            modifier = Modifier.fillMaxWidth(),
+                            cornerRadius = 20.dp,
+                            contentPadding = 14.dp
+                        ) {
+                            val riskColor = when (msg.riskLabel) {
+                                "scam" -> MaterialTheme.colorScheme.error
+                                "suspicious" -> Color(0xFFE6A100)
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                            val riskText = when (msg.riskLabel) {
+                                "scam" -> "高風險詐騙 (${msg.riskScore}/100)"
+                                "suspicious" -> "疑似風險 (${msg.riskScore}/100)"
+                                "safe" -> "安全 (${msg.riskScore}/100)"
+                                else -> "尚未分析"
+                            }
+                            Text(
+                                text = "AI 風險評估：$riskText",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = riskColor
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { (msg.riskScore.coerceIn(0, 100)) / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = riskColor
+                            )
+                            if (msg.riskReason.isNotBlank()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = msg.riskReason,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    if (isAnalyzing) return@Button
+                                    scope.launch {
+                                        isAnalyzing = true
+                                        val res = AiClient.analyzeRisk(
+                                            sender = msg.sender,
+                                            content = msg.content,
+                                            context = appCtx,
+                                            bypassCache = true
+                                        )
+                                        isAnalyzing = false
+                                        if (res != null) {
+                                            val updated = msg.copy(
+                                                riskScore = res.first,
+                                                riskLabel = res.second,
+                                                riskReason = res.third
+                                            )
+                                            withContext(Dispatchers.IO) {
+                                                AppDatabaseHolder.db(appCtx).messageDao().update(updated)
+                                            }
+                                            message = updated
+                                            snackbarHostState.showSnackbar("AI 分析完成：${res.second} (${res.first}分)")
+                                        } else {
+                                            snackbarHostState.showSnackbar("AI 分析失敗，請確認 API 設定或網路")
+                                        }
+                                    }
+                                },
+                                enabled = !isAnalyzing,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .pressableScale()
+                            ) {
+                                if (isAnalyzing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("分析中…")
+                                } else {
+                                    Text("AI 分析此則")
+                                }
+                            }
+                        }
+
+                        // 標籤選擇
+                        GlassCard(
+                            glassState = glassState,
+                            modifier = Modifier.fillMaxWidth(),
+                            cornerRadius = 20.dp,
+                            contentPadding = 14.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "自訂標籤",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                TextButton(onClick = {
+                                    ctx.startActivity(Intent(ctx, TagManagementActivity::class.java))
+                                }) {
+                                    Text("管理標籤")
+                                }
+                            }
+                            if (allTags.isEmpty()) {
+                                Text(
+                                    text = "尚未建立任何標籤，點擊右上角「管理標籤」新增。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    allTags.forEach { tag ->
+                                        val isSelected = tag.id in selectedTagIds
+                                        val tagColor = parseTagColor(tag.colorHex)
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = {
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        val tagDao = AppDatabaseHolder.db(appCtx).tagDao()
+                                                        if (isSelected) {
+                                                            tagDao.removeTagFromMessage(msg.id, tag.id)
+                                                        } else {
+                                                            tagDao.addTagToMessage(MessageTagCrossRef(msg.id, tag.id))
+                                                        }
+                                                    }
+                                                    selectedTagIds = if (isSelected) {
+                                                        selectedTagIds - tag.id
+                                                    } else {
+                                                        selectedTagIds + tag.id
+                                                    }
+                                                }
+                                            },
+                                            label = { Text(tag.name) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = tagColor.copy(alpha = 0.22f)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 操作列
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("phantom_message", msg.content))
+                                    Toast.makeText(ctx, "已複製訊息內容", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .pressableScale()
+                            ) {
+                                Text("複製內容")
+                            }
+                            if (launchIntent != null) {
+                                OutlinedButton(
+                                    onClick = {
+                                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        ctx.startActivity(launchIntent)
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .pressableScale()
+                                ) {
+                                    Text("開啟原 App")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

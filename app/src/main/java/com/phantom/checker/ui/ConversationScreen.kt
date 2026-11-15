@@ -5,10 +5,14 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,48 +22,78 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.room.withTransaction
 import com.phantom.checker.data.MessageEntity
+import com.phantom.checker.data.MessageTagCrossRef
+import com.phantom.checker.data.TagEntity
+import com.phantom.checker.network.AiClient
 import com.phantom.checker.service.AppDatabaseHolder
-import com.phantom.checker.service.NotificationCollectorService
+import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.glassSource
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 class ConversationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AiClient.init(applicationContext)
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
         val appLabel = intent.getStringExtra(EXTRA_APP_LABEL).orEmpty().ifBlank { packageName }
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
@@ -95,7 +129,21 @@ class ConversationActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private fun formatDateDivider(ts: Long): String {
+    val msgCal = Calendar.getInstance().apply { timeInMillis = ts }
+    val todayCal = Calendar.getInstance()
+    val yesterdayCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+    fun sameDay(a: Calendar, b: Calendar) =
+        a.get(Calendar.YEAR) == b.get(Calendar.YEAR) &&
+            a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+    return when {
+        sameDay(msgCal, todayCal) -> "今天"
+        sameDay(msgCal, yesterdayCal) -> "昨天"
+        else -> SimpleDateFormat("MM/dd", Locale.getDefault()).format(Date(ts))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ConversationScreen(
     packageName: String,
@@ -105,9 +153,21 @@ fun ConversationScreen(
 ) {
     val ctx = LocalContext.current
     val appCtx = ctx.applicationContext
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
     var messages by remember { mutableStateOf(listOf<MessageEntity>()) }
+    var allTags by remember { mutableStateOf(listOf<TagEntity>()) }
+    var msgTagIdsMap by remember { mutableStateOf<Map<Long, Set<Long>>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(true) }
+    var refreshTrigger by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
+
+    var showMenu by remember { mutableStateOf(false) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+    var sheetMessage by remember { mutableStateOf<MessageEntity?>(null) }
+    var deleteCandidate by remember { mutableStateOf<MessageEntity?>(null) }
+    var isAnalyzing by remember { mutableStateOf(false) }
 
     val launchIntent = remember(packageName) {
         try {
@@ -117,18 +177,233 @@ fun ConversationScreen(
         }
     }
 
-    LaunchedEffect(packageName, sender) {
+    val lifecycleOwner = ctx as? LifecycleOwner
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshTrigger++
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(packageName, sender, refreshTrigger) {
         isLoading = true
         val loaded = withContext(Dispatchers.IO) {
-            val dao = AppDatabaseHolder.db(appCtx).messageDao()
+            val db = AppDatabaseHolder.db(appCtx)
+            val dao = db.messageDao()
             dao.markConversationRead(packageName, sender)
-            NotificationCollectorService.requestStatsUpdate(appCtx)
+            StatsForegroundService.startOrRefresh(appCtx)
+            allTags = db.tagDao().all()
+            val refs = db.tagDao().allCrossRefs()
+            msgTagIdsMap = refs.groupBy { it.messageId }
+                .mapValues { (_, list) -> list.map { it.tagId }.toSet() }
             dao.byConversation(packageName, sender)
         }
         messages = loaded
         isLoading = false
-        if (loaded.isNotEmpty()) {
+        if (loaded.isNotEmpty() && refreshTrigger <= 1) {
             listState.scrollToItem(loaded.lastIndex)
+        }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("清除此對話") },
+            text = { Text("確定要永久刪除與「$sender」的所有對話訊息嗎？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                AppDatabaseHolder.db(appCtx).messageDao().deleteByConversation(packageName, sender)
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            }
+                            showClearConfirm = false
+                            onBack()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認清除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    deleteCandidate?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            title = { Text("刪除訊息") },
+            text = { Text("確定要永久刪除這則訊息嗎？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByMessage(target.id)
+                                    db.messageDao().deleteById(target.id)
+                                }
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            }
+                            deleteCandidate = null
+                            refreshTrigger++
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteCandidate = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    sheetMessage?.let { msg ->
+        val currentTags = msgTagIdsMap[msg.id] ?: emptySet()
+        ModalBottomSheet(onDismissRequest = { sheetMessage = null }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "訊息操作",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val nextStar = !msg.isStarred
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    AppDatabaseHolder.db(appCtx).messageDao().setStarred(msg.id, nextStar)
+                                }
+                                sheetMessage = null
+                                refreshTrigger++
+                                snackbarHostState.showSnackbar(if (nextStar) "已加入星標" else "已移除星標")
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (msg.isStarred) "取消星標" else "加入星標")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (isAnalyzing) return@OutlinedButton
+                            scope.launch {
+                                isAnalyzing = true
+                                val res = AiClient.analyzeRisk(
+                                    sender = msg.sender,
+                                    content = msg.content,
+                                    context = appCtx,
+                                    bypassCache = true
+                                )
+                                isAnalyzing = false
+                                if (res != null) {
+                                    withContext(Dispatchers.IO) {
+                                        AppDatabaseHolder.db(appCtx).messageDao().update(
+                                            msg.copy(
+                                                riskScore = res.first,
+                                                riskLabel = res.second,
+                                                riskReason = res.third
+                                            )
+                                        )
+                                    }
+                                    sheetMessage = null
+                                    refreshTrigger++
+                                    snackbarHostState.showSnackbar("AI 分析完成：${res.second} (${res.first}分)")
+                                } else {
+                                    snackbarHostState.showSnackbar("AI 分析失敗，請確認 API 設定")
+                                }
+                            }
+                        },
+                        enabled = !isAnalyzing,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (isAnalyzing) "分析中…" else "AI 分析")
+                    }
+                }
+
+                if (allTags.isNotEmpty()) {
+                    Text("標籤", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        allTags.forEach { tag ->
+                            val selected = tag.id in currentTags
+                            val tagColor = parseTagColor(tag.colorHex)
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            val tagDao = AppDatabaseHolder.db(appCtx).tagDao()
+                                            if (selected) {
+                                                tagDao.removeTagFromMessage(msg.id, tag.id)
+                                            } else {
+                                                tagDao.addTagToMessage(MessageTagCrossRef(msg.id, tag.id))
+                                            }
+                                        }
+                                        refreshTrigger++
+                                    }
+                                },
+                                label = { Text(tag.name) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = tagColor.copy(alpha = 0.22f)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            sheetMessage = null
+                            ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("查看完整詳情")
+                    }
+                    Button(
+                        onClick = {
+                            sheetMessage = null
+                            deleteCandidate = msg
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("刪除")
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
         }
     }
 
@@ -168,19 +443,56 @@ fun ConversationScreen(
                             Text("開啟原 App")
                         }
                     }
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "更多操作")
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("清除此對話", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showMenu = false
+                                    showClearConfirm = true
+                                }
+                            )
+                        }
+                    }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { padding ->
         val glassState = remember { HazeState() }
 
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .glassSource(glassState)
                 .padding(padding)
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
+            if (messages.isNotEmpty()) {
+                val scamCnt = messages.count { it.riskLabel == "scam" }
+                val suspCnt = messages.count { it.riskLabel == "suspicious" }
+                val safeCnt = messages.size - scamCnt - suspCnt
+                GlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 16.dp,
+                    contentPadding = 10.dp
+                ) {
+                    Text(
+                        text = "此對話共 ${messages.size} 則・安全 $safeCnt・疑似 $suspCnt・詐騙 $scamCnt",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (scamCnt > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
             when {
                 isLoading && messages.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -188,13 +500,11 @@ fun ConversationScreen(
                     }
                 }
                 messages.isEmpty() -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "尚無對話訊息",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.Gray
-                        )
-                    }
+                    EmptyStateView(
+                        icon = Icons.Default.Email,
+                        title = "尚無對話訊息",
+                        description = "與 $sender 的通知訊息將顯示於此處。"
+                    )
                 }
                 else -> {
                     LazyColumn(
@@ -202,10 +512,33 @@ fun ConversationScreen(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(messages, key = { it.id }) { msg ->
+                        itemsIndexed(messages, key = { _, m -> m.id }) { idx, msg ->
+                            val currentDay = formatDateDivider(msg.timestamp)
+                            val prevDay = if (idx > 0) formatDateDivider(messages[idx - 1].timestamp) else null
+                            if (currentDay != prevDay) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    HorizontalDivider(modifier = Modifier.weight(1f))
+                                    Text(
+                                        text = currentDay,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp)
+                                    )
+                                    HorizontalDivider(modifier = Modifier.weight(1f))
+                                }
+                            }
                             ChatBubbleItem(
                                 message = msg,
-                                glassState = glassState
+                                glassState = glassState,
+                                onClick = {
+                                    ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
+                                },
+                                onLongClick = { sheetMessage = msg }
                             )
                         }
                     }
@@ -215,13 +548,16 @@ fun ConversationScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatBubbleItem(
     message: MessageEntity,
-    glassState: HazeState
+    glassState: HazeState,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val timeText = remember(message.timestamp) {
-        SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(Date(message.timestamp))
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
     }
     val riskDotColor: Color? = when (message.riskLabel) {
         "scam" -> MaterialTheme.colorScheme.error
@@ -229,14 +565,18 @@ private fun ChatBubbleItem(
         else -> null
     }
 
-    // 聊天氣泡：左側 GlassCard 氣泡、右側留白
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start
     ) {
         GlassCard(
             glassState = glassState,
-            modifier = Modifier.fillMaxWidth(0.84f),
+            modifier = Modifier
+                .fillMaxWidth(0.84f)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                ),
             cornerRadius = 16.dp,
             contentPadding = 12.dp
         ) {
@@ -262,6 +602,14 @@ private fun ChatBubbleItem(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (message.isStarred) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "星標",
+                        tint = Color(0xFFE6A100),
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
                 if (riskDotColor != null) {
                     Box(
                         modifier = Modifier

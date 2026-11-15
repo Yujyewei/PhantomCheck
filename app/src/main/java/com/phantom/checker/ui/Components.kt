@@ -5,8 +5,11 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,20 +17,32 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.phantom.checker.data.AppGroupRow
 import com.phantom.checker.data.MessageEntity
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.glassSurface
@@ -36,6 +51,150 @@ import dev.chrisbanes.haze.HazeState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+fun parseTagColor(hex: String): Color {
+    return try {
+        Color(android.graphics.Color.parseColor(hex))
+    } catch (_: Exception) {
+        Color(0xFF7C3AED)
+    }
+}
+
+@Composable
+fun EmptyStateView(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                modifier = Modifier.size(44.dp)
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            if (actionLabel != null && onAction != null) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onAction,
+                    modifier = Modifier.pressableScale()
+                ) {
+                    Text(actionLabel)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ExportCsvDialog(
+    appGroups: List<AppGroupRow>,
+    onDismiss: () -> Unit,
+    onConfirm: (packageName: String?, daysBack: Int?) -> Unit
+) {
+    var selectedPkg by remember { mutableStateOf<String?>(null) }
+    var selectedDays by remember { mutableStateOf<Int?>(null) }
+    var showAppMenu by remember { mutableStateOf(false) }
+
+    val selectedAppLabel = if (selectedPkg == null) {
+        "全部 App"
+    } else {
+        appGroups.firstOrNull { it.packageName == selectedPkg }?.appLabel ?: selectedPkg.orEmpty()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("匯出訊息 CSV") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("來源 App 範圍", style = MaterialTheme.typography.labelMedium)
+                Box {
+                    OutlinedButton(
+                        onClick = { showAppMenu = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(selectedAppLabel)
+                    }
+                    DropdownMenu(
+                        expanded = showAppMenu,
+                        onDismissRequest = { showAppMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("全部 App") },
+                            onClick = {
+                                selectedPkg = null
+                                showAppMenu = false
+                            }
+                        )
+                        appGroups.forEach { app ->
+                            DropdownMenuItem(
+                                text = { Text(app.appLabel.ifBlank { app.packageName }) },
+                                onClick = {
+                                    selectedPkg = app.packageName
+                                    showAppMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Text("時間範圍", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedDays == 7,
+                        onClick = { selectedDays = 7 },
+                        label = { Text("近 7 天") }
+                    )
+                    FilterChip(
+                        selected = selectedDays == 30,
+                        onClick = { selectedDays = 30 },
+                        label = { Text("近 30 天") }
+                    )
+                    FilterChip(
+                        selected = selectedDays == null,
+                        onClick = { selectedDays = null },
+                        label = { Text("全部") }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(selectedPkg, selectedDays) }) {
+                Text("匯出")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
 
 @Composable
 fun NotificationListenerGuideCard(
@@ -119,7 +278,7 @@ fun PostNotificationGuideCard(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "允許顯示通知後，偵測到高風險詐騙訊息時才能立即發出警示通知。",
+            text = "允許顯示通知後，常駐統計與高風險詐騙警示才能正常顯示。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -163,6 +322,15 @@ fun MessageCard(
                     text = message.sender,
                     style = MaterialTheme.typography.titleSmall
                 )
+                if (message.isStarred) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "星標",
+                        tint = Color(0xFFE6A100),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
                 if (message.riskLabel == "scam") {
                     Text(
                         text = "  ⚠️ 詐騙 ${message.riskScore}",
