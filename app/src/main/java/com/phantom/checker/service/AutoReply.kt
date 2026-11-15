@@ -1,10 +1,16 @@
 package com.phantom.checker.service
 
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 import android.provider.Telephony
+import androidx.core.app.NotificationManagerCompat
+import com.phantom.checker.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -82,8 +88,12 @@ class SmsAutoReplyReceiver : BroadcastReceiver() {
         if (!inWindow) return
 
         val msgs = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
-        val sender = msgs.firstOrNull()?.displayOriginatingAddress ?: return
+        val sender = msgs.firstOrNull()?.displayOriginatingAddress?.trim() ?: return
         val body = msgs.joinToString("") { it.displayMessageBody ?: "" }
+
+        val shouldSkipReply = SENSITIVE_SMS_KEYWORDS.any { kw ->
+            body.contains(kw, ignoreCase = true)
+        } || !TW_MOBILE_REGEX.matches(sender)
 
         CoroutineScope(Dispatchers.IO).launch {
             val db = AppDatabaseHolder.db(ctx)
@@ -94,10 +104,19 @@ class SmsAutoReplyReceiver : BroadcastReceiver() {
                     timestamp = System.currentTimeMillis()
                 )
             )
-            android.telephony.SmsManager.getDefault().sendTextMessage(
-                sender, null, AutoReplyConfig.smsTemplate, null, null
-            )
+            if (!shouldSkipReply) {
+                android.telephony.SmsManager.getDefault().sendTextMessage(
+                    sender, null, AutoReplyConfig.smsTemplate, null, null
+                )
+            }
         }
+    }
+
+    companion object {
+        private val SENSITIVE_SMS_KEYWORDS = listOf(
+            "驗證碼", "OTP", "一次性密碼", "信用卡", "銀行", "帳單"
+        )
+        private val TW_MOBILE_REGEX = Regex("^09\\d{8}$")
     }
 }
 
@@ -113,6 +132,44 @@ object QuickReplyHelper {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         AutoReplyConfig.load(ctx)
-        // TODO: 開機後提示使用者確認通知權限仍在（Android 13+ 會重置）
+        DailySummaryPolicy.schedule(ctx)
+        RetentionPolicy.scheduleOrUpdate(ctx)
+
+        val listenerEnabled = NotificationManagerCompat.getEnabledListenerPackages(ctx)
+            .contains(ctx.packageName)
+        if (!listenerEnabled) {
+            val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    "system_alert",
+                    "系統提醒",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                )
+            )
+            val settingsIntent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                ctx,
+                BOOT_ALERT_NOTIF_ID,
+                settingsIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notif = Notification.Builder(ctx, "system_alert")
+                .setSmallIcon(R.drawable.ic_stat_phantom)
+                .setContentTitle("幻訊通知權限需要重新開啟")
+                .setContentText("開機後系統可能已重設通知存取權限，點擊前往重新授權。")
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .build()
+            try {
+                nm.notify(BOOT_ALERT_NOTIF_ID, notif)
+            } catch (_: SecurityException) {
+            }
+        }
+    }
+
+    companion object {
+        private const val BOOT_ALERT_NOTIF_ID = 1002
     }
 }

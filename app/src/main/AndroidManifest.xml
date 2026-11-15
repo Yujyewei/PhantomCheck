@@ -24,6 +24,8 @@
         <activity android:name=".ui.AutoReplySettingsActivity" android:exported="false" />
         <activity android:name=".ui.ScamCenterActivity" android:exported="false" />
         <activity android:name=".ui.ApiKeySettingsActivity" android:exported="false" />
+        <activity android:name=".ui.AppThreadsActivity" android:exported="false" />
+        <activity android:name=".ui.ConversationActivity" android:exported="false" />
 
         <service
             android:name=".service.NotificationCollectorService"
