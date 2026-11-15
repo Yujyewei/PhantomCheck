@@ -1,14 +1,21 @@
 package com.phantom.checker.ui
 
 import android.content.Context
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import com.phantom.checker.util.FontScaleMode
+import com.phantom.checker.util.PhantomPrefs
 
 enum class ThemeMode(val prefValue: String, val label: String) {
     SYSTEM("system", "跟隨系統"),
@@ -26,6 +33,8 @@ object ThemePreferences {
     private const val KEY_THEME_MODE = "theme_mode"
 
     private val _themeMode = mutableStateOf<ThemeMode?>(null)
+    private val _dynamicColor = mutableStateOf<Boolean?>(null)
+    private val _fontScaleMode = mutableStateOf<FontScaleMode?>(null)
 
     fun getThemeMode(context: Context): ThemeMode {
         val cached = _themeMode.value
@@ -42,6 +51,32 @@ object ThemePreferences {
             .putString(KEY_THEME_MODE, mode.prefValue)
             .apply()
         _themeMode.value = mode
+    }
+
+    fun isDynamicColor(context: Context): Boolean {
+        val cached = _dynamicColor.value
+        if (cached != null) return cached
+        val loaded = PhantomPrefs.isDynamicColorEnabled(context)
+        _dynamicColor.value = loaded
+        return loaded
+    }
+
+    fun setDynamicColor(context: Context, enabled: Boolean) {
+        PhantomPrefs.setDynamicColorEnabled(context, enabled)
+        _dynamicColor.value = enabled
+    }
+
+    fun getFontScaleMode(context: Context): FontScaleMode {
+        val cached = _fontScaleMode.value
+        if (cached != null) return cached
+        val loaded = PhantomPrefs.getFontScaleMode(context)
+        _fontScaleMode.value = loaded
+        return loaded
+    }
+
+    fun setFontScaleMode(context: Context, mode: FontScaleMode) {
+        PhantomPrefs.setFontScaleMode(context, mode)
+        _fontScaleMode.value = mode
     }
 }
 
@@ -125,6 +160,31 @@ private val PhantomDarkColorScheme = darkColorScheme(
     outline = Color(0xFF938AA6)
 )
 
+private fun TextStyle.scaled(factor: Float): TextStyle =
+    if (factor == 1.0f) this else copy(fontSize = fontSize * factor, lineHeight = lineHeight * factor)
+
+private fun scaledTypography(factor: Float): Typography {
+    val base = Typography()
+    if (factor == 1.0f) return base
+    return Typography(
+        displayLarge = base.displayLarge.scaled(factor),
+        displayMedium = base.displayMedium.scaled(factor),
+        displaySmall = base.displaySmall.scaled(factor),
+        headlineLarge = base.headlineLarge.scaled(factor),
+        headlineMedium = base.headlineMedium.scaled(factor),
+        headlineSmall = base.headlineSmall.scaled(factor),
+        titleLarge = base.titleLarge.scaled(factor),
+        titleMedium = base.titleMedium.scaled(factor),
+        titleSmall = base.titleSmall.scaled(factor),
+        bodyLarge = base.bodyLarge.scaled(factor),
+        bodyMedium = base.bodyMedium.scaled(factor),
+        bodySmall = base.bodySmall.scaled(factor),
+        labelLarge = base.labelLarge.scaled(factor),
+        labelMedium = base.labelMedium.scaled(factor),
+        labelSmall = base.labelSmall.scaled(factor)
+    )
+}
+
 @Composable
 fun PhantomCheckTheme(
     darkTheme: Boolean? = null,
@@ -137,9 +197,21 @@ fun PhantomCheckTheme(
         ThemeMode.DARK -> true
         ThemeMode.LIGHT -> false
     }
-    val colorScheme = if (useDarkTheme) PhantomDarkColorScheme else PhantomLightColorScheme
+    val useDynamic = ThemePreferences.isDynamicColor(context) &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val colorScheme = if (useDynamic) {
+        if (useDarkTheme) {
+            dynamicDarkColorScheme(context).copy(primary = PhantomColors.SoftViolet)
+        } else {
+            dynamicLightColorScheme(context).copy(primary = PhantomColors.DeepPurple)
+        }
+    } else {
+        if (useDarkTheme) PhantomDarkColorScheme else PhantomLightColorScheme
+    }
+    val fontScale = ThemePreferences.getFontScaleMode(context).scale
     MaterialTheme(
         colorScheme = colorScheme,
+        typography = scaledTypography(fontScale),
         content = content
     )
 }

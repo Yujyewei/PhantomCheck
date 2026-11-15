@@ -91,9 +91,11 @@ class SmsAutoReplyReceiver : BroadcastReceiver() {
         val sender = msgs.firstOrNull()?.displayOriginatingAddress?.trim() ?: return
         val body = msgs.joinToString("") { it.displayMessageBody ?: "" }
 
-        val shouldSkipReply = SENSITIVE_SMS_KEYWORDS.any { kw ->
+        val containsSensitiveKw = SENSITIVE_SMS_KEYWORDS.any { kw ->
             body.contains(kw, ignoreCase = true)
-        } || !TW_MOBILE_REGEX.matches(sender)
+        }
+        val containsShortUrl = SHORT_URL_REGEX.containsMatchIn(body)
+        val shouldSkipReply = containsSensitiveKw || containsShortUrl || !TW_MOBILE_REGEX.matches(sender)
 
         CoroutineScope(Dispatchers.IO).launch {
             val db = AppDatabaseHolder.db(ctx)
@@ -116,6 +118,10 @@ class SmsAutoReplyReceiver : BroadcastReceiver() {
         private val SENSITIVE_SMS_KEYWORDS = listOf(
             "驗證碼", "OTP", "一次性密碼", "信用卡", "銀行", "帳單"
         )
+        private val SHORT_URL_REGEX = Regex(
+            "(https?://)?(bit\\.ly|tinyurl\\.com|reurl\\.cc|pse\\.is|is\\.gd|t\\.co|goo\\.gl|shorturl\\.at|ppt\\.cc|risu\\.io|lihi1\\.com|lihi\\.cc)/\\S+",
+            RegexOption.IGNORE_CASE
+        )
         private val TW_MOBILE_REGEX = Regex("^09\\d{8}$")
     }
 }
@@ -134,6 +140,7 @@ class BootReceiver : BroadcastReceiver() {
         AutoReplyConfig.load(ctx)
         DailySummaryPolicy.schedule(ctx)
         RetentionPolicy.scheduleOrUpdate(ctx)
+        StatsForegroundService.startOrRefresh(ctx)
 
         val listenerEnabled = NotificationManagerCompat.getEnabledListenerPackages(ctx)
             .contains(ctx.packageName)

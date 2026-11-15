@@ -8,6 +8,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.phantom.checker.data.AiSummaryEntity
 import com.phantom.checker.network.AiClient
+import com.phantom.checker.util.PhantomPrefs
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -15,7 +16,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * 每日 22:00 自動生成當日訊息 AI 摘要的排程 Worker。
+ * 每日自動生成當日訊息 AI 摘要的排程 Worker。
  */
 class DailySummaryWorker(
     appContext: Context,
@@ -23,7 +24,9 @@ class DailySummaryWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        DailySummaryPolicy.generateTodaySummary(applicationContext)
+        if (PhantomPrefs.isDailySummaryEnabled(applicationContext)) {
+            DailySummaryPolicy.generateTodaySummary(applicationContext)
+        }
         return Result.success()
     }
 }
@@ -33,10 +36,19 @@ object DailySummaryPolicy {
 
     fun schedule(ctx: Context) {
         val appCtx = ctx.applicationContext
+        val workManager = WorkManager.getInstance(appCtx)
+        if (!PhantomPrefs.isDailySummaryEnabled(appCtx)) {
+            workManager.cancelUniqueWork(UNIQUE_WORK_NAME)
+            return
+        }
+
+        val hour = PhantomPrefs.getDailySummaryHour(appCtx)
+        val minute = PhantomPrefs.getDailySummaryMinute(appCtx)
+
         val now = Calendar.getInstance()
         val target = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 22)
-            set(Calendar.MINUTE, 0)
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
             if (before(now)) {
@@ -49,9 +61,9 @@ object DailySummaryPolicy {
             .setInitialDelay(initialDelayMs, TimeUnit.MILLISECONDS)
             .build()
 
-        WorkManager.getInstance(appCtx).enqueueUniquePeriodicWork(
+        workManager.enqueueUniquePeriodicWork(
             UNIQUE_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
     }
@@ -59,6 +71,14 @@ object DailySummaryPolicy {
     fun todayDateKey(): Long {
         val fmt = SimpleDateFormat("yyyyMMdd", Locale.US)
         return fmt.format(Date()).toLongOrNull() ?: 0L
+    }
+
+    fun dateKeyDaysAgo(daysAgo: Int): Long {
+        val cal = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, -daysAgo)
+        }
+        val fmt = SimpleDateFormat("yyyyMMdd", Locale.US)
+        return fmt.format(cal.time).toLongOrNull() ?: 0L
     }
 
     suspend fun generateTodaySummary(ctx: Context): Result<AiSummaryEntity> {

@@ -92,6 +92,9 @@ fun ScamCenterScreen(onBack: () -> Unit) {
     val appCtx = ctx.applicationContext
 
     var scamMessages by remember { mutableStateOf(listOf<MessageEntity>()) }
+    var weekScamCount by remember { mutableIntStateOf(0) }
+    var monthScamCount by remember { mutableIntStateOf(0) }
+    var top3RiskyApps by remember { mutableStateOf(listOf<com.phantom.checker.data.AppRiskRow>()) }
     var isLoading by remember { mutableStateOf(true) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var selectedMessage by remember { mutableStateOf<MessageEntity?>(null) }
@@ -111,8 +114,15 @@ fun ScamCenterScreen(onBack: () -> Unit) {
 
     LaunchedEffect(refreshTrigger) {
         isLoading = true
-        scamMessages = withContext(Dispatchers.IO) {
-            AppDatabaseHolder.db(appCtx).messageDao().scams()
+        val now = System.currentTimeMillis()
+        val weekAgo = now - java.util.concurrent.TimeUnit.DAYS.toMillis(7)
+        val monthAgo = now - java.util.concurrent.TimeUnit.DAYS.toMillis(30)
+        withContext(Dispatchers.IO) {
+            val dao = AppDatabaseHolder.db(appCtx).messageDao()
+            scamMessages = dao.scams()
+            weekScamCount = dao.scamCountSince(weekAgo)
+            monthScamCount = dao.scamCountSince(monthAgo)
+            top3RiskyApps = dao.topRiskyApps().take(3)
         }
         isLoading = false
     }
@@ -179,6 +189,30 @@ fun ScamCenterScreen(onBack: () -> Unit) {
                     }
                 }
                 else -> {
+                    com.phantom.checker.ui.components.GlassCard(
+                        glassState = glassState,
+                        modifier = Modifier.fillMaxWidth(),
+                        cornerRadius = 20.dp,
+                        contentPadding = 12.dp
+                    ) {
+                        Text(
+                            text = "本週詐騙 $weekScamCount 則・本月詐騙 $monthScamCount 則",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        if (top3RiskyApps.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "最高風險 App Top 3：${top3RiskyApps.joinToString("、") { "${it.appLabel.ifBlank { it.packageName }} (${it.cnt})" }}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()

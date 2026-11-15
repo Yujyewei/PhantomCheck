@@ -7,6 +7,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.phantom.checker.util.PhantomPrefs
 import java.util.concurrent.TimeUnit
 
 /**
@@ -21,6 +22,7 @@ object RetentionConfig {
     const val RETENTION_FOREVER = -1
 
     val OPTIONS = listOf(7, 30, 90, 365, RETENTION_FOREVER)
+    val MAX_COUNT_OPTIONS = listOf(1000, 5000, -1)
 
     fun getRetentionDays(ctx: Context): Int {
         val prefs = ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -38,10 +40,15 @@ object RetentionConfig {
         days <= 0 -> "永久"
         else -> "$days 天"
     }
+
+    fun labelForMaxCount(count: Int): String = when {
+        count <= 0 -> "不限"
+        else -> "$count 則"
+    }
 }
 
 /**
- * 每日定期清理超過保留天數的舊訊息，並保留 riskLabel = 'scam' 的詐騙證據。
+ * 每日定期清理超過保留天數或則數上限的舊訊息，並保留 riskLabel = 'scam' 的詐騙證據。
  */
 class RetentionWorker(
     appContext: Context,
@@ -50,19 +57,25 @@ class RetentionWorker(
 
     override suspend fun doWork(): Result {
         val days = RetentionConfig.getRetentionDays(applicationContext)
-        if (days <= 0) {
+        val maxCount = PhantomPrefs.getRetentionMaxCount(applicationContext)
+        if (days <= 0 && maxCount <= 0) {
             return Result.success()
         }
 
-        val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days.toLong())
         val db = AppDatabaseHolder.db(applicationContext)
         val dao = db.messageDao()
 
         db.withTransaction {
-            val scamsToPreserve = dao.scams().filter { it.timestamp < cutoff }
-            dao.prune(cutoff)
-            scamsToPreserve.forEach { scam ->
-                dao.insert(scam)
+            if (days > 0) {
+                val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days.toLong())
+                val scamsToPreserve = dao.scams().filter { it.timestamp < cutoff }
+                dao.prune(cutoff)
+                scamsToPreserve.forEach { scam ->
+                    dao.insert(scam)
+                }
+            }
+            if (maxCount > 0) {
+                dao.deleteOlderThanCount(maxCount)
             }
         }
 
@@ -80,8 +93,9 @@ object RetentionPolicy {
         val appCtx = ctx.applicationContext
         val workManager = WorkManager.getInstance(appCtx)
         val days = RetentionConfig.getRetentionDays(appCtx)
+        val maxCount = PhantomPrefs.getRetentionMaxCount(appCtx)
 
-        if (days <= 0) {
+        if (days <= 0 && maxCount <= 0) {
             workManager.cancelUniqueWork(UNIQUE_WORK_NAME)
             return
         }

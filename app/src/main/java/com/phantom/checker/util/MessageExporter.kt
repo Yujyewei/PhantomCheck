@@ -12,12 +12,17 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 object MessageExporter {
 
     private const val CSV_HEADER = "時間,來源 App,寄件者,內容,風險分數,標籤,原因"
 
-    suspend fun exportToDownloads(ctx: Context): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun exportToDownloads(
+        ctx: Context,
+        packageName: String? = null,
+        daysBack: Int? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return@withContext Result.failure(
                 UnsupportedOperationException("匯出至 Downloads 需要 Android 10 (API 29) 以上版本")
@@ -25,8 +30,14 @@ object MessageExporter {
         }
 
         val appCtx = ctx.applicationContext
+        val sinceTs = daysBack?.takeIf { it > 0 }?.let {
+            System.currentTimeMillis() - TimeUnit.DAYS.toMillis(it.toLong())
+        }
         val messages = try {
-            AppDatabaseHolder.db(appCtx).messageDao().all()
+            AppDatabaseHolder.db(appCtx).messageDao().exportQuery(
+                packageName = packageName?.takeIf { it.isNotBlank() },
+                sinceTs = sinceTs
+            )
         } catch (e: Exception) {
             return@withContext Result.failure(e)
         }
@@ -87,7 +98,13 @@ object MessageExporter {
         return sb.toString()
     }
 
-    internal fun escapeCsv(value: String): String {
+    internal fun escapeCsv(rawValue: String): String {
+        // 防 CSV Formula Injection：以 =/+/-/@ 開頭的值加上單引號前綴
+        val value = if (rawValue.firstOrNull() in charArrayOf('=', '+', '-', '@')) {
+            "'$rawValue"
+        } else {
+            rawValue
+        }
         val needsQuotes = value.contains(',') ||
             value.contains('"') ||
             value.contains('\n') ||

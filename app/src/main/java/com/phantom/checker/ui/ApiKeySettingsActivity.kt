@@ -62,6 +62,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phantom.checker.network.AiClient
+import com.phantom.checker.network.AiProviderPreset
 import com.phantom.checker.network.AiProviderProfile
 import com.phantom.checker.network.ApiKeySource
 import com.phantom.checker.ui.components.GlassCard
@@ -159,7 +160,6 @@ fun ApiKeySettingsScreen(onBack: () -> Unit) {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 目前啟用狀態卡
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -300,7 +300,7 @@ fun ApiKeySettingsScreen(onBack: () -> Unit) {
             }
 
             Text(
-                text = "所有 API Key 皆以 EncryptedSharedPreferences 加密儲存於本機，請求統一走 OpenAI 相容 v1/chat/completions 端點。",
+                text = "所有 API Key 皆以 EncryptedSharedPreferences 加密儲存於本機，支援自訂 Base URL 與 API 路徑。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -321,6 +321,7 @@ private fun ProviderProfileCard(
     onDelete: () -> Unit
 ) {
     val tail = AiClient.getMaskedKeyTail(profile.apiKey) ?: "未填"
+    val fullEndpoint = AiClient.buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
 
     GlassCard(
         glassState = glassState,
@@ -386,7 +387,7 @@ private fun ProviderProfileCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = profile.baseUrl,
+            text = fullEndpoint,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -460,12 +461,16 @@ private fun ProviderEditorDialog(
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var baseUrl by remember { mutableStateOf(initial?.baseUrl ?: "") }
+    var apiPath by remember { mutableStateOf(initial?.resolvedApiPath() ?: AiProviderProfile.DEFAULT_API_PATH) }
     var model by remember { mutableStateOf(initial?.model ?: "") }
     var apiKey by remember { mutableStateOf(initial?.apiKey ?: "") }
     var showKey by remember { mutableStateOf(false) }
+    var selectedPreset by remember { mutableStateOf<AiProviderPreset?>(null) }
+    var showAltModels by remember { mutableStateOf(false) }
 
     val canSave = name.isNotBlank() &&
         baseUrl.trim().startsWith("http") &&
+        apiPath.isNotBlank() &&
         model.isNotBlank() &&
         apiKey.isNotBlank()
 
@@ -480,7 +485,7 @@ private fun ProviderEditorDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "快速填入預設模板：",
+                    text = "快速填入預設模板（2026-11 最新模型）：",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -492,12 +497,40 @@ private fun ProviderEditorDialog(
                         FilterChip(
                             selected = baseUrl.trim() == preset.baseUrl,
                             onClick = {
+                                selectedPreset = preset
                                 name = preset.name
                                 baseUrl = preset.baseUrl
+                                apiPath = preset.apiPath
                                 model = preset.defaultModel
                             },
                             label = { Text(preset.name) }
                         )
+                    }
+                }
+
+                val presetForModels = selectedPreset ?: AiClient.PRESETS.firstOrNull {
+                    it.baseUrl == baseUrl.trim()
+                }
+                if (presetForModels != null && presetForModels.alternativeModels.size > 1) {
+                    TextButton(
+                        onClick = { showAltModels = !showAltModels },
+                        modifier = Modifier.align(Alignment.Start)
+                    ) {
+                        Text(if (showAltModels) "收起常見模型" else "展開 ${presetForModels.name} 其他常見模型")
+                    }
+                    if (showAltModels) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            presetForModels.alternativeModels.forEach { m ->
+                                FilterChip(
+                                    selected = model.trim() == m,
+                                    onClick = { model = m },
+                                    label = { Text(m) }
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -507,7 +540,7 @@ private fun ProviderEditorDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     label = { Text("名稱") },
-                    placeholder = { Text("例如：Mistral / OpenAI") }
+                    placeholder = { Text("例如：Mistral / OpenAI / Gemini") }
                 )
                 OutlinedTextField(
                     value = baseUrl,
@@ -516,6 +549,14 @@ private fun ProviderEditorDialog(
                     singleLine = true,
                     label = { Text("Base URL") },
                     placeholder = { Text("https://api.mistral.ai/") }
+                )
+                OutlinedTextField(
+                    value = apiPath,
+                    onValueChange = { apiPath = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("API 路徑") },
+                    placeholder = { Text("v1/chat/completions") }
                 )
                 OutlinedTextField(
                     value = model,
@@ -557,7 +598,8 @@ private fun ProviderEditorDialog(
                             name = name.trim(),
                             baseUrl = normalizedUrl,
                             model = model.trim(),
-                            apiKey = apiKey.trim()
+                            apiKey = apiKey.trim(),
+                            apiPath = apiPath.trim().ifEmpty { AiProviderProfile.DEFAULT_API_PATH }
                         )
                     )
                 },
