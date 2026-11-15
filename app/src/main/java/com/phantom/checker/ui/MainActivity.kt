@@ -940,14 +940,15 @@ private fun PhantomCheckApp(
                                     selected = selectedTab == tab,
                                     onClick = { selectedTab = tab },
                                     icon = icon,
-                            label = tab.title,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                                    label = tab.title,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    )
                 }
-            )
-        },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+            },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { padding ->
         Column(
             modifier = Modifier
