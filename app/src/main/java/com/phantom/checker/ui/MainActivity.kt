@@ -108,6 +108,7 @@ import com.phantom.checker.ui.components.LiquidGlassTabBarItem
 import com.phantom.checker.ui.components.glassSource
 import com.phantom.checker.ui.components.pressableScale
 import com.phantom.checker.util.MessageExporter
+import com.phantom.checker.util.MuteMode
 import com.phantom.checker.util.PhantomPrefs
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
@@ -436,7 +437,7 @@ fun PhantomCheckApp() {
                             appCtx,
                             target.packageName,
                             true,
-                            PhantomPrefs.MuteMode.BLOCK_RECORD
+                            MuteMode.BLOCK_RECORD
                         )
                         mutedPackages = PhantomPrefs.getMutedApps(appCtx)
                         actionTargetApp = null

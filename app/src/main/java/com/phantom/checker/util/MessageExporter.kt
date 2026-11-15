@@ -100,7 +100,7 @@ object MessageExporter {
 
     internal fun escapeCsv(rawValue: String): String {
         // 防 CSV Formula Injection：以 =/+/-/@ 開頭的值加上單引號前綴
-        val value = if (rawValue.firstOrNull() in charArrayOf('=', '+', '-', '@')) {
+        val value = if (rawValue.isNotEmpty() && rawValue[0] in charArrayOf('=', '+', '-', '@')) {
             "'$rawValue"
         } else {
             rawValue
