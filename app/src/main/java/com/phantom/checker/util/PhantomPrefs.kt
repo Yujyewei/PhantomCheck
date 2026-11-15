@@ -62,6 +62,15 @@ object PhantomPrefs {
     private const val KEY_DYNAMIC_COLOR = "dynamic_color_enabled"
     private const val KEY_FONT_SCALE = "font_scale_mode"
     private const val KEY_ALERT_KEYWORDS = "instant_alert_keywords"
+    private const val KEY_ONBOARDING_COMPLETED_V1 = "onboarding_completed_v1"
+    private const val KEY_AI_AUTO_TAG_ENABLED = "ai_auto_tag_enabled"
+    private const val KEY_DEFAULT_AI_TAGS_SEEDED = "default_ai_tags_seeded_v1"
+    private const val KEY_QUIET_HOURS_ENABLED = "quiet_hours_enabled"
+    private const val KEY_QUIET_START_MIN = "quiet_hours_start_minute"
+    private const val KEY_QUIET_END_MIN = "quiet_hours_end_minute"
+    private const val KEY_DAILY_SUMMARY_NOTIF = "daily_summary_notif_enabled"
+    private const val KEY_VIP_SENDERS_MAP = "vip_senders_per_app"
+    private const val KEY_COLLAPSED_CARDS = "settings_collapsed_cards"
 
     const val MAX_ALERT_KEYWORDS = 20
 
@@ -291,5 +300,112 @@ object PhantomPrefs {
     fun removeAlertKeyword(ctx: Context, keyword: String) {
         val updated = getAlertKeywords(ctx).filterNot { it.equals(keyword, ignoreCase = true) }
         prefs(ctx).edit().putString(KEY_ALERT_KEYWORDS, gson.toJson(updated)).apply()
+    }
+
+    /** 新手引導 v1 完成旗標 */
+    fun isOnboardingCompleted(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_ONBOARDING_COMPLETED_V1, false)
+
+    fun setOnboardingCompleted(ctx: Context, completed: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_ONBOARDING_COMPLETED_V1, completed).apply()
+    }
+
+    /** AI 智慧標記開關（預設開） */
+    fun isAiAutoTagEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_AI_AUTO_TAG_ENABLED, true)
+
+    fun setAiAutoTagEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_AI_AUTO_TAG_ENABLED, enabled).apply()
+    }
+
+    /** 預設 AI 標籤是否已建立 */
+    fun isDefaultAiTagsSeeded(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_DEFAULT_AI_TAGS_SEEDED, false)
+
+    fun setDefaultAiTagsSeeded(ctx: Context, seeded: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_DEFAULT_AI_TAGS_SEEDED, seeded).apply()
+    }
+
+    /** 勿擾時段設定（預設關閉，23:00 - 07:00） */
+    fun isQuietHoursEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_QUIET_HOURS_ENABLED, false)
+
+    fun setQuietHoursEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_QUIET_HOURS_ENABLED, enabled).apply()
+    }
+
+    fun getQuietHoursStartMinute(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_QUIET_START_MIN, 23 * 60).coerceIn(0, 23 * 60 + 59)
+
+    fun getQuietHoursEndMinute(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_QUIET_END_MIN, 7 * 60).coerceIn(0, 23 * 60 + 59)
+
+    fun setQuietHoursRange(ctx: Context, startMinute: Int, endMinute: Int) {
+        prefs(ctx).edit()
+            .putInt(KEY_QUIET_START_MIN, startMinute.coerceIn(0, 23 * 60 + 59))
+            .putInt(KEY_QUIET_END_MIN, endMinute.coerceIn(0, 23 * 60 + 59))
+            .apply()
+    }
+
+    fun isInQuietHoursNow(ctx: Context): Boolean {
+        if (!isQuietHoursEnabled(ctx)) return false
+        val start = getQuietHoursStartMinute(ctx)
+        val end = getQuietHoursEndMinute(ctx)
+        val cal = java.util.Calendar.getInstance()
+        val nowMin = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+        return if (start <= end) {
+            nowMin in start..end
+        } else {
+            nowMin >= start || nowMin <= end
+        }
+    }
+
+    /** 每日摘要生成後推播通知開關（預設開） */
+    fun isDailySummaryNotifEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_DAILY_SUMMARY_NOTIF, true)
+
+    fun setDailySummaryNotifEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_DAILY_SUMMARY_NOTIF, enabled).apply()
+    }
+
+    /** VIP 寄件者（per-app sender set） */
+    private fun getVipSendersMap(ctx: Context): MutableMap<String, List<String>> {
+        val raw = prefs(ctx).getString(KEY_VIP_SENDERS_MAP, null) ?: return mutableMapOf()
+        return try {
+            val type = object : TypeToken<MutableMap<String, List<String>>>() {}.type
+            gson.fromJson<MutableMap<String, List<String>>>(raw, type) ?: mutableMapOf()
+        } catch (_: Exception) {
+            mutableMapOf()
+        }
+    }
+
+    fun getVipSenders(ctx: Context, packageName: String): Set<String> =
+        getVipSendersMap(ctx)[packageName]?.toSet() ?: emptySet()
+
+    fun toggleVipSender(ctx: Context, packageName: String, sender: String): Boolean {
+        val map = getVipSendersMap(ctx)
+        val list = map[packageName]?.toMutableList() ?: mutableListOf()
+        val pinned = if (sender in list) {
+            list.remove(sender)
+            false
+        } else {
+            list.add(sender)
+            true
+        }
+        if (list.isEmpty()) map.remove(packageName) else map[packageName] = list
+        prefs(ctx).edit().putString(KEY_VIP_SENDERS_MAP, gson.toJson(map)).apply()
+        return pinned
+    }
+
+    /** 設定頁卡片收合狀態（預設全部展開） */
+    fun isSettingsCardExpanded(ctx: Context, cardKey: String): Boolean {
+        val collapsed = prefs(ctx).getStringSet(KEY_COLLAPSED_CARDS, emptySet()) ?: emptySet()
+        return cardKey !in collapsed
+    }
+
+    fun setSettingsCardExpanded(ctx: Context, cardKey: String, expanded: Boolean) {
+        val collapsed = (prefs(ctx).getStringSet(KEY_COLLAPSED_CARDS, emptySet()) ?: emptySet()).toMutableSet()
+        if (expanded) collapsed.remove(cardKey) else collapsed.add(cardKey)
+        prefs(ctx).edit().putStringSet(KEY_COLLAPSED_CARDS, collapsed).apply()
     }
 }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -41,6 +42,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,10 +59,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.room.withTransaction
 import com.phantom.checker.data.TagEntity
 import com.phantom.checker.service.AppDatabaseHolder
+import com.phantom.checker.ui.components.FluidSwitch
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.glassSource
 import dev.chrisbanes.haze.HazeState
@@ -120,16 +124,31 @@ fun TagManagementScreen(onBack: () -> Unit) {
                 showEditor = false
                 editingTag = null
             },
-            onSave = { name, colorHex ->
+            onSave = { name, colorHex, aiHint, isAiManaged ->
                 scope.launch {
                     withContext(Dispatchers.IO) {
                         val dao = AppDatabaseHolder.db(appCtx).tagDao()
                         val existing = editingTag
                         if (existing == null) {
                             val nextOrder = (tags.maxOfOrNull { it.sortOrder } ?: -1) + 1
-                            dao.insert(TagEntity(name = name, colorHex = colorHex, sortOrder = nextOrder))
+                            dao.insert(
+                                TagEntity(
+                                    name = name,
+                                    colorHex = colorHex,
+                                    sortOrder = nextOrder,
+                                    aiHint = aiHint,
+                                    isAiManaged = isAiManaged
+                                )
+                            )
                         } else {
-                            dao.update(existing.copy(name = name, colorHex = colorHex))
+                            dao.update(
+                                existing.copy(
+                                    name = name,
+                                    colorHex = colorHex,
+                                    aiHint = aiHint,
+                                    isAiManaged = isAiManaged
+                                )
+                            )
                         }
                     }
                     showEditor = false
@@ -245,11 +264,40 @@ fun TagManagementScreen(onBack: () -> Unit) {
                                             .background(parseTagColor(tag.colorHex))
                                     )
                                     Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        text = tag.name,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = tag.name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (tag.isAiManaged) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = MaterialTheme.colorScheme.primaryContainer
+                                                ) {
+                                                    Text(
+                                                        text = "AI",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        if (tag.aiHint.isNotBlank()) {
+                                            Text(
+                                                text = tag.aiHint,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
@@ -312,10 +360,12 @@ fun TagManagementScreen(onBack: () -> Unit) {
 private fun TagEditorDialog(
     initial: TagEntity?,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit
+    onSave: (String, String, String, Boolean) -> Unit
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var selectedColor by remember { mutableStateOf(initial?.colorHex ?: TAG_COLOR_PALETTE.first()) }
+    var aiHint by remember { mutableStateOf(initial?.aiHint ?: "") }
+    var isAiManaged by remember { mutableStateOf(initial?.isAiManaged ?: false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -330,6 +380,29 @@ private fun TagEditorDialog(
                     label = { Text("標籤名稱") },
                     placeholder = { Text("例如：工作、帳單、物流") }
                 )
+                OutlinedTextField(
+                    value = aiHint,
+                    onValueChange = { aiHint = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                    label = { Text("AI 判斷依據（選填）") },
+                    placeholder = { Text("例如：銀行扣款、信用卡消費通知") }
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "允許 AI 自動指派此標籤",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FluidSwitch(
+                        checked = isAiManaged,
+                        onCheckedChange = { isAiManaged = it }
+                    )
+                }
                 Text("選擇顏色", style = MaterialTheme.typography.labelMedium)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -361,7 +434,7 @@ private fun TagEditorDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(name.trim(), selectedColor) },
+                onClick = { onSave(name.trim(), selectedColor, aiHint.trim(), isAiManaged) },
                 enabled = name.isNotBlank()
             ) {
                 Text("儲存")

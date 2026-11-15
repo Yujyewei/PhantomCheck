@@ -131,6 +131,50 @@ object DailySummaryPolicy {
             generatedAt = System.currentTimeMillis()
         )
         db.aiSummaryDao().insertOrReplace(entity)
+
+        if (PhantomPrefs.isDailySummaryEnabled(appCtx) &&
+            PhantomPrefs.isDailySummaryNotifEnabled(appCtx) &&
+            StatsForegroundService.hasPostNotificationsPermission(appCtx)
+        ) {
+            postSummaryNotification(appCtx)
+        }
+
         return Result.success(entity)
     }
+
+    private fun postSummaryNotification(ctx: Context) {
+        val nm = ctx.getSystemService(android.app.NotificationManager::class.java) ?: return
+        nm.createNotificationChannel(
+            android.app.NotificationChannel(
+                "daily_summary",
+                "每日摘要",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            )
+        )
+        val intent = android.content.Intent(ctx, com.phantom.checker.ui.MainActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_OPEN_TAB, TAB_STATS)
+        }
+        val pi = android.app.PendingIntent.getActivity(
+            ctx,
+            DAILY_SUMMARY_NOTIF_ID,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = android.app.Notification.Builder(ctx, "daily_summary")
+            .setSmallIcon(com.phantom.checker.R.drawable.ic_stat_phantom)
+            .setContentTitle("今日訊息摘要已生成")
+            .setContentText("點擊查看今日訊息重點與風險統計")
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        try {
+            nm.notify(DAILY_SUMMARY_NOTIF_ID, notif)
+        } catch (_: SecurityException) {
+        }
+    }
+
+    const val EXTRA_OPEN_TAB = "extra_open_tab"
+    const val TAB_STATS = "stats"
+    private const val DAILY_SUMMARY_NOTIF_ID = 1003
 }

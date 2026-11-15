@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -17,6 +18,7 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import com.phantom.checker.R
 import com.phantom.checker.ui.MainActivity
+import com.phantom.checker.ui.buildRecentAppsStripBitmap
 import com.phantom.checker.util.PhantomPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +43,12 @@ class StatsForegroundService : Service() {
 
     @Volatile
     private var isForegroundStarted = false
+
+    @Volatile
+    private var cachedStripPackages: List<String> = emptyList()
+
+    @Volatile
+    private var cachedStripBitmap: Bitmap? = null
 
     private val delayedRefreshRunnable = Runnable {
         pendingScheduled = false
@@ -68,7 +76,7 @@ class StatsForegroundService : Service() {
 
         // 首次啟動必須立即呼叫 startForeground 以符合 Android 8+ 規範
         if (!isForegroundStarted) {
-            val initialNotif = buildNotification(today = 0, unread = 0, scam = 0)
+            val initialNotif = buildNotification(today = 0, unread = 0, scam = 0, largeIcon = cachedStripBitmap)
             startForegroundCompat(initialNotif)
             isForegroundStarted = true
         }
@@ -117,16 +125,22 @@ class StatsForegroundService : Service() {
             }
             try {
                 val startOfDay = NotificationCollectorService.startOfTodayMillis()
-                val stats = AppDatabaseHolder.db(applicationContext)
-                    .messageDao()
-                    .statsOverview(startOfDay)
+                val dao = AppDatabaseHolder.db(applicationContext).messageDao()
+                val stats = dao.statsOverview(startOfDay)
+                val recentPkgs = dao.todayRecentApps(startOfDay).map { it.packageName }
+                if (recentPkgs != cachedStripPackages) {
+                    cachedStripPackages = recentPkgs
+                    cachedStripBitmap = buildRecentAppsStripBitmap(applicationContext, recentPkgs)
+                }
                 val notif = buildNotification(
                     today = stats.today,
                     unread = stats.unread,
-                    scam = stats.scam
+                    scam = stats.scam,
+                    largeIcon = cachedStripBitmap
                 )
-                val nm = getSystemService(NotificationManager::class.java)
-                nm?.notify(STATS_NOTIF_ID, notif)
+                // 每次 refresh 一律重新呼叫 startForeground，確保被滑掉後下一則訊息到達即重生
+                startForegroundCompat(notif)
+                isForegroundStarted = true
             } catch (_: SecurityException) {
             } catch (_: Exception) {
             }
@@ -144,7 +158,12 @@ class StatsForegroundService : Service() {
         )
     }
 
-    private fun buildNotification(today: Int, unread: Int, scam: Int): Notification {
+    private fun buildNotification(
+        today: Int,
+        unread: Int,
+        scam: Int,
+        largeIcon: Bitmap? = null
+    ): Notification {
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -158,6 +177,11 @@ class StatsForegroundService : Service() {
             .setSmallIcon(R.drawable.ic_stat_phantom)
             .setContentTitle("幻訊・今日 $today 則訊息")
             .setContentText("未讀 $unread 則・詐騙警示 $scam 則")
+            .apply {
+                if (largeIcon != null) {
+                    setLargeIcon(largeIcon)
+                }
+            }
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)

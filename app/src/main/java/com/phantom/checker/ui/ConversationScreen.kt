@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Email
@@ -80,6 +81,7 @@ import com.phantom.checker.network.AiClient
 import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.ui.components.GlassCard
+import com.phantom.checker.ui.components.SwipeToRevealRow
 import com.phantom.checker.ui.components.glassSource
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
@@ -159,6 +161,7 @@ fun ConversationScreen(
     var messages by remember { mutableStateOf(listOf<MessageEntity>()) }
     var allTags by remember { mutableStateOf(listOf<TagEntity>()) }
     var msgTagIdsMap by remember { mutableStateOf<Map<Long, Set<Long>>>(emptyMap()) }
+    var msgAiTagColorMap by remember { mutableStateOf<Map<Long, Color>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(true) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -167,6 +170,7 @@ fun ConversationScreen(
     var showClearConfirm by remember { mutableStateOf(false) }
     var sheetMessage by remember { mutableStateOf<MessageEntity?>(null) }
     var deleteCandidate by remember { mutableStateOf<MessageEntity?>(null) }
+    var revealedMessageId by remember { mutableStateOf<Long?>(null) }
     var isAnalyzing by remember { mutableStateOf(false) }
 
     val launchIntent = remember(packageName) {
@@ -201,6 +205,12 @@ fun ConversationScreen(
             val refs = db.tagDao().allCrossRefs()
             msgTagIdsMap = refs.groupBy { it.messageId }
                 .mapValues { (_, list) -> list.map { it.tagId }.toSet() }
+            val tagById = allTags.associateBy { it.id }
+            msgAiTagColorMap = refs.groupBy { it.messageId }.mapNotNull { (mid, list) ->
+                val resolvedTags = list.mapNotNull { tagById[it.tagId] }
+                val firstAi = resolvedTags.firstOrNull { it.isAiManaged } ?: resolvedTags.firstOrNull()
+                firstAi?.let { mid to parseTagColor(it.colorHex) }
+            }.toMap()
             dao.byConversation(packageName, sender)
         }
         messages = loaded
@@ -532,14 +542,40 @@ fun ConversationScreen(
                                     HorizontalDivider(modifier = Modifier.weight(1f))
                                 }
                             }
-                            ChatBubbleItem(
-                                message = msg,
-                                glassState = glassState,
-                                onClick = {
-                                    ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
-                                },
-                                onLongClick = { sheetMessage = msg }
-                            )
+                            SwipeToRevealRow(
+                                revealed = revealedMessageId == msg.id,
+                                onReveal = { revealedMessageId = msg.id },
+                                onCollapse = { if (revealedMessageId == msg.id) revealedMessageId = null },
+                                actions = {
+                                    Button(
+                                        onClick = {
+                                            revealedMessageId = null
+                                            deleteCandidate = msg
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.error,
+                                            contentColor = MaterialTheme.colorScheme.onError
+                                        ),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("刪除")
+                                    }
+                                }
+                            ) {
+                                ChatBubbleItem(
+                                    message = msg,
+                                    glassState = glassState,
+                                    tagDotColor = msgAiTagColorMap[msg.id],
+                                    onClick = {
+                                        revealedMessageId = null
+                                        ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
+                                    },
+                                    onLongClick = {
+                                        revealedMessageId = null
+                                        sheetMessage = msg
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -553,6 +589,7 @@ fun ConversationScreen(
 private fun ChatBubbleItem(
     message: MessageEntity,
     glassState: HazeState,
+    tagDotColor: Color? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -580,10 +617,23 @@ private fun ChatBubbleItem(
             cornerRadius = 16.dp,
             contentPadding = 12.dp
         ) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyMedium
-            )
+            Row(verticalAlignment = Alignment.Top) {
+                if (tagDotColor != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(tagDotColor)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             if (message.riskReason.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(

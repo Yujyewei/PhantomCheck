@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,19 +43,24 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -79,8 +85,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -90,18 +99,21 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.room.withTransaction
 import com.phantom.checker.data.AiSummaryEntity
+import com.phantom.checker.data.AiTagCountRow
 import com.phantom.checker.data.AppGroupRow
 import com.phantom.checker.data.AppRiskRow
 import com.phantom.checker.data.MessageEntity
+import com.phantom.checker.data.MessageTagCrossRef
 import com.phantom.checker.data.TagEntity
 import com.phantom.checker.network.AiClient
 import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.DailySummaryPolicy
+import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.NotificationCollectorService
 import com.phantom.checker.service.RetentionPolicy
 import com.phantom.checker.service.StatsForegroundService
-import com.phantom.checker.ui.components.FluidSwitch
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.LiquidGlassTabBar
 import com.phantom.checker.ui.components.LiquidGlassTabBarItem
@@ -123,18 +135,38 @@ import java.util.Date
 import java.util.Locale
 
 private const val PAGE_SIZE = 100
+private const val MAX_BATCH_SELECT = 100
 
 class MainActivity : ComponentActivity() {
+    private val requestedTabState = mutableStateOf<MainTab?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AiClient.init(applicationContext)
         RetentionPolicy.scheduleOrUpdate(applicationContext)
         DailySummaryPolicy.schedule(applicationContext)
+        HeartbeatPolicy.schedule(applicationContext)
         StatsForegroundService.startOrRefresh(applicationContext)
+        parseIntentTab(intent)
         setContent {
             PhantomCheckTheme {
-                PhantomCheckApp()
+                PhantomCheckApp(
+                    requestedTab = requestedTabState.value,
+                    onConsumedRequestedTab = { requestedTabState.value = null }
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        parseIntentTab(intent)
+    }
+
+    private fun parseIntentTab(intent: Intent?) {
+        when (intent?.getStringExtra(DailySummaryPolicy.EXTRA_OPEN_TAB)) {
+            DailySummaryPolicy.TAB_STATS -> requestedTabState.value = MainTab.STATS
         }
     }
 }
@@ -158,8 +190,7 @@ private fun isPostNotificationsGranted(context: Context): Boolean {
 private enum class MainTab(val title: String) {
     MESSAGES("訊息"),
     SCAMS("詐騙警示"),
-    STATS("統計"),
-    SETTINGS("設定")
+    STATS("統計")
 }
 
 private sealed interface MessageFilter {
@@ -200,11 +231,16 @@ private data class StatsUiState(
     val suspiciousCount: Int = 0,
     val scamCount: Int = 0,
     val topRiskyApps: List<AppRiskRow> = emptyList(),
-    val rawAppGroups: List<AppGroupRow> = emptyList()
+    val rawAppGroups: List<AppGroupRow> = emptyList(),
+    val todayAiTagCounts: List<AiTagCountRow> = emptyList()
 )
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun PhantomCheckApp() {
+private fun PhantomCheckApp(
+    requestedTab: MainTab? = null,
+    onConsumedRequestedTab: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     val appCtx = ctx.applicationContext
     val scope = rememberCoroutineScope()
@@ -215,6 +251,13 @@ fun PhantomCheckApp() {
     var searchQuery by remember { mutableStateOf("") }
     var searchRiskFilter by remember { mutableStateOf(SearchRiskFilter.ALL) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(requestedTab) {
+        if (requestedTab != null) {
+            selectedTab = requestedTab
+            onConsumedRequestedTab()
+        }
+    }
 
     // 訊息 Tab 狀態
     var todayCount by remember { mutableIntStateOf(0) }
@@ -238,6 +281,41 @@ fun PhantomCheckApp() {
     var statsState by remember { mutableStateOf(StatsUiState()) }
     var isLoading by remember { mutableStateOf(true) }
     var actionTargetApp by remember { mutableStateOf<AppGroupUi?>(null) }
+    var deleteAppConfirm by remember { mutableStateOf<AppGroupUi?>(null) }
+    var showClearReadConfirm by remember { mutableStateOf(false) }
+
+    // 平面清單長按 Bottom Sheet & 單則刪除確認
+    var messageSheetTarget by remember { mutableStateOf<MessageEntity?>(null) }
+    var sheetMsgTagIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var isAnalyzingSheetMsg by remember { mutableStateOf(false) }
+    var deleteMessageConfirm by remember { mutableStateOf<MessageEntity?>(null) }
+
+    // 多選批次操作狀態
+    var isMultiSelectMode by remember { mutableStateOf(false) }
+    var selectedMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var showBatchDeleteConfirm by remember { mutableStateOf(false) }
+
+    // 新手引導狀態
+    var onboardingCompleted by remember { mutableStateOf(PhantomPrefs.isOnboardingCompleted(appCtx)) }
+    var onboardingStep by remember { mutableStateOf(OnboardingStep.PERMISSION) }
+    var targetBounds by remember { mutableStateOf<Map<String, Rect>>(emptyMap()) }
+    var wasActionDialogOpenInStep3 by remember { mutableStateOf(false) }
+
+    LaunchedEffect(activeFilter, selectedTab) {
+        isMultiSelectMode = false
+        selectedMessageIds = emptySet()
+    }
+
+    LaunchedEffect(actionTargetApp, onboardingStep, onboardingCompleted) {
+        if (!onboardingCompleted && onboardingStep == OnboardingStep.LONG_PRESS) {
+            if (actionTargetApp != null) {
+                wasActionDialogOpenInStep3 = true
+            } else if (wasActionDialogOpenInStep3) {
+                wasActionDialogOpenInStep3 = false
+                onboardingStep = OnboardingStep.FILTER_CHIPS
+            }
+        }
+    }
 
     var isListenerEnabled by remember {
         mutableStateOf(isNotificationListenerEnabled(appCtx))
@@ -271,6 +349,11 @@ fun PhantomCheckApp() {
                 hasPostNotifications = isPostNotificationsGranted(appCtx)
                 favoritePackages = PhantomPrefs.getFavoriteApps(appCtx)
                 mutedPackages = PhantomPrefs.getMutedApps(appCtx)
+                val completedNow = PhantomPrefs.isOnboardingCompleted(appCtx)
+                if (onboardingCompleted && !completedNow) {
+                    onboardingCompleted = false
+                    onboardingStep = OnboardingStep.PERMISSION
+                }
                 refreshTrigger++
             }
         }
@@ -384,6 +467,7 @@ fun PhantomCheckApp() {
                         val scam = dao.countByRiskLabel("scam")
                         val topRisky = dao.topRiskyApps()
                         val rawGroups = dao.groupByApp()
+                        val aiTagCounts = db.tagDao().todayAiTagCounts(startOfDay)
                         statsState = StatsUiState(
                             latestSummary = summary,
                             weeklyCounts = weekly,
@@ -391,24 +475,37 @@ fun PhantomCheckApp() {
                             suspiciousCount = suspicious,
                             scamCount = scam,
                             topRiskyApps = topRisky,
-                            rawAppGroups = rawGroups
+                            rawAppGroups = rawGroups,
+                            todayAiTagCounts = aiTagCounts
                         )
                     }
-                    MainTab.SETTINGS -> Unit
                 }
             }
         }
         isLoading = false
     }
 
-    // 長按 App 動作對話框（釘選最愛／靜音或解除靜音）
+    // 長按 App 動作對話框（釘選最愛／靜音或解除靜音／刪除此 App 所有訊息）
     actionTargetApp?.let { target ->
         val isFav = target.packageName in favoritePackages
         val isMuted = target.packageName in mutedPackages
         AlertDialog(
             onDismissRequest = { actionTargetApp = null },
             title = { Text(target.appLabel) },
-            text = { Text("選擇要對「${target.appLabel}」執行的操作：") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("選擇要對「${target.appLabel}」執行的操作：")
+                    OutlinedButton(
+                        onClick = {
+                            deleteAppConfirm = target
+                            actionTargetApp = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("刪除此 App 的所有訊息", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val pinned = PhantomPrefs.toggleFavoriteApp(appCtx, target.packageName)
@@ -455,35 +552,403 @@ fun PhantomCheckApp() {
         )
     }
 
-    val glassState = remember { HazeState() }
-
-    Scaffold(
-        bottomBar = {
-            LiquidGlassTabBar(
-                tabCount = MainTab.entries.size,
-                selectedTabIndex = selectedTab.ordinal,
-                glassState = glassState,
-                onSelect = { index -> selectedTab = MainTab.entries[index] },
-                tabs = {
-                    MainTab.entries.forEach { tab ->
-                        val icon = when (tab) {
-                            MainTab.MESSAGES -> Icons.Default.Email
-                            MainTab.SCAMS -> Icons.Default.Warning
-                            MainTab.STATS -> Icons.Default.Info
-                            MainTab.SETTINGS -> Icons.Default.Settings
+    deleteAppConfirm?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteAppConfirm = null },
+            title = { Text("刪除此 App 的所有訊息") },
+            text = { Text("確定要永久刪除「${target.appLabel}」的所有訊息嗎？此操作無法復原。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByApp(target.packageName)
+                                    db.messageDao().deleteByApp(target.packageName)
+                                }
+                            }
+                            StatsForegroundService.startOrRefresh(appCtx)
+                            deleteAppConfirm = null
+                            refreshTrigger++
+                            snackbarHostState.showSnackbar("已刪除「${target.appLabel}」的所有訊息")
                         }
-                        LiquidGlassTabBarItem(
-                            selected = selectedTab == tab,
-                            onClick = { selectedTab = tab },
-                            icon = icon,
-                            label = tab.title,
-                            modifier = Modifier.weight(1f)
-                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteAppConfirm = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showClearReadConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearReadConfirm = false },
+            title = { Text("清除已讀訊息") },
+            text = { Text("確定要永久刪除所有已讀訊息嗎？未讀訊息將保留。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsForReadMessages()
+                                    db.messageDao().deleteReadMessages()
+                                }
+                            }
+                            StatsForegroundService.startOrRefresh(appCtx)
+                            showClearReadConfirm = false
+                            refreshTrigger++
+                            snackbarHostState.showSnackbar("已清除所有已讀訊息")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認清除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearReadConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    deleteMessageConfirm?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteMessageConfirm = null },
+            title = { Text("刪除訊息") },
+            text = { Text("確定要永久刪除這則來自「${target.sender}」的訊息嗎？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByMessage(target.id)
+                                    db.messageDao().deleteById(target.id)
+                                }
+                            }
+                            StatsForegroundService.startOrRefresh(appCtx)
+                            deleteMessageConfirm = null
+                            refreshTrigger++
+                            snackbarHostState.showSnackbar("已刪除訊息")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteMessageConfirm = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showBatchDeleteConfirm && selectedMessageIds.isNotEmpty()) {
+        val count = selectedMessageIds.size
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteConfirm = false },
+            title = { Text("批次刪除訊息") },
+            text = { Text("確定要永久刪除已選取的 $count 則訊息嗎？此操作無法復原。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val ids = selectedMessageIds.toList()
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByMessageIds(ids)
+                                    db.messageDao().deleteByIds(ids)
+                                }
+                            }
+                            StatsForegroundService.startOrRefresh(appCtx)
+                            showBatchDeleteConfirm = false
+                            isMultiSelectMode = false
+                            selectedMessageIds = emptySet()
+                            refreshTrigger++
+                            snackbarHostState.showSnackbar("已刪除 $count 則訊息")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    messageSheetTarget?.let { msg ->
+        LaunchedEffect(msg.id) {
+            sheetMsgTagIds = withContext(Dispatchers.IO) {
+                AppDatabaseHolder.db(appCtx).tagDao().tagsForMessage(msg.id).map { it.id }.toSet()
+            }
+        }
+        ModalBottomSheet(onDismissRequest = { messageSheetTarget = null }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "訊息操作",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val nextStar = !msg.isStarred
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    AppDatabaseHolder.db(appCtx).messageDao().setStarred(msg.id, nextStar)
+                                }
+                                messageSheetTarget = null
+                                refreshTrigger++
+                                snackbarHostState.showSnackbar(if (nextStar) "已加入星標" else "已移除星標")
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (msg.isStarred) "取消星標" else "加入星標")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (isAnalyzingSheetMsg) return@OutlinedButton
+                            scope.launch {
+                                isAnalyzingSheetMsg = true
+                                val autoTagEnabled = PhantomPrefs.isAiAutoTagEnabled(appCtx)
+                                val aiTags = if (autoTagEnabled) {
+                                    withContext(Dispatchers.IO) {
+                                        AppDatabaseHolder.db(appCtx).tagDao().aiManagedTags()
+                                    }
+                                } else {
+                                    emptyList()
+                                }
+                                val res = AiClient.analyzeMessage(
+                                    sender = msg.sender,
+                                    content = msg.content,
+                                    tags = aiTags,
+                                    enableAutoTag = autoTagEnabled,
+                                    context = appCtx,
+                                    bypassCache = true
+                                )
+                                isAnalyzingSheetMsg = false
+                                if (res != null) {
+                                    withContext(Dispatchers.IO) {
+                                        val db = AppDatabaseHolder.db(appCtx)
+                                        db.withTransaction {
+                                            db.messageDao().update(
+                                                msg.copy(
+                                                    riskScore = res.riskScore,
+                                                    riskLabel = res.riskLabel,
+                                                    riskReason = res.riskReason
+                                                )
+                                            )
+                                            if (autoTagEnabled && res.tagIds.isNotEmpty()) {
+                                                val manualIds = db.tagDao().crossRefsForMessage(msg.id)
+                                                    .filter { it.source == MessageTagCrossRef.SOURCE_MANUAL }
+                                                    .map { it.tagId }
+                                                    .toSet()
+                                                res.tagIds.forEach { tid ->
+                                                    if (tid !in manualIds) {
+                                                        db.tagDao().addTagToMessage(
+                                                            MessageTagCrossRef(msg.id, tid, MessageTagCrossRef.SOURCE_AUTO)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    messageSheetTarget = null
+                                    refreshTrigger++
+                                    snackbarHostState.showSnackbar("AI 分析完成：${res.riskLabel} (${res.riskScore}分)")
+                                } else {
+                                    snackbarHostState.showSnackbar("AI 分析失敗，請確認 API 設定")
+                                }
+                            }
+                        },
+                        enabled = !isAnalyzingSheetMsg,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (isAnalyzingSheetMsg) "分析中…" else "AI 分析")
                     }
                 }
-            )
-        },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+
+                if (availableTags.isNotEmpty()) {
+                    Text("標籤", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        availableTags.forEach { tag ->
+                            val selected = tag.id in sheetMsgTagIds
+                            val tagColor = parseTagColor(tag.colorHex)
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            val tagDao = AppDatabaseHolder.db(appCtx).tagDao()
+                                            if (selected) {
+                                                tagDao.removeTagFromMessage(msg.id, tag.id)
+                                            } else {
+                                                tagDao.addTagToMessage(
+                                                    MessageTagCrossRef(msg.id, tag.id, MessageTagCrossRef.SOURCE_MANUAL)
+                                                )
+                                            }
+                                        }
+                                        sheetMsgTagIds = if (selected) sheetMsgTagIds - tag.id else sheetMsgTagIds + tag.id
+                                        refreshTrigger++
+                                    }
+                                },
+                                label = { Text(tag.name) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = tagColor.copy(alpha = 0.22f)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            messageSheetTarget = null
+                            ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("詳細")
+                    }
+                    Button(
+                        onClick = {
+                            messageSheetTarget = null
+                            deleteMessageConfirm = msg
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("刪除")
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+
+    val glassState = remember { HazeState() }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                if (isMultiSelectMode) {
+                    Surface(
+                        tonalElevation = 6.dp,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                enabled = selectedMessageIds.isNotEmpty(),
+                                onClick = {
+                                    val ids = selectedMessageIds.toList()
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            AppDatabaseHolder.db(appCtx).messageDao().markReadByIds(ids)
+                                        }
+                                        StatsForegroundService.startOrRefresh(appCtx)
+                                        isMultiSelectMode = false
+                                        selectedMessageIds = emptySet()
+                                        refreshTrigger++
+                                        snackbarHostState.showSnackbar("已標記 ${ids.size} 則為已讀")
+                                    }
+                                }
+                            ) { Text("已讀") }
+                            TextButton(
+                                enabled = selectedMessageIds.isNotEmpty(),
+                                onClick = {
+                                    val ids = selectedMessageIds.toList()
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            AppDatabaseHolder.db(appCtx).messageDao().setStarredByIds(ids, true)
+                                        }
+                                        isMultiSelectMode = false
+                                        selectedMessageIds = emptySet()
+                                        refreshTrigger++
+                                        snackbarHostState.showSnackbar("已將 ${ids.size} 則加入星標")
+                                    }
+                                }
+                            ) { Text("星標") }
+                            TextButton(
+                                enabled = selectedMessageIds.isNotEmpty(),
+                                onClick = { showBatchDeleteConfirm = true }
+                            ) { Text("刪除", color = MaterialTheme.colorScheme.error) }
+                            TextButton(
+                                onClick = {
+                                    isMultiSelectMode = false
+                                    selectedMessageIds = emptySet()
+                                }
+                            ) { Text("取消") }
+                        }
+                    }
+                } else {
+                    LiquidGlassTabBar(
+                        tabCount = MainTab.entries.size,
+                        selectedTabIndex = selectedTab.ordinal,
+                        glassState = glassState,
+                        onSelect = { index -> selectedTab = MainTab.entries[index] },
+                        tabs = {
+                            MainTab.entries.forEach { tab ->
+                                val icon = when (tab) {
+                                    MainTab.MESSAGES -> Icons.Default.Email
+                                    MainTab.SCAMS -> Icons.Default.Warning
+                                    MainTab.STATS -> Icons.Default.Info
+                                }
+                                LiquidGlassTabBarItem(
+                                    selected = selectedTab == tab,
+                                    onClick = { selectedTab = tab },
+                                    icon = icon,
+                                    label = tab.title,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    )
+                }
+            },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -492,24 +957,40 @@ fun PhantomCheckApp() {
                 .padding(padding)
                 .padding(12.dp)
         ) {
-            // 頂部標題列：僅保留搜尋按鈕
+            // 頂部標題列：搜尋＋重新整理＋設定齒輪
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("幻訊 PhantomCheck", style = MaterialTheme.typography.headlineSmall)
-                IconButton(onClick = {
-                    showSearchBar = !showSearchBar
-                    if (!showSearchBar) {
-                        searchQuery = ""
-                        searchRiskFilter = SearchRiskFilter.ALL
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = {
+                        showSearchBar = !showSearchBar
+                        if (!showSearchBar) {
+                            searchQuery = ""
+                            searchRiskFilter = SearchRiskFilter.ALL
+                        }
+                    }) {
+                        Icon(
+                            imageVector = if (showSearchBar) Icons.Default.Clear else Icons.Default.Search,
+                            contentDescription = "搜尋"
+                        )
                     }
-                }) {
-                    Icon(
-                        imageVector = if (showSearchBar) Icons.Default.Clear else Icons.Default.Search,
-                        contentDescription = "搜尋"
-                    )
+                    IconButton(onClick = { refreshTrigger++ }) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "重新整理"
+                        )
+                    }
+                    IconButton(onClick = {
+                        ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "設定"
+                        )
+                    }
                 }
             }
 
@@ -577,6 +1058,18 @@ fun PhantomCheckApp() {
 
             Spacer(Modifier.height(10.dp))
 
+            val toggleSelection: (Long) -> Unit = { id ->
+                if (id in selectedMessageIds) {
+                    selectedMessageIds = selectedMessageIds - id
+                } else if (selectedMessageIds.size >= MAX_BATCH_SELECT) {
+                    scope.launch {
+                        snackbarHostState.showSnackbar("單次最多選取 $MAX_BATCH_SELECT 則訊息")
+                    }
+                } else {
+                    selectedMessageIds = selectedMessageIds + id
+                }
+            }
+
             if (searchQuery.trim().isNotEmpty()) {
                 val displayResults = remember(searchResults, searchRiskFilter) {
                     when (searchRiskFilter) {
@@ -592,9 +1085,17 @@ fun PhantomCheckApp() {
                     results = displayResults,
                     activeFilterKeywords = activeFilterKeywords,
                     glassState = glassState,
+                    isMultiSelectMode = isMultiSelectMode,
+                    selectedIds = selectedMessageIds,
+                    onToggleMultiSelect = {
+                        isMultiSelectMode = !isMultiSelectMode
+                        if (!isMultiSelectMode) selectedMessageIds = emptySet()
+                    },
+                    onToggleSelect = toggleSelection,
                     onOpenDetail = { msg ->
                         ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
-                    }
+                    },
+                    onLongPressMessage = { msg -> messageSheetTarget = msg }
                 )
             } else {
                 when (selectedTab) {
@@ -613,6 +1114,13 @@ fun PhantomCheckApp() {
                         isLoadingMore = isLoadingMore,
                         isListenerEnabled = isListenerEnabled,
                         glassState = glassState,
+                        isMultiSelectMode = isMultiSelectMode,
+                        selectedIds = selectedMessageIds,
+                        onToggleMultiSelect = {
+                            isMultiSelectMode = !isMultiSelectMode
+                            if (!isMultiSelectMode) selectedMessageIds = emptySet()
+                        },
+                        onToggleSelect = toggleSelection,
                         onSelectFilter = { f -> activeFilter = f },
                         onMarkAllRead = {
                             scope.launch {
@@ -624,6 +1132,7 @@ fun PhantomCheckApp() {
                                 snackbarHostState.showSnackbar("已將全部訊息標記為已讀")
                             }
                         },
+                        onClearRead = { showClearReadConfirm = true },
                         onLoadMore = {
                             if (!isLoadingMore && hasMoreFiltered) {
                                 scope.launch {
@@ -651,20 +1160,12 @@ fun PhantomCheckApp() {
                         onOpenMessageDetail = { msg ->
                             ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
                         },
-                        onToggleStar = { msg ->
-                            scope.launch {
-                                val nextStar = !msg.isStarred
-                                withContext(Dispatchers.IO) {
-                                    AppDatabaseHolder.db(appCtx).messageDao().setStarred(msg.id, nextStar)
-                                }
-                                filteredMessages = filteredMessages.map {
-                                    if (it.id == msg.id) it.copy(isStarred = nextStar) else it
-                                }
-                                snackbarHostState.showSnackbar(if (nextStar) "已加入星標" else "已取消星標")
-                            }
-                        },
+                        onLongPressMessage = { msg -> messageSheetTarget = msg },
                         onOpenNotificationAccess = {
                             ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        },
+                        onReportBounds = { key, rect ->
+                            targetBounds = targetBounds + (key to rect)
                         }
                     )
                     MainTab.SCAMS -> ScamsTab(
@@ -686,30 +1187,47 @@ fun PhantomCheckApp() {
                             scope.launch { snackbarHostState.showSnackbar(msg) }
                         }
                     )
-                    MainTab.SETTINGS -> SettingsTab(
-                        glassState = glassState,
-                        onOpenScamCenter = {
-                            ctx.startActivity(Intent(ctx, ScamCenterActivity::class.java))
-                        },
-                        onOpenAiSettings = {
-                            ctx.startActivity(Intent(ctx, ApiKeySettingsActivity::class.java))
-                        },
-                        onOpenFilterSettings = {
-                            ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
-                        },
-                        onOpenTagManagement = {
-                            ctx.startActivity(Intent(ctx, TagManagementActivity::class.java))
-                        },
-                        onOpenAutoReply = {
-                            ctx.startActivity(Intent(ctx, AutoReplySettingsActivity::class.java))
-                        }
-                    )
                 }
             }
         }
     }
+
+        if (!onboardingCompleted) {
+            OnboardingOverlay(
+                step = onboardingStep,
+                isListenerEnabled = isListenerEnabled,
+                targetBounds = targetBounds,
+                glassState = glassState,
+                onOpenNotificationSettings = {
+                    ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                },
+                onNextStep = {
+                    onboardingStep = when (onboardingStep) {
+                        OnboardingStep.PERMISSION -> OnboardingStep.HOME_APP
+                        OnboardingStep.HOME_APP -> OnboardingStep.LONG_PRESS
+                        OnboardingStep.LONG_PRESS -> OnboardingStep.FILTER_CHIPS
+                        OnboardingStep.FILTER_CHIPS -> OnboardingStep.DONE
+                        OnboardingStep.DONE -> {
+                            PhantomPrefs.setOnboardingCompleted(appCtx, true)
+                            onboardingCompleted = true
+                            OnboardingStep.DONE
+                        }
+                    }
+                },
+                onSkip = {
+                    PhantomPrefs.setOnboardingCompleted(appCtx, true)
+                    onboardingCompleted = true
+                },
+                onFinish = {
+                    PhantomPrefs.setOnboardingCompleted(appCtx, true)
+                    onboardingCompleted = true
+                }
+            )
+        }
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SearchResultsSection(
     query: String,
@@ -717,7 +1235,12 @@ private fun SearchResultsSection(
     results: List<MessageEntity>,
     activeFilterKeywords: List<String>,
     glassState: HazeState,
-    onOpenDetail: (MessageEntity) -> Unit
+    isMultiSelectMode: Boolean,
+    selectedIds: Set<Long>,
+    onToggleMultiSelect: () -> Unit,
+    onToggleSelect: (Long) -> Unit,
+    onOpenDetail: (MessageEntity) -> Unit,
+    onLongPressMessage: (MessageEntity) -> Unit
 ) {
     when {
         isLoading && results.isEmpty() -> {
@@ -733,22 +1256,64 @@ private fun SearchResultsSection(
             )
         }
         else -> {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(results, key = { it.id }) { m ->
-                    val matchedKeywords = if (m.isFiltered) {
-                        activeFilterKeywords.filter { kw ->
-                            m.content.contains(kw, ignoreCase = true)
-                        }
-                    } else {
-                        emptyList()
-                    }
-                    MessageCard(
-                        message = m,
-                        glassState = glassState,
-                        highlightAsScam = m.riskLabel == "scam",
-                        matchedKeywords = matchedKeywords,
-                        modifier = Modifier.clickable { onOpenDetail(m) }
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isMultiSelectMode) {
+                            "已選 ${selectedIds.size}/$MAX_BATCH_SELECT 則"
+                        } else {
+                            "搜尋結果 (${results.size})"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    TextButton(onClick = onToggleMultiSelect) {
+                        Text(if (isMultiSelectMode) "完成" else "選取")
+                    }
+                }
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(results, key = { it.id }) { m ->
+                        val matchedKeywords = if (m.isFiltered) {
+                            activeFilterKeywords.filter { kw ->
+                                m.content.contains(kw, ignoreCase = true)
+                            }
+                        } else {
+                            emptyList()
+                        }
+                        val checked = m.id in selectedIds
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isMultiSelectMode) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { onToggleSelect(m.id) }
+                                )
+                            }
+                            MessageCard(
+                                message = m,
+                                glassState = glassState,
+                                highlightAsScam = m.riskLabel == "scam",
+                                matchedKeywords = matchedKeywords,
+                                highlightQuery = query,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (isMultiSelectMode) onToggleSelect(m.id) else onOpenDetail(m)
+                                        },
+                                        onLongClick = {
+                                            if (!isMultiSelectMode) onLongPressMessage(m)
+                                        }
+                                    )
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -772,15 +1337,21 @@ private fun MessagesHomeTab(
     isLoadingMore: Boolean,
     isListenerEnabled: Boolean,
     glassState: HazeState,
+    isMultiSelectMode: Boolean,
+    selectedIds: Set<Long>,
+    onToggleMultiSelect: () -> Unit,
+    onToggleSelect: (Long) -> Unit,
     onSelectFilter: (MessageFilter) -> Unit,
     onMarkAllRead: () -> Unit,
+    onClearRead: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenApp: (String, String) -> Unit,
     onLongPressApp: (AppGroupUi) -> Unit,
     onLongPressFavorite: (String) -> Unit,
     onOpenMessageDetail: (MessageEntity) -> Unit,
-    onToggleStar: (MessageEntity) -> Unit,
-    onOpenNotificationAccess: () -> Unit
+    onLongPressMessage: (MessageEntity) -> Unit,
+    onOpenNotificationAccess: () -> Unit,
+    onReportBounds: (String, Rect) -> Unit
 ) {
     val ctx = LocalContext.current
     val groupMap = remember(appGroups) { appGroups.associateBy { it.packageName } }
@@ -811,7 +1382,11 @@ private fun MessagesHomeTab(
         item {
             GlassCard(
                 glassState = glassState,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coords ->
+                        onReportBounds(OnboardingTargets.STATS_CARD, coords.boundsInRoot())
+                    },
                 cornerRadius = 20.dp,
                 contentPadding = 14.dp
             ) {
@@ -828,15 +1403,19 @@ private fun MessagesHomeTab(
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "點擊 App 進入對話總覽，長按可釘選最愛或靜音",
+                            text = "點擊 App 進入對話總覽，長按可釘選最愛、靜音或刪除",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (unreadCount > 0) {
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = onMarkAllRead) {
-                            Text("全部標已讀")
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (unreadCount > 0) {
+                            TextButton(onClick = onMarkAllRead) {
+                                Text("全部標已讀")
+                            }
+                        }
+                        TextButton(onClick = onClearRead) {
+                            Text("清除已讀", color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
@@ -845,7 +1424,12 @@ private fun MessagesHomeTab(
 
         // 快速篩選 Chip 列
         item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(
+                modifier = Modifier.onGloballyPositioned { coords ->
+                    onReportBounds(OnboardingTargets.FILTER_CHIPS, coords.boundsInRoot())
+                },
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 item {
                     FilterChip(
                         selected = activeFilter == MessageFilter.All,
@@ -1026,21 +1610,31 @@ private fun MessagesHomeTab(
                     }
                 }
                 else -> {
-                    items(appGroups, key = { it.packageName }) { app ->
+                    itemsIndexed(appGroups, key = { _, app -> app.packageName }) { idx, app ->
                         val isMuted = app.packageName in mutedPackages
                         val timeText = remember(app.lastTs) {
                             SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(Date(app.lastTs))
                         }
+                        val rowModifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (idx == 0) {
+                                    Modifier.onGloballyPositioned { coords ->
+                                        onReportBounds(OnboardingTargets.FIRST_APP_ROW, coords.boundsInRoot())
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .alpha(if (isMuted) 0.5f else 1f)
+                            .pressableScale()
+                            .combinedClickable(
+                                onClick = { onOpenApp(app.packageName, app.appLabel) },
+                                onLongClick = { onLongPressApp(app) }
+                            )
                         GlassCard(
                             glassState = glassState,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .alpha(if (isMuted) 0.5f else 1f)
-                                .pressableScale()
-                                .combinedClickable(
-                                    onClick = { onOpenApp(app.packageName, app.appLabel) },
-                                    onLongClick = { onLongPressApp(app) }
-                                ),
+                            modifier = rowModifier,
                             cornerRadius = 20.dp,
                             contentPadding = 12.dp
                         ) {
@@ -1178,16 +1772,54 @@ private fun MessagesHomeTab(
                     }
                 }
                 else -> {
-                    items(filteredMessages, key = { it.id }) { m ->
-                        MessageCard(
-                            message = m,
-                            glassState = glassState,
-                            highlightAsScam = m.riskLabel == "scam",
-                            modifier = Modifier.combinedClickable(
-                                onClick = { onOpenMessageDetail(m) },
-                                onLongClick = { onToggleStar(m) }
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isMultiSelectMode) {
+                                    "已選 ${selectedIds.size}/$MAX_BATCH_SELECT 則"
+                                } else {
+                                    "共 ${filteredMessages.size} 則"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        )
+                            TextButton(onClick = onToggleMultiSelect) {
+                                Text(if (isMultiSelectMode) "完成" else "選取")
+                            }
+                        }
+                    }
+                    items(filteredMessages, key = { it.id }) { m ->
+                        val checked = m.id in selectedIds
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isMultiSelectMode) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { onToggleSelect(m.id) }
+                                )
+                            }
+                            MessageCard(
+                                message = m,
+                                glassState = glassState,
+                                highlightAsScam = m.riskLabel == "scam",
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (isMultiSelectMode) onToggleSelect(m.id) else onOpenMessageDetail(m)
+                                        },
+                                        onLongClick = {
+                                            if (!isMultiSelectMode) onLongPressMessage(m)
+                                        }
+                                    )
+                            )
+                        }
                     }
                     if (isLoadingMore) {
                         item {
@@ -1535,6 +2167,33 @@ private fun StatsTab(
             }
         }
 
+        // 今日 AI 智慧標記分布
+        if (state.todayAiTagCounts.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "今日 AI 智慧標記",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        state.todayAiTagCounts.take(3).forEach { item ->
+                            RiskCountCard(
+                                title = item.name,
+                                count = item.cnt,
+                                accentColor = parseTagColor(item.colorHex),
+                                glassState = glassState,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Top 5 高風險 App 清單
         item {
             GlassCard(
@@ -1639,147 +2298,5 @@ private fun RiskCountCard(
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
-    }
-}
-
-@Composable
-private fun SettingsTab(
-    glassState: HazeState,
-    onOpenScamCenter: () -> Unit,
-    onOpenAiSettings: () -> Unit,
-    onOpenFilterSettings: () -> Unit,
-    onOpenTagManagement: () -> Unit,
-    onOpenAutoReply: () -> Unit
-) {
-    val ctx = LocalContext.current
-    val appCtx = ctx.applicationContext
-    var persistentStats by remember { mutableStateOf(PhantomPrefs.isPersistentStatsEnabled(appCtx)) }
-    var recordOngoing by remember { mutableStateOf(PhantomPrefs.isRecordOngoingEnabled(appCtx)) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            GlassCard(
-                glassState = glassState,
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = 20.dp,
-                contentPadding = 14.dp
-            ) {
-                Text(
-                    text = "功能中心",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = onOpenScamCenter,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("詐騙警示中心")
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onOpenAiSettings,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("多 Provider AI 與 API Key 設定")
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onOpenTagManagement,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("訊息標籤管理")
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onOpenFilterSettings,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("全部設定（通知／AI／資料／外觀／保活）")
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onOpenAutoReply,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressableScale()
-                ) {
-                    Text("SMS 自動回覆設定")
-                }
-            }
-        }
-
-        item {
-            GlassCard(
-                glassState = glassState,
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = 20.dp,
-                contentPadding = 14.dp
-            ) {
-                Text(
-                    text = "通知快速開關",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("常駐統計通知", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "在通知欄即時顯示今日訊息、未讀與詐騙數量",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    FluidSwitch(
-                        checked = persistentStats,
-                        onCheckedChange = { checked ->
-                            persistentStats = checked
-                            PhantomPrefs.setPersistentStatsEnabled(appCtx, checked)
-                            StatsForegroundService.startOrRefresh(appCtx)
-                        }
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("記錄持續性通知", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "關閉時略過系統與前景服務持續刷新的通知",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    FluidSwitch(
-                        checked = recordOngoing,
-                        onCheckedChange = { checked ->
-                            recordOngoing = checked
-                            PhantomPrefs.setRecordOngoingEnabled(appCtx, checked)
-                        }
-                    )
-                }
-            }
-        }
     }
 }

@@ -93,6 +93,7 @@ fun ScamCenterScreen(onBack: () -> Unit) {
 
     var scamMessages by remember { mutableStateOf(listOf<MessageEntity>()) }
     var weekScamCount by remember { mutableIntStateOf(0) }
+    var lastWeekScamCount by remember { mutableIntStateOf(0) }
     var monthScamCount by remember { mutableIntStateOf(0) }
     var top3RiskyApps by remember { mutableStateOf(listOf<com.phantom.checker.data.AppRiskRow>()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -116,11 +117,13 @@ fun ScamCenterScreen(onBack: () -> Unit) {
         isLoading = true
         val now = System.currentTimeMillis()
         val weekAgo = now - java.util.concurrent.TimeUnit.DAYS.toMillis(7)
+        val twoWeeksAgo = now - java.util.concurrent.TimeUnit.DAYS.toMillis(14)
         val monthAgo = now - java.util.concurrent.TimeUnit.DAYS.toMillis(30)
         withContext(Dispatchers.IO) {
             val dao = AppDatabaseHolder.db(appCtx).messageDao()
             scamMessages = dao.scams()
             weekScamCount = dao.scamCountSince(weekAgo)
+            lastWeekScamCount = dao.scamCountBetween(twoWeeksAgo, weekAgo)
             monthScamCount = dao.scamCountSince(monthAgo)
             top3RiskyApps = dao.topRiskyApps().take(3)
         }
@@ -200,6 +203,27 @@ fun ScamCenterScreen(onBack: () -> Unit) {
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        val diff = weekScamCount - lastWeekScamCount
+                        val trendText = when {
+                            lastWeekScamCount == 0 && weekScamCount == 0 -> "本週 vs 上週：→ 持平 (0%)"
+                            lastWeekScamCount == 0 -> "本週 vs 上週：↑ +100%（上週 0 則）"
+                            diff == 0 -> "本週 vs 上週：→ 持平 (0%)"
+                            diff > 0 -> {
+                                val pct = (diff * 100) / lastWeekScamCount
+                                "本週 vs 上週：↑ +$pct%（上週 $lastWeekScamCount 則）"
+                            }
+                            else -> {
+                                val pct = ((-diff) * 100) / lastWeekScamCount
+                                "本週 vs 上週：↓ -$pct%（上週 $lastWeekScamCount 則）"
+                            }
+                        }
+                        Text(
+                            text = trendText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = if (diff > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
                         if (top3RiskyApps.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
