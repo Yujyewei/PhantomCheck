@@ -5,7 +5,8 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -56,12 +58,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.room.withTransaction
 import com.phantom.checker.data.SenderGroupRow
 import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.glassSource
 import com.phantom.checker.ui.components.pressableScale
+import com.phantom.checker.util.PhantomPrefs
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,7 +79,8 @@ data class SenderThreadUi(
     val count: Int,
     val unreadCount: Int,
     val lastTs: Long,
-    val lastPreview: String
+    val lastPreview: String,
+    val isPinned: Boolean = false
 )
 
 class AppThreadsActivity : ComponentActivity() {
@@ -122,6 +127,8 @@ fun AppThreadsScreen(
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var showMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var actionThread by remember { mutableStateOf<SenderThreadUi?>(null) }
+    var deleteThreadConfirm by remember { mutableStateOf<SenderThreadUi?>(null) }
 
     val lifecycleOwner = ctx as? LifecycleOwner
     DisposableEffect(lifecycleOwner) {
@@ -140,6 +147,7 @@ fun AppThreadsScreen(
         isLoading = true
         threads = withContext(Dispatchers.IO) {
             val dao = AppDatabaseHolder.db(appCtx).messageDao()
+            val vipSenders = PhantomPrefs.getVipSenders(appCtx, packageName)
             val groups: List<SenderGroupRow> = dao.groupBySender(packageName)
             val allAppMsgs = dao.byApp(packageName)
             val latestBySender = allAppMsgs.groupBy { it.sender }
@@ -150,11 +158,81 @@ fun AppThreadsScreen(
                     count = g.cnt,
                     unreadCount = g.unreadCnt,
                     lastTs = g.lastTs,
-                    lastPreview = latestBySender[g.sender].orEmpty()
+                    lastPreview = latestBySender[g.sender].orEmpty(),
+                    isPinned = g.sender in vipSenders
                 )
-            }
+            }.sortedWith(compareByDescending<SenderThreadUi> { it.isPinned }.thenByDescending { it.lastTs })
         }
         isLoading = false
+    }
+
+    actionThread?.let { target ->
+        AlertDialog(
+            onDismissRequest = { actionThread = null },
+            title = { Text(target.sender, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            PhantomPrefs.toggleVipSender(appCtx, packageName, target.sender)
+                            actionThread = null
+                            refreshTrigger++
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (target.isPinned) "取消頂部釘選" else "釘選至頂部")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            actionThread = null
+                            deleteThreadConfirm = target
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("刪除此對話", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { actionThread = null }) {
+                    Text("關閉")
+                }
+            }
+        )
+    }
+
+    deleteThreadConfirm?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteThreadConfirm = null },
+            title = { Text("刪除此對話") },
+            text = { Text("確定要永久刪除與「${target.sender}」的所有對話訊息嗎？此操作無法復原。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByConversation(packageName, target.sender)
+                                    db.messageDao().deleteByConversation(packageName, target.sender)
+                                }
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            }
+                            deleteThreadConfirm = null
+                            refreshTrigger++
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteThreadConfirm = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     if (showDeleteConfirm) {
@@ -167,7 +245,11 @@ fun AppThreadsScreen(
                     onClick = {
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                AppDatabaseHolder.db(appCtx).messageDao().deleteByApp(packageName)
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsByApp(packageName)
+                                    db.messageDao().deleteByApp(packageName)
+                                }
                                 StatsForegroundService.startOrRefresh(appCtx)
                             }
                             showDeleteConfirm = false
@@ -280,7 +362,8 @@ fun AppThreadsScreen(
                                             sender = thread.sender
                                         )
                                     )
-                                }
+                                },
+                                onLongClick = { actionThread = thread }
                             )
                         }
                     }
@@ -290,11 +373,13 @@ fun AppThreadsScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SenderThreadCard(
     thread: SenderThreadUi,
     glassState: HazeState,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val timeText = remember(thread.lastTs) {
         SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(Date(thread.lastTs))
@@ -305,7 +390,10 @@ private fun SenderThreadCard(
         modifier = Modifier
             .fillMaxWidth()
             .pressableScale()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         cornerRadius = 20.dp,
         contentPadding = 12.dp
     ) {
@@ -318,6 +406,20 @@ private fun SenderThreadCard(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (thread.isPinned) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.tertiaryContainer
+                    ) {
+                        Text(
+                            text = "置頂",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
                 Text(
                     text = thread.sender,
                     style = MaterialTheme.typography.titleSmall,

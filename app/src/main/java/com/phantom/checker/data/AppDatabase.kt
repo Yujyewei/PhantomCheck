@@ -58,7 +58,9 @@ data class TagEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val colorHex: String,
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    val aiHint: String = "",
+    val isAiManaged: Boolean = true
 )
 
 @Entity(
@@ -68,7 +70,20 @@ data class TagEntity(
 )
 data class MessageTagCrossRef(
     val messageId: Long,
-    val tagId: Long
+    val tagId: Long,
+    val source: String = SOURCE_MANUAL
+) {
+    companion object {
+        const val SOURCE_AUTO = "auto"
+        const val SOURCE_MANUAL = "manual"
+    }
+}
+
+data class AiTagCountRow(
+    val tagId: Long,
+    val name: String,
+    val colorHex: String,
+    val cnt: Int
 )
 
 data class AppGroupRow(
@@ -165,11 +180,23 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = 'scam' AND timestamp >= :sinceTs")
     suspend fun scamCountSince(sinceTs: Long): Int
 
+    @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = 'scam' AND timestamp >= :startTs AND timestamp < :endTs")
+    suspend fun scamCountBetween(startTs: Long, endTs: Long): Int
+
+    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs FROM messages WHERE timestamp >= :startOfDay GROUP BY packageName ORDER BY lastTs DESC LIMIT 5")
+    suspend fun todayRecentApps(startOfDay: Long): List<AppGroupRow>
+
     @Query("UPDATE messages SET isRead = 1 WHERE isRead = 0")
     suspend fun markAllRead()
 
+    @Query("UPDATE messages SET isRead = 1 WHERE id IN (:ids)")
+    suspend fun markReadByIds(ids: List<Long>)
+
     @Query("UPDATE messages SET isStarred = :starred WHERE id = :id")
     suspend fun setStarred(id: Long, starred: Boolean)
+
+    @Query("UPDATE messages SET isStarred = :starred WHERE id IN (:ids)")
+    suspend fun setStarredByIds(ids: List<Long>, starred: Boolean)
 
     @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs FROM messages GROUP BY packageName ORDER BY lastTs DESC")
     suspend fun groupByApp(): List<AppGroupRow>
@@ -209,6 +236,12 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM messages WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("DELETE FROM messages WHERE isRead = 1")
+    suspend fun deleteReadMessages()
 
     @Query("DELETE FROM messages WHERE packageName = :packageName AND sender = :sender")
     suspend fun deleteByConversation(packageName: String, sender: String)
@@ -264,6 +297,9 @@ interface TagDao {
     @Query("SELECT * FROM tags ORDER BY sortOrder ASC, id ASC")
     suspend fun all(): List<TagEntity>
 
+    @Query("SELECT * FROM tags WHERE isAiManaged = 1 ORDER BY sortOrder ASC, id ASC")
+    suspend fun aiManagedTags(): List<TagEntity>
+
     @Insert
     suspend fun insert(tag: TagEntity): Long
 
@@ -279,6 +315,18 @@ interface TagDao {
     @Query("DELETE FROM message_tags WHERE messageId = :messageId")
     suspend fun deleteCrossRefsByMessage(messageId: Long)
 
+    @Query("DELETE FROM message_tags WHERE messageId IN (:ids)")
+    suspend fun deleteCrossRefsByMessageIds(ids: List<Long>)
+
+    @Query("DELETE FROM message_tags WHERE messageId IN (SELECT id FROM messages WHERE packageName = :packageName)")
+    suspend fun deleteCrossRefsByApp(packageName: String)
+
+    @Query("DELETE FROM message_tags WHERE messageId IN (SELECT id FROM messages WHERE packageName = :packageName AND sender = :sender)")
+    suspend fun deleteCrossRefsByConversation(packageName: String, sender: String)
+
+    @Query("DELETE FROM message_tags WHERE messageId IN (SELECT id FROM messages WHERE isRead = 1)")
+    suspend fun deleteCrossRefsForReadMessages()
+
     @Query("DELETE FROM message_tags")
     suspend fun deleteAllCrossRefs()
 
@@ -291,8 +339,22 @@ interface TagDao {
     @Query("SELECT t.* FROM tags t INNER JOIN message_tags mt ON t.id = mt.tagId WHERE mt.messageId = :messageId ORDER BY t.sortOrder ASC, t.id ASC")
     suspend fun tagsForMessage(messageId: Long): List<TagEntity>
 
+    @Query("SELECT * FROM message_tags WHERE messageId = :messageId")
+    suspend fun crossRefsForMessage(messageId: Long): List<MessageTagCrossRef>
+
     @Query("SELECT * FROM message_tags")
     suspend fun allCrossRefs(): List<MessageTagCrossRef>
+
+    @Query(
+        "SELECT t.id as tagId, t.name as name, t.colorHex as colorHex, " +
+            "COUNT(DISTINCT CASE WHEN m.id IS NOT NULL THEN mt.messageId END) as cnt " +
+            "FROM tags t " +
+            "LEFT JOIN message_tags mt ON t.id = mt.tagId " +
+            "LEFT JOIN messages m ON mt.messageId = m.id AND m.timestamp >= :startOfDay " +
+            "WHERE t.isAiManaged = 1 " +
+            "GROUP BY t.id ORDER BY t.sortOrder ASC, t.id ASC"
+    )
+    suspend fun todayAiTagCounts(startOfDay: Long): List<AiTagCountRow>
 }
 
 @Database(
@@ -303,7 +365,7 @@ interface TagDao {
         TagEntity::class,
         MessageTagCrossRef::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -364,6 +426,14 @@ abstract class AppDatabase : RoomDatabase() {
                     """.trimIndent()
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_tags_tagId` ON `message_tags` (`tagId`)")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tags ADD COLUMN aiHint TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE tags ADD COLUMN isAiManaged INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE message_tags ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'")
             }
         }
     }

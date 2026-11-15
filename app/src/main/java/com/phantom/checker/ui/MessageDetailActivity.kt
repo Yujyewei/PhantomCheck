@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,11 +23,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -42,6 +45,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -68,6 +72,7 @@ import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.ui.components.GlassCard
 import com.phantom.checker.ui.components.glassSource
 import com.phantom.checker.ui.components.pressableScale
+import com.phantom.checker.util.PhantomPrefs
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,6 +121,7 @@ fun MessageDetailScreen(
     var message by remember { mutableStateOf<MessageEntity?>(null) }
     var allTags by remember { mutableStateOf(listOf<TagEntity>()) }
     var selectedTagIds by remember { mutableStateOf(setOf<Long>()) }
+    var tagSourceByTagId by remember { mutableStateOf(mapOf<Long, String>()) }
     var isLoading by remember { mutableStateOf(true) }
     var isAnalyzing by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -131,7 +137,9 @@ fun MessageDetailScreen(
             }
             message = loaded?.copy(isRead = true)
             allTags = db.tagDao().all()
-            selectedTagIds = db.tagDao().tagsForMessage(messageId).map { it.id }.toSet()
+            val refs = db.tagDao().crossRefsForMessage(messageId)
+            selectedTagIds = refs.map { it.tagId }.toSet()
+            tagSourceByTagId = refs.associate { it.tagId to it.source }
         }
         isLoading = false
     }
@@ -321,30 +329,91 @@ fun MessageDetailScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            if (hasSuspiciousUrlHint(msg.riskReason)) {
+                                Spacer(Modifier.height(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = "可疑連結警告",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "偵測到可疑連結，請勿輕易點擊或輸入個人資料",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
                             Spacer(Modifier.height(10.dp))
                             Button(
                                 onClick = {
                                     if (isAnalyzing) return@Button
                                     scope.launch {
                                         isAnalyzing = true
-                                        val res = AiClient.analyzeRisk(
+                                        val autoTagEnabled = PhantomPrefs.isAiAutoTagEnabled(appCtx)
+                                        val aiTags = if (autoTagEnabled) {
+                                            withContext(Dispatchers.IO) {
+                                                AppDatabaseHolder.db(appCtx).tagDao().aiManagedTags()
+                                            }
+                                        } else {
+                                            emptyList()
+                                        }
+                                        val res = AiClient.analyzeMessage(
                                             sender = msg.sender,
                                             content = msg.content,
+                                            tags = aiTags,
+                                            enableAutoTag = autoTagEnabled,
                                             context = appCtx,
                                             bypassCache = true
                                         )
                                         isAnalyzing = false
                                         if (res != null) {
                                             val updated = msg.copy(
-                                                riskScore = res.first,
-                                                riskLabel = res.second,
-                                                riskReason = res.third
+                                                riskScore = res.riskScore,
+                                                riskLabel = res.riskLabel,
+                                                riskReason = res.riskReason
                                             )
-                                            withContext(Dispatchers.IO) {
-                                                AppDatabaseHolder.db(appCtx).messageDao().update(updated)
+                                            val refreshedRefs = withContext(Dispatchers.IO) {
+                                                val db = AppDatabaseHolder.db(appCtx)
+                                                db.withTransaction {
+                                                    db.messageDao().update(updated)
+                                                    if (autoTagEnabled && res.tagIds.isNotEmpty()) {
+                                                        val existingRefs = db.tagDao().crossRefsForMessage(msg.id)
+                                                        val manualIds = existingRefs
+                                                            .filter { it.source == MessageTagCrossRef.SOURCE_MANUAL }
+                                                            .map { it.tagId }
+                                                            .toSet()
+                                                        res.tagIds.forEach { tid ->
+                                                            if (tid !in manualIds) {
+                                                                db.tagDao().addTagToMessage(
+                                                                    MessageTagCrossRef(
+                                                                        messageId = msg.id,
+                                                                        tagId = tid,
+                                                                        source = MessageTagCrossRef.SOURCE_AUTO
+                                                                    )
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                db.tagDao().crossRefsForMessage(msg.id)
                                             }
                                             message = updated
-                                            snackbarHostState.showSnackbar("AI 分析完成：${res.second} (${res.first}分)")
+                                            selectedTagIds = refreshedRefs.map { it.tagId }.toSet()
+                                            tagSourceByTagId = refreshedRefs.associate { it.tagId to it.source }
+                                            snackbarHostState.showSnackbar("AI 分析完成：${res.riskLabel} (${res.riskScore}分)")
                                         } else {
                                             snackbarHostState.showSnackbar("AI 分析失敗，請確認 API 設定或網路")
                                         }
@@ -405,6 +474,7 @@ fun MessageDetailScreen(
                                 ) {
                                     allTags.forEach { tag ->
                                         val isSelected = tag.id in selectedTagIds
+                                        val isAuto = isSelected && tagSourceByTagId[tag.id] == MessageTagCrossRef.SOURCE_AUTO
                                         val tagColor = parseTagColor(tag.colorHex)
                                         FilterChip(
                                             selected = isSelected,
@@ -415,17 +485,25 @@ fun MessageDetailScreen(
                                                         if (isSelected) {
                                                             tagDao.removeTagFromMessage(msg.id, tag.id)
                                                         } else {
-                                                            tagDao.addTagToMessage(MessageTagCrossRef(msg.id, tag.id))
+                                                            tagDao.addTagToMessage(
+                                                                MessageTagCrossRef(
+                                                                    messageId = msg.id,
+                                                                    tagId = tag.id,
+                                                                    source = MessageTagCrossRef.SOURCE_MANUAL
+                                                                )
+                                                            )
                                                         }
                                                     }
-                                                    selectedTagIds = if (isSelected) {
-                                                        selectedTagIds - tag.id
+                                                    if (isSelected) {
+                                                        selectedTagIds = selectedTagIds - tag.id
+                                                        tagSourceByTagId = tagSourceByTagId - tag.id
                                                     } else {
-                                                        selectedTagIds + tag.id
+                                                        selectedTagIds = selectedTagIds + tag.id
+                                                        tagSourceByTagId = tagSourceByTagId + (tag.id to MessageTagCrossRef.SOURCE_MANUAL)
                                                     }
                                                 }
                                             },
-                                            label = { Text(tag.name) },
+                                            label = { Text(if (isAuto) "${tag.name} (AI)" else tag.name) },
                                             colors = FilterChipDefaults.filterChipColors(
                                                 selectedContainerColor = tagColor.copy(alpha = 0.22f)
                                             )

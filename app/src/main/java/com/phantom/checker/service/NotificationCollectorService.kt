@@ -13,6 +13,8 @@ import com.phantom.checker.R
 import com.phantom.checker.data.AppDatabase
 import com.phantom.checker.data.FilterRule
 import com.phantom.checker.data.MessageEntity
+import com.phantom.checker.data.MessageTagCrossRef
+import com.phantom.checker.data.TagEntity
 import com.phantom.checker.network.AiClient
 import com.phantom.checker.ui.MessageDetailActivity
 import com.phantom.checker.ui.ScamCenterActivity
@@ -39,6 +41,9 @@ class NotificationCollectorService : NotificationListenerService() {
     @Volatile
     private var connectTime: Long = 0L
 
+    @Volatile
+    private var lastStatsRespawnMs: Long = 0L
+
     private val dedupCache = object : LruCache<String, Long>(256) {}
     private val sameKeyLastTs = object : LruCache<String, Long>(256) {}
     private val appLabelCache = ConcurrentHashMap<String, String>()
@@ -57,6 +62,23 @@ class NotificationCollectorService : NotificationListenerService() {
         super.onListenerConnected()
         connectTime = System.currentTimeMillis()
         StatsForegroundService.startOrRefresh(applicationContext)
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        val removed = sbn ?: return
+        if (removed.packageName == packageName &&
+            removed.id == StatsForegroundService.STATS_NOTIF_ID
+        ) {
+            val now = System.currentTimeMillis()
+            if (now - lastStatsRespawnMs < STATS_RESPAWN_THROTTLE_MS) return
+            if (!PhantomPrefs.isPersistentStatsEnabled(applicationContext) ||
+                !StatsForegroundService.hasPostNotificationsPermission(applicationContext)
+            ) {
+                return
+            }
+            lastStatsRespawnMs = now
+            StatsForegroundService.startOrRefresh(applicationContext)
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -176,22 +198,45 @@ class NotificationCollectorService : NotificationListenerService() {
                 return@launch
             }
 
-            // AI 風險分析：未命中過濾規則、AI 開關開啟、內文 >= 10 字元、未達每日上限
+            // AI 風險分析與智慧標記：未命中過濾規則、AI 開關開啟、內文 >= 10 字元、未達每日上限
             if (!isRuleFiltered &&
                 !silentMuted &&
                 PhantomPrefs.isAiRiskEnabled(applicationContext) &&
                 text.length >= MIN_AI_CONTENT_LENGTH &&
                 PhantomPrefs.canUseAiTodayAndIncrement(applicationContext)
             ) {
-                AiClient.analyzeRisk(title, text, applicationContext)?.let { (risk, label, reason) ->
+                val enableAutoTag = PhantomPrefs.isAiAutoTagEnabled(applicationContext)
+                val aiTags = if (enableAutoTag) db.tagDao().aiManagedTags() else emptyList()
+                AiClient.analyzeMessage(
+                    sender = title,
+                    content = text,
+                    tags = aiTags,
+                    enableAutoTag = enableAutoTag,
+                    context = applicationContext
+                )?.let { result ->
                     val msg = db.messageDao().byId(id)
                     if (msg != null) {
                         db.messageDao().update(
-                            msg.copy(riskScore = risk, riskLabel = label, riskReason = reason)
+                            msg.copy(
+                                riskScore = result.riskScore,
+                                riskLabel = result.riskLabel,
+                                riskReason = result.riskReason
+                            )
                         )
                     }
-                    if (label == "scam") {
-                        alertScam(applicationContext, id, pkg, title, reason)
+                    if (enableAutoTag && result.tagIds.isNotEmpty()) {
+                        result.tagIds.forEach { tagId ->
+                            db.tagDao().addTagToMessage(
+                                MessageTagCrossRef(
+                                    messageId = id,
+                                    tagId = tagId,
+                                    source = MessageTagCrossRef.SOURCE_AUTO
+                                )
+                            )
+                        }
+                    }
+                    if (result.riskLabel == "scam") {
+                        alertScam(applicationContext, id, pkg, title, result.riskReason)
                         StatsForegroundService.startOrRefresh(applicationContext)
                     }
                 }
@@ -246,6 +291,7 @@ class NotificationCollectorService : NotificationListenerService() {
         reason: String
     ) {
         if (!PhantomPrefs.isScamAlertNotifEnabled(ctx)) return
+        if (PhantomPrefs.isInQuietHoursNow(ctx)) return
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel("scam_alert", "詐騙警示", NotificationManager.IMPORTANCE_HIGH)
@@ -272,6 +318,7 @@ class NotificationCollectorService : NotificationListenerService() {
         sender: String,
         content: String
     ) {
+        if (PhantomPrefs.isInQuietHoursNow(ctx)) return
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel("important_alert", "重要訊息提醒", NotificationManager.IMPORTANCE_HIGH)
@@ -295,6 +342,7 @@ class NotificationCollectorService : NotificationListenerService() {
         private const val DEDUP_WINDOW_MS = 10L * 60L * 1000L
         private const val REPLAY_GRACE_MS = 5000L
         private const val MIN_AI_CONTENT_LENGTH = 10
+        private const val STATS_RESPAWN_THROTTLE_MS = 3000L
 
         fun startOfTodayMillis(): Long {
             val cal = Calendar.getInstance()
@@ -315,14 +363,78 @@ class NotificationCollectorService : NotificationListenerService() {
 /** Database 單例 */
 object AppDatabaseHolder {
     @Volatile private var instance: AppDatabase? = null
-    fun db(ctx: Context): AppDatabase =
-        instance ?: synchronized(this) {
+
+    private data class DefaultAiTagSpec(
+        val name: String,
+        val colorHex: String,
+        val sortOrder: Int,
+        val aiHint: String
+    )
+
+    private val DEFAULT_AI_TAGS = listOf(
+        DefaultAiTagSpec(
+            name = "必看",
+            colorHex = "#4CAF50",
+            sortOrder = 0,
+            aiHint = "個人通訊、到貨通知、驗證碼以外的帳務、優惠券/P幣/折扣碼、行程提醒等使用者需要行動或受益的訊息"
+        ),
+        DefaultAiTagSpec(
+            name = "行銷",
+            colorHex = "#FF9800",
+            sortOrder = 1,
+            aiHint = "純促銷、廣告、電子報、無具體優惠的行銷內容"
+        ),
+        DefaultAiTagSpec(
+            name = "垃圾通知",
+            colorHex = "#9E9E9E",
+            sortOrder = 2,
+            aiHint = "系統雜訊、重複狀態通知、無意義更新"
+        )
+    )
+
+    fun db(ctx: Context): AppDatabase {
+        val appCtx = ctx.applicationContext
+        return instance ?: synchronized(this) {
             instance ?: androidx.room.Room.databaseBuilder(
-                ctx.applicationContext, AppDatabase::class.java, "phantomcheck.db"
+                appCtx, AppDatabase::class.java, "phantomcheck.db"
             ).addMigrations(
                 AppDatabase.MIGRATION_1_2,
                 AppDatabase.MIGRATION_2_3,
-                AppDatabase.MIGRATION_3_4
-            ).build().also { instance = it }
+                AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5
+            ).addCallback(object : androidx.room.RoomDatabase.Callback() {
+                override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    super.onOpen(db)
+                    seedDefaultAiTagsIfNeeded(appCtx, db)
+                }
+            }).build().also { instance = it }
         }
+    }
+
+    private fun seedDefaultAiTagsIfNeeded(
+        appCtx: Context,
+        db: androidx.sqlite.db.SupportSQLiteDatabase
+    ) {
+        if (PhantomPrefs.isDefaultAiTagsSeeded(appCtx)) return
+        try {
+            db.beginTransaction()
+            try {
+                DEFAULT_AI_TAGS.forEach { spec ->
+                    val cursor = db.query("SELECT COUNT(*) FROM tags WHERE name = ?", arrayOf(spec.name))
+                    val exists = cursor.use { c -> c.moveToFirst() && c.getInt(0) > 0 }
+                    if (!exists) {
+                        db.execSQL(
+                            "INSERT INTO tags (name, colorHex, sortOrder, aiHint, isAiManaged) VALUES (?, ?, ?, ?, 1)",
+                            arrayOf<Any>(spec.name, spec.colorHex, spec.sortOrder, spec.aiHint)
+                        )
+                    }
+                }
+                db.setTransactionSuccessful()
+                PhantomPrefs.setDefaultAiTagsSeeded(appCtx, true)
+            } finally {
+                db.endTransaction()
+            }
+        } catch (_: Exception) {
+        }
+    }
 }

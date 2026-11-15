@@ -39,6 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -57,6 +60,37 @@ fun parseTagColor(hex: String): Color {
         Color(android.graphics.Color.parseColor(hex))
     } catch (_: Exception) {
         Color(0xFF7C3AED)
+    }
+}
+
+fun hasSuspiciousUrlHint(riskReason: String): Boolean {
+    if (riskReason.isBlank()) return false
+    val lower = riskReason.lowercase(Locale.US)
+    return listOf("連結", "網址", "url", "http", "短鏈", "短網", "ip", "表單", "釣魚網").any {
+        lower.contains(it)
+    }
+}
+
+private fun highlightMatches(text: String, query: String): AnnotatedString {
+    val q = query.trim()
+    if (q.isEmpty()) return AnnotatedString(text)
+    return buildAnnotatedString {
+        append(text)
+        var startIndex = 0
+        while (startIndex < text.length) {
+            val found = text.indexOf(q, startIndex = startIndex, ignoreCase = true)
+            if (found < 0) break
+            addStyle(
+                style = SpanStyle(
+                    background = Color(0xFF7C3AED),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                ),
+                start = found,
+                end = found + q.length
+            )
+            startIndex = found + q.length
+        }
     }
 }
 
@@ -298,6 +332,7 @@ fun MessageCard(
     glassState: HazeState,
     highlightAsScam: Boolean = false,
     matchedKeywords: List<String> = emptyList(),
+    highlightQuery: String = "",
     modifier: Modifier = Modifier
 ) {
     val timeText = remember(message.timestamp) {
@@ -319,7 +354,7 @@ fun MessageCard(
                     style = MaterialTheme.typography.labelSmall
                 )
                 Text(
-                    text = message.sender,
+                    text = highlightMatches(message.sender, highlightQuery),
                     style = MaterialTheme.typography.titleSmall
                 )
                 if (message.isStarred) {
@@ -365,7 +400,7 @@ fun MessageCard(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = message.content,
+            text = highlightMatches(message.content, highlightQuery),
             style = MaterialTheme.typography.bodySmall
         )
         if (matchedKeywords.isNotEmpty()) {

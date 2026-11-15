@@ -11,10 +11,12 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -33,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,6 +82,7 @@ import com.phantom.checker.data.AppGroupRow
 import com.phantom.checker.data.FilterRule
 import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.DailySummaryPolicy
+import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.RetentionConfig
 import com.phantom.checker.service.RetentionPolicy
 import com.phantom.checker.service.StatsForegroundService
@@ -244,12 +249,17 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
     var throttleSec by remember { mutableFloatStateOf(PhantomPrefs.getSameKeyThrottleSeconds(appCtx).toFloat()) }
     var alertKeywords by remember { mutableStateOf(PhantomPrefs.getAlertKeywords(appCtx)) }
     var newAlertKeyword by remember { mutableStateOf("") }
+    var quietHoursEnabled by remember { mutableStateOf(PhantomPrefs.isQuietHoursEnabled(appCtx)) }
+    var quietStartMinute by remember { mutableIntStateOf(PhantomPrefs.getQuietHoursStartMinute(appCtx)) }
+    var quietEndMinute by remember { mutableIntStateOf(PhantomPrefs.getQuietHoursEndMinute(appCtx)) }
 
     // AI 與分析設定
     var aiRiskEnabled by remember { mutableStateOf(PhantomPrefs.isAiRiskEnabled(appCtx)) }
+    var aiAutoTagEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoTagEnabled(appCtx)) }
     var dailyAiLimit by remember { mutableIntStateOf(PhantomPrefs.getDailyAiLimit(appCtx)) }
     val todayAiUsage = remember { PhantomPrefs.getTodayAiUsage(appCtx) }
     var dailySummaryEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryEnabled(appCtx)) }
+    var dailySummaryNotifEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryNotifEnabled(appCtx)) }
     var summaryHour by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryHour(appCtx)) }
     var summaryMinute by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryMinute(appCtx)) }
 
@@ -261,7 +271,15 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
     var showAppPickerDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
+    var showClearReadConfirm by remember { mutableStateOf(false) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
+
+    // 五卡收合狀態
+    var expandQuick by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "quick")) }
+    var expandAi by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "ai")) }
+    var expandNotif by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "notif")) }
+    var expandData by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "data")) }
+    var expandAppearance by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "appearance")) }
 
     // 外觀
     val currentThemeMode = ThemePreferences.getThemeMode(appCtx)
@@ -331,6 +349,40 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                         val reason = err.localizedMessage?.takeIf { it.isNotBlank() } ?: err.javaClass.simpleName
                         snackbarHostState.showSnackbar("匯出失敗：$reason")
                     }
+                }
+            }
+        )
+    }
+
+    if (showClearReadConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearReadConfirm = false },
+            title = { Text("清除已讀訊息") },
+            text = { Text("確定要永久刪除所有已讀訊息嗎？未讀訊息將保留。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val db = AppDatabaseHolder.db(appCtx)
+                                db.withTransaction {
+                                    db.tagDao().deleteCrossRefsForReadMessages()
+                                    db.messageDao().deleteReadMessages()
+                                }
+                                StatsForegroundService.startOrRefresh(appCtx)
+                            }
+                            showClearReadConfirm = false
+                            snackbarHostState.showSnackbar("已清除所有已讀訊息")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("確認清除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearReadConfirm = false }) {
+                    Text("取消")
                 }
             }
         )
@@ -482,29 +534,64 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 1. 通知分組卡
+            // 1. 快速設定（置頂）
             item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 14.dp
+                CollapsibleSettingsCard(
+                    title = "快速設定",
+                    expanded = expandQuick,
+                    onToggle = {
+                        expandQuick = !expandQuick
+                        PhantomPrefs.setSettingsCardExpanded(appCtx, "quick", expandQuick)
+                    },
+                    glassState = glassState
                 ) {
-                    Text("通知", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(10.dp))
-
                     SettingSwitchRow(
                         title = "常駐統計通知",
-                        subtitle = "以獨立前景服務維持通知欄即時統計",
+                        subtitle = "以獨立前景服務維持通知欄即時統計與 App 圖示列",
                         checked = persistentStats,
                         onCheckedChange = { checked ->
                             persistentStats = checked
                             PhantomPrefs.setPersistentStatsEnabled(appCtx, checked)
                             if (checked) {
+                                HeartbeatPolicy.schedule(appCtx)
                                 StatsForegroundService.startOrRefresh(appCtx)
                             } else {
                                 StatsForegroundService.stop(appCtx)
                             }
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "AI 風險分析",
+                        subtitle = "內文滿 10 字元且未命中過濾規則時自動評估風險",
+                        checked = aiRiskEnabled,
+                        onCheckedChange = { checked ->
+                            aiRiskEnabled = checked
+                            PhantomPrefs.setAiRiskEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "AI 智慧標記",
+                        subtitle = "AI 分析時同步自動指派「必看／行銷／垃圾通知」等標籤",
+                        checked = aiAutoTagEnabled,
+                        onCheckedChange = { checked ->
+                            aiAutoTagEnabled = checked
+                            PhantomPrefs.setAiAutoTagEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "每日 AI 摘要",
+                        subtitle = String.format(Locale.getDefault(), "排程時間：每日 %02d:%02d", summaryHour, summaryMinute),
+                        checked = dailySummaryEnabled,
+                        onCheckedChange = { checked ->
+                            dailySummaryEnabled = checked
+                            PhantomPrefs.setDailySummaryEnabled(appCtx, checked)
+                            DailySummaryPolicy.schedule(appCtx)
                         }
                     )
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -518,55 +605,80 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                             PhantomPrefs.setScamAlertNotifEnabled(appCtx, checked)
                         }
                     )
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                }
+            }
 
-                    SettingSwitchRow(
-                        title = "記錄持續性通知",
-                        subtitle = "關閉時略過系統／前景服務等持續刷新的通知",
-                        checked = recordOngoing,
-                        onCheckedChange = { checked ->
-                            recordOngoing = checked
-                            PhantomPrefs.setRecordOngoingEnabled(appCtx, checked)
-                        }
-                    )
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                    Text("通知點擊行為", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        NotifClickBehavior.entries.forEach { behavior ->
-                            FilterChip(
-                                selected = clickBehavior == behavior,
-                                onClick = {
-                                    clickBehavior = behavior
-                                    PhantomPrefs.setNotifClickBehavior(appCtx, behavior)
-                                },
-                                label = { Text(behavior.label) }
-                            )
-                        }
+            // 2. AI 與分析
+            item {
+                CollapsibleSettingsCard(
+                    title = "AI 與分析",
+                    expanded = expandAi,
+                    onToggle = {
+                        expandAi = !expandAi
+                        PhantomPrefs.setSettingsCardExpanded(appCtx, "ai", expandAi)
+                    },
+                    glassState = glassState
+                ) {
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(Intent(ctx, ApiKeySettingsActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("多 Provider AI 與 API Key 設定")
                     }
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Spacer(Modifier.height(10.dp))
 
-                    val secInt = throttleSec.roundToInt()
                     Text(
-                        text = if (secInt == 0) "同 key 更新節流：已關閉" else "同 key 更新節流：$secInt 秒",
+                        text = "每日 AI 分析上限（今日已用 $todayAiUsage 次）",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
-                    Text(
-                        text = "避免監控類通知（如流量統計）在短時間內重複洗版",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                    Slider(
-                        value = throttleSec,
-                        onValueChange = { throttleSec = it },
-                        onValueChangeFinished = {
-                            PhantomPrefs.setSameKeyThrottleSeconds(appCtx, throttleSec.roundToInt())
-                        },
-                        valueRange = 0f..300f,
-                        steps = 29
-                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0, 20, 50, 100).forEach { limit ->
+                            FilterChip(
+                                selected = dailyAiLimit == limit,
+                                onClick = {
+                                    dailyAiLimit = limit
+                                    PhantomPrefs.setDailyAiLimit(appCtx, limit)
+                                },
+                                label = { Text(if (limit == 0) "不限" else "$limit 則") }
+                            )
+                        }
+                    }
+
+                    if (dailySummaryEnabled) {
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                TimePickerDialog(
+                                    ctx,
+                                    { _, h, m ->
+                                        summaryHour = h
+                                        summaryMinute = m
+                                        PhantomPrefs.setDailySummaryTime(appCtx, h, m)
+                                        DailySummaryPolicy.schedule(appCtx)
+                                    },
+                                    summaryHour,
+                                    summaryMinute,
+                                    true
+                                ).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(String.format(Locale.getDefault(), "調整摘要排程時間（%02d:%02d）", summaryHour, summaryMinute))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        SettingSwitchRow(
+                            title = "每日摘要完成推播",
+                            subtitle = "摘要生成後發送低干擾通知，點擊直達統計頁",
+                            checked = dailySummaryNotifEnabled,
+                            onCheckedChange = { checked ->
+                                dailySummaryNotifEnabled = checked
+                                PhantomPrefs.setDailySummaryNotifEnabled(appCtx, checked)
+                            }
+                        )
+                    }
+
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     Text(
@@ -624,241 +736,35 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                             }
                         }
                     }
-                }
-            }
 
-            // 2. AI 與分析分組卡
-            item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 14.dp
-                ) {
-                    Text("AI 與分析", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
-
-                    OutlinedButton(
-                        onClick = { ctx.startActivity(Intent(ctx, ApiKeySettingsActivity::class.java)) },
-                        modifier = Modifier.fillMaxWidth().pressableScale()
-                    ) {
-                        Text("多 Provider AI 與 API Key 設定")
-                    }
-                    Spacer(Modifier.height(10.dp))
-
-                    SettingSwitchRow(
-                        title = "AI 風險分析",
-                        subtitle = "內文滿 10 字元且未命中過濾規則時自動評估風險",
-                        checked = aiRiskEnabled,
-                        onCheckedChange = { checked ->
-                            aiRiskEnabled = checked
-                            PhantomPrefs.setAiRiskEnabled(appCtx, checked)
-                        }
-                    )
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                    Text(
-                        text = "每日 AI 分析上限（今日已用 $todayAiUsage 次）",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(0, 20, 50, 100).forEach { limit ->
-                            FilterChip(
-                                selected = dailyAiLimit == limit,
-                                onClick = {
-                                    dailyAiLimit = limit
-                                    PhantomPrefs.setDailyAiLimit(appCtx, limit)
-                                },
-                                label = { Text(if (limit == 0) "不限" else "$limit 則") }
-                            )
-                        }
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                    SettingSwitchRow(
-                        title = "每日 AI 摘要",
-                        subtitle = String.format(Locale.getDefault(), "排程時間：每日 %02d:%02d", summaryHour, summaryMinute),
-                        checked = dailySummaryEnabled,
-                        onCheckedChange = { checked ->
-                            dailySummaryEnabled = checked
-                            PhantomPrefs.setDailySummaryEnabled(appCtx, checked)
-                            DailySummaryPolicy.schedule(appCtx)
-                        }
-                    )
-                    if (dailySummaryEnabled) {
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedButton(
-                            onClick = {
-                                TimePickerDialog(
-                                    ctx,
-                                    { _, h, m ->
-                                        summaryHour = h
-                                        summaryMinute = m
-                                        PhantomPrefs.setDailySummaryTime(appCtx, h, m)
-                                        DailySummaryPolicy.schedule(appCtx)
-                                    },
-                                    summaryHour,
-                                    summaryMinute,
-                                    true
-                                ).show()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(String.format(Locale.getDefault(), "調整摘要排程時間（%02d:%02d）", summaryHour, summaryMinute))
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = { ctx.startActivity(Intent(ctx, AutoReplySettingsActivity::class.java)) },
                         modifier = Modifier.fillMaxWidth().pressableScale()
                     ) {
                         Text("SMS 自動回覆設定")
                     }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(Intent(ctx, ScamCenterActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("詐騙警示中心")
+                    }
                 }
             }
 
-            // 3. 資料管理分組卡
+            // 3. 訊息與通知
             item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 14.dp
+                CollapsibleSettingsCard(
+                    title = "訊息與通知",
+                    expanded = expandNotif,
+                    onToggle = {
+                        expandNotif = !expandNotif
+                        PhantomPrefs.setSettingsCardExpanded(appCtx, "notif", expandNotif)
+                    },
+                    glassState = glassState
                 ) {
-                    Text("資料管理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(10.dp))
-
-                    OutlinedButton(
-                        onClick = { ctx.startActivity(Intent(ctx, TagManagementActivity::class.java)) },
-                        modifier = Modifier.fillMaxWidth().pressableScale()
-                    ) {
-                        Text("自訂標籤管理")
-                    }
-                    Spacer(Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { showExportDialog = true },
-                        enabled = !isExporting,
-                        modifier = Modifier.fillMaxWidth().pressableScale()
-                    ) {
-                        Text(if (isExporting) "匯出中…" else "匯出訊息 CSV（可選範圍）")
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
-
-                    // App 靜音清單
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("App 靜音清單", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text(
-                                "已靜音 App 可選擇完全不記錄或僅靜默記錄（不影響既有歷史訊息）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Button(onClick = { showAppPickerDialog = true }) {
-                            Text("選擇 App")
-                        }
-                    }
-                    if (mutedApps.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        mutedApps.forEach { pkg ->
-                            val mode = MuteMode.fromPref(muteModes[pkg])
-                            val appLabel = remember(pkg) {
-                                try {
-                                    ctx.packageManager.getApplicationLabel(
-                                        ctx.packageManager.getApplicationInfo(pkg, 0)
-                                    ).toString()
-                                } catch (_: Exception) {
-                                    pkg
-                                }
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    modifier = Modifier.weight(1f),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AppIconImage(
-                                        packageName = pkg,
-                                        contentDescription = appLabel,
-                                        size = 32.dp
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = appLabel,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = mode.label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray
-                                        )
-                                    }
-                                }
-                                TextButton(onClick = {
-                                    PhantomPrefs.setAppMuted(appCtx, pkg, false)
-                                    mutedApps = PhantomPrefs.getMutedApps(appCtx).sorted()
-                                    muteModes = PhantomPrefs.getAppMuteModeMap(appCtx)
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar("已解除靜音：$appLabel")
-                                    }
-                                }) {
-                                    Text("解除靜音")
-                                }
-                            }
-                        }
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
-
-                    // 保留天數與則數上限
-                    Text("訊息保留天數（詐騙記錄永久保留）", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RetentionConfig.OPTIONS.forEach { days ->
-                            FilterChip(
-                                selected = retentionDays == days,
-                                onClick = {
-                                    retentionDays = days
-                                    RetentionConfig.setRetentionDays(appCtx, days)
-                                    RetentionPolicy.scheduleOrUpdate(appCtx)
-                                },
-                                label = { Text(RetentionConfig.labelForDays(days)) }
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text("訊息保留則數上限", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RetentionConfig.MAX_COUNT_OPTIONS.forEach { cnt ->
-                            FilterChip(
-                                selected = retentionMaxCount == cnt,
-                                onClick = {
-                                    retentionMaxCount = cnt
-                                    PhantomPrefs.setRetentionMaxCount(appCtx, cnt)
-                                    RetentionPolicy.scheduleOrUpdate(appCtx)
-                                },
-                                label = { Text(RetentionConfig.labelForMaxCount(cnt)) }
-                            )
-                        }
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
-
                     // 過濾規則新增
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -983,7 +889,274 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                         }
                     }
 
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "記錄持續性通知",
+                        subtitle = "關閉時略過系統／前景服務等持續刷新的通知",
+                        checked = recordOngoing,
+                        onCheckedChange = { checked ->
+                            recordOngoing = checked
+                            PhantomPrefs.setRecordOngoingEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    val secInt = throttleSec.roundToInt()
+                    Text(
+                        text = if (secInt == 0) "同 key 更新節流：已關閉" else "同 key 更新節流：$secInt 秒",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "避免監控類通知（如流量統計）在短時間內重複洗版",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                    Slider(
+                        value = throttleSec,
+                        onValueChange = { throttleSec = it },
+                        onValueChangeFinished = {
+                            PhantomPrefs.setSameKeyThrottleSeconds(appCtx, throttleSec.roundToInt())
+                        },
+                        valueRange = 0f..300f,
+                        steps = 29
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    Text("通知點擊行為", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NotifClickBehavior.entries.forEach { behavior ->
+                            FilterChip(
+                                selected = clickBehavior == behavior,
+                                onClick = {
+                                    clickBehavior = behavior
+                                    PhantomPrefs.setNotifClickBehavior(appCtx, behavior)
+                                },
+                                label = { Text(behavior.label) }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "勿擾時段",
+                        subtitle = "時段內暫停推送詐騙警示與重要提醒通知（照常記錄）",
+                        checked = quietHoursEnabled,
+                        onCheckedChange = { checked ->
+                            quietHoursEnabled = checked
+                            PhantomPrefs.setQuietHoursEnabled(appCtx, checked)
+                        }
+                    )
+                    if (quietHoursEnabled) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    TimePickerDialog(
+                                        ctx,
+                                        { _, h, m ->
+                                            quietStartMinute = h * 60 + m
+                                            PhantomPrefs.setQuietHoursStartMinute(appCtx, quietStartMinute)
+                                        },
+                                        quietStartMinute / 60,
+                                        quietStartMinute % 60,
+                                        true
+                                    ).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    String.format(
+                                        Locale.getDefault(),
+                                        "開始 %02d:%02d",
+                                        quietStartMinute / 60,
+                                        quietStartMinute % 60
+                                    )
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    TimePickerDialog(
+                                        ctx,
+                                        { _, h, m ->
+                                            quietEndMinute = h * 60 + m
+                                            PhantomPrefs.setQuietHoursEndMinute(appCtx, quietEndMinute)
+                                        },
+                                        quietEndMinute / 60,
+                                        quietEndMinute % 60,
+                                        true
+                                    ).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    String.format(
+                                        Locale.getDefault(),
+                                        "結束 %02d:%02d",
+                                        quietEndMinute / 60,
+                                        quietEndMinute % 60
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. 資料管理
+            item {
+                CollapsibleSettingsCard(
+                    title = "資料管理",
+                    expanded = expandData,
+                    onToggle = {
+                        expandData = !expandData
+                        PhantomPrefs.setSettingsCardExpanded(appCtx, "data", expandData)
+                    },
+                    glassState = glassState
+                ) {
+                    // App 靜音清單
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("App 靜音清單", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(
+                                "已靜音 App 可選擇完全不記錄或僅靜默記錄（不影響既有歷史訊息）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { showAppPickerDialog = true }) {
+                            Text("選擇 App")
+                        }
+                    }
+                    if (mutedApps.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        mutedApps.forEach { pkg ->
+                            val mode = MuteMode.fromPref(muteModes[pkg])
+                            val appLabel = remember(pkg) {
+                                try {
+                                    ctx.packageManager.getApplicationLabel(
+                                        ctx.packageManager.getApplicationInfo(pkg, 0)
+                                    ).toString()
+                                } catch (_: Exception) {
+                                    pkg
+                                }
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AppIconImage(
+                                        packageName = pkg,
+                                        contentDescription = appLabel,
+                                        size = 32.dp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = appLabel,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = mode.label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                                TextButton(onClick = {
+                                    PhantomPrefs.setAppMuted(appCtx, pkg, false)
+                                    mutedApps = PhantomPrefs.getMutedApps(appCtx).sorted()
+                                    muteModes = PhantomPrefs.getAppMuteModeMap(appCtx)
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("已解除靜音：$appLabel")
+                                    }
+                                }) {
+                                    Text("解除靜音")
+                                }
+                            }
+                        }
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 10.dp))
+
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(Intent(ctx, TagManagementActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("自訂標籤管理")
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    // 保留天數與則數上限
+                    Text("訊息保留天數（詐騙記錄永久保留）", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RetentionConfig.OPTIONS.forEach { days ->
+                            FilterChip(
+                                selected = retentionDays == days,
+                                onClick = {
+                                    retentionDays = days
+                                    RetentionConfig.setRetentionDays(appCtx, days)
+                                    RetentionPolicy.scheduleOrUpdate(appCtx)
+                                },
+                                label = { Text(RetentionConfig.labelForDays(days)) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("訊息保留則數上限", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RetentionConfig.MAX_COUNT_OPTIONS.forEach { cnt ->
+                            FilterChip(
+                                selected = retentionMaxCount == cnt,
+                                onClick = {
+                                    retentionMaxCount = cnt
+                                    PhantomPrefs.setRetentionMaxCount(appCtx, cnt)
+                                    RetentionPolicy.scheduleOrUpdate(appCtx)
+                                },
+                                label = { Text(RetentionConfig.labelForMaxCount(cnt)) }
+                            )
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+
+                    OutlinedButton(
+                        onClick = { showExportDialog = true },
+                        enabled = !isExporting,
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text(if (isExporting) "匯出中…" else "匯出訊息 CSV（可選範圍）")
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = { showClearReadConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("清除已讀訊息")
+                    }
+                    Spacer(Modifier.height(8.dp))
 
                     OutlinedButton(
                         onClick = { showDeleteAllConfirm = true },
@@ -992,20 +1165,31 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     ) {
                         Text("刪除全部訊息")
                     }
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            PhantomPrefs.setOnboardingCompleted(appCtx, false)
+                            onBack()
+                        },
+                        modifier = Modifier.fillMaxWidth().pressableScale()
+                    ) {
+                        Text("重新播放新手教學")
+                    }
                 }
             }
 
-            // 4. 外觀分組卡
+            // 5. 外觀與保活
             item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 14.dp
+                CollapsibleSettingsCard(
+                    title = "外觀與保活",
+                    expanded = expandAppearance,
+                    onToggle = {
+                        expandAppearance = !expandAppearance
+                        PhantomPrefs.setSettingsCardExpanded(appCtx, "appearance", expandAppearance)
+                    },
+                    glassState = glassState
                 ) {
-                    Text("外觀", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(10.dp))
-
                     Text("主題模式", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(6.dp))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1042,19 +1226,7 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                             )
                         }
                     }
-                }
-            }
-
-            // 5. 保持運作（OEM 保活）分組卡
-            item {
-                GlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 20.dp,
-                    contentPadding = 14.dp
-                ) {
-                    Text("保持運作（背景保活與權限）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
                     Text(
                         text = if (listenerEnabled) "通知存取權限：已開啟 ✓" else "通知存取權限：尚未開啟 ⚠",
@@ -1120,6 +1292,45 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                         Text("開啟系統設定 / 應用程式詳情")
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollapsibleSettingsCard(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    glassState: HazeState,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    GlassCard(
+        glassState = glassState,
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = 20.dp,
+        contentPadding = 14.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (expanded) "收合" else "展開"
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(modifier = Modifier.padding(top = 10.dp)) {
+                content()
             }
         }
     }
