@@ -135,6 +135,7 @@ fun FluidSwitch(
                     },
                     onDragEnd = {
                         dragging = false
+                        // 拖曳超過閾值（一半）才切換
                         commitDrag(dragProgress.value > 0.5f)
                     },
                     onDragCancel = {
@@ -155,6 +156,7 @@ fun FluidSwitch(
                 }
                 .size(thumbSize)
                 .graphicsLayer {
+                    // squish 變形：按壓時橫向拉長、縱向壓扁
                     scaleX = thumbWidth / thumbSize
                     scaleY = thumbHeight / thumbSize
                 }
