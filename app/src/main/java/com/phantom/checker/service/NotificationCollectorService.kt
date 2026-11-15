@@ -99,9 +99,8 @@ class NotificationCollectorService : NotificationListenerService() {
         if (isOngoing && !PhantomPrefs.isRecordOngoingEnabled(applicationContext)) return
 
         // 群組摘要通知過濾
-        val isGroupSummary = sbn.isGroupSummary ||
-            (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0 ||
-            extras.getBoolean(Notification.EXTRA_IS_GROUP_SUMMARY, false)
+        val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0 ||
+            extras.getBoolean("android.isGroupSummary", false)
         if (isGroupSummary) return
 
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
