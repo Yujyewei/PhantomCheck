@@ -222,6 +222,16 @@ data class AppLatestMsgRow(
     val messageId: Long
 )
 
+data class DayCountRow(
+    val dayKey: String,
+    val cnt: Int
+)
+
+data class HourCountRow(
+    val hour: Int,
+    val cnt: Int
+)
+
 @Dao
 interface MessageDao {
     @Query("SELECT * FROM messages ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
@@ -325,6 +335,21 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE remindAt IS NOT NULL AND remindAt > :now ORDER BY remindAt ASC")
     suspend fun pendingReminders(now: Long): List<MessageEntity>
 
+    @Query("SELECT * FROM messages WHERE remindAt IS NOT NULL ORDER BY remindAt ASC")
+    suspend fun allScheduledReminders(): List<MessageEntity>
+
+    @Query(
+        "SELECT strftime('%Y%m%d', timestamp / 1000, 'unixepoch', 'localtime') AS dayKey, COUNT(*) AS cnt " +
+            "FROM messages WHERE timestamp >= :sinceTs GROUP BY dayKey"
+    )
+    suspend fun countByDaySince(sinceTs: Long): List<DayCountRow>
+
+    @Query(
+        "SELECT CAST(strftime('%H', timestamp / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hour, COUNT(*) AS cnt " +
+            "FROM messages WHERE timestamp >= :sinceTs GROUP BY hour"
+    )
+    suspend fun countByHourSince(sinceTs: Long): List<HourCountRow>
+
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE timestamp >= :minTs AND timestamp <= :maxTs AND dedupKey = :dedupKey)")
     suspend fun existsByDedupKeyInWindow(dedupKey: String, minTs: Long, maxTs: Long): Boolean
 
@@ -394,10 +419,10 @@ interface MessageDao {
     @Query("DELETE FROM messages")
     suspend fun deleteAll()
 
-    @Query("DELETE FROM messages WHERE timestamp < :before")
+    @Query("DELETE FROM messages WHERE timestamp < :before AND riskLabel != 'scam'")
     suspend fun prune(before: Long)
 
-    @Query("DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY timestamp DESC LIMIT :keepCount)")
+    @Query("DELETE FROM messages WHERE riskLabel != 'scam' AND id NOT IN (SELECT id FROM messages ORDER BY timestamp DESC LIMIT :keepCount)")
     suspend fun deleteOlderThanCount(keepCount: Int)
 }
 
@@ -522,11 +547,16 @@ interface TagDao {
 
     @Query(
         "SELECT t.id AS tagId, t.name AS name, t.colorHex AS colorHex, " +
-            "COUNT(mt.messageId) AS cnt " +
-            "FROM tags t LEFT JOIN message_tags mt ON t.id = mt.tagId " +
+            "COUNT(DISTINCT CASE WHEN m.id IS NOT NULL THEN mt.messageId END) AS cnt " +
+            "FROM tags t " +
+            "LEFT JOIN message_tags mt ON t.id = mt.tagId " +
+            "LEFT JOIN messages m ON mt.messageId = m.id " +
             "GROUP BY t.id ORDER BY t.sortOrder ASC, t.id ASC"
     )
     suspend fun allTagCounts(): List<TagTotalCountRow>
+
+    @Query("DELETE FROM message_tags WHERE messageId NOT IN (SELECT id FROM messages)")
+    suspend fun deleteOrphanCrossRefs()
 }
 
 @Dao

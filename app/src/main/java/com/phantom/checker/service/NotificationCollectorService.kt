@@ -73,9 +73,11 @@ class NotificationCollectorService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         AiClient.init(applicationContext)
+        PhantomPrefs.onRuleCachesInvalidated = { invalidateRuleCaches() }
     }
 
     override fun onDestroy() {
+        PhantomPrefs.onRuleCachesInvalidated = null
         isConnected = false
         scope.cancel()
         super.onDestroy()
@@ -151,6 +153,9 @@ class NotificationCollectorService : NotificationListenerService() {
             ) ?: return
 
         val title = resolveNotificationTitle(extras, rawText, pkg)
+        val isMessagingNotif = notification.category == Notification.CATEGORY_MESSAGE ||
+            extras.containsKey(Notification.EXTRA_MESSAGES) ||
+            extras.getString(Notification.EXTRA_TEMPLATE) == Notification.MessagingStyle::class.java.name
 
         // 內容感知同 sbn.key 更新節流 + 疊加式通知尾巴提取
         val sbnKey = sbn.key
@@ -160,12 +165,18 @@ class NotificationCollectorService : NotificationListenerService() {
         if (!sbnKey.isNullOrBlank()) {
             val prevRecord = synchronized(sameKeyHistory) { sameKeyHistory.get(sbnKey) }
             if (prevRecord != null) {
+                val exactSame = (title == prevRecord.title && rawText == prevRecord.text)
+                if (isMessagingNotif && exactSame && sbn.postTime == prevRecord.timestamp) {
+                    // 通訊類通知同 key + 同內容 + postTime 未變視為系統 re-post
+                    return
+                }
                 if (throttleSec > 0 && (sbn.postTime - prevRecord.timestamp) < throttleSec * 1000L) {
-                    val exactSame = (title == prevRecord.title && rawText == prevRecord.text)
+                    val shouldThrottleExact = exactSame && !isMessagingNotif
                     val digitMicroChange = digitVarianceEnabled &&
+                        !isMessagingNotif &&
                         title == prevRecord.title &&
                         normalizeDigitsAndWhitespace(rawText) == normalizeDigitsAndWhitespace(prevRecord.text)
-                    if (exactSame || digitMicroChange) {
+                    if (shouldThrottleExact || digitMicroChange) {
                         return
                     }
                 }
@@ -182,11 +193,11 @@ class NotificationCollectorService : NotificationListenerService() {
             }
         }
 
-        // 10 分鐘同內容去重
+        // 斷線重播去重快取（一般路徑交由上方 throttle 層判斷，不以固定 10 分鐘吞訊）
         val dedupKey = sha256("$pkg|$sbnKey|$title|$text")
         synchronized(dedupCache) {
             val lastTime = dedupCache.get(dedupKey)
-            if (lastTime != null && (sbn.postTime - lastTime) < DEDUP_WINDOW_MS) {
+            if (isSuspectedReplay && lastTime != null && (sbn.postTime - lastTime) < DEDUP_WINDOW_MS) {
                 return
             }
             dedupCache.put(dedupKey, sbn.postTime)
@@ -516,7 +527,7 @@ class NotificationCollectorService : NotificationListenerService() {
         nm.createNotificationChannel(
             NotificationChannel("scam_alert", "詐騙警示", NotificationManager.IMPORTANCE_HIGH)
         )
-        val notifId = 2000 + ((msgId % 40000L).toInt())
+        val notifId = NotifIds.scamAlert(msgId)
         val pendingIntent = buildClickPendingIntent(ctx, notifId, msgId, pkg)
         val plainReason = com.phantom.checker.ui.stripMarkdown(reason)
             .replace(Regex("\\s+"), " ")
@@ -547,7 +558,7 @@ class NotificationCollectorService : NotificationListenerService() {
         nm.createNotificationChannel(
             NotificationChannel("important_alert", "重要訊息提醒", NotificationManager.IMPORTANCE_HIGH)
         )
-        val notifId = 50000 + ((msgId % 40000L).toInt())
+        val notifId = NotifIds.importantAlert(msgId)
         val pendingIntent = buildClickPendingIntent(ctx, notifId, msgId, pkg)
         val notif = Notification.Builder(ctx, "important_alert")
             .setSmallIcon(R.drawable.ic_stat_phantom)
