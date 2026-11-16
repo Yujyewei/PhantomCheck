@@ -55,10 +55,19 @@ private fun drawableToBitmap(drawable: Drawable, sizePx: Int = 96): Bitmap {
     return bitmap
 }
 
+private val appIconBitmapCache = object : android.util.LruCache<String, ImageBitmap>(64) {}
+
 fun loadAppIconBitmap(context: Context, packageName: String): ImageBitmap? {
+    synchronized(appIconBitmapCache) {
+        appIconBitmapCache.get(packageName)?.let { return it }
+    }
     return try {
         val drawable = context.packageManager.getApplicationIcon(packageName)
-        drawableToBitmap(drawable).asImageBitmap()
+        val bmp = drawableToBitmap(drawable).asImageBitmap()
+        synchronized(appIconBitmapCache) {
+            appIconBitmapCache.put(packageName, bmp)
+        }
+        bmp
     } catch (_: Exception) {
         null
     }
@@ -116,6 +125,75 @@ fun buildRecentAppsStripBitmap(
         val top = startY + row * (cellPx + gapPx)
         val iconBmp = drawableToBitmap(drawable, cellPx)
         canvas.drawBitmap(iconBmp, null, Rect(left, top, left + cellPx, top + cellPx), paint)
+    }
+    return bitmap
+}
+
+/**
+ * 水平條狀圖示列（左新右舊，最多 4 個 App 圖示），最左側最新 App 加上高亮邊框與角標，
+ * 供常駐統計通知 RemoteViews 右側顯示。
+ */
+fun buildRecentAppsHorizontalStripBitmap(
+    context: Context,
+    packageNames: List<String>
+): Bitmap? {
+    val pkgs = packageNames.distinct().take(4)
+    if (pkgs.isEmpty()) return null
+    val density = context.resources.displayMetrics.density
+    val iconPx = (24f * density).roundToInt().coerceAtLeast(48)
+    val gapPx = (4f * density).roundToInt().coerceAtLeast(6)
+    val padPx = (3f * density).roundToInt().coerceAtLeast(4)
+    val drawables = pkgs.mapNotNull { pkg ->
+        try {
+            context.packageManager.getApplicationIcon(pkg)
+        } catch (_: Exception) {
+            null
+        }
+    }
+    if (drawables.isEmpty()) return null
+
+    val width = padPx * 2 + drawables.size * iconPx + (drawables.size - 1) * gapPx
+    val height = padPx * 2 + iconPx
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+    drawables.forEachIndexed { idx, drawable ->
+        val left = padPx + idx * (iconPx + gapPx)
+        val top = padPx
+        val iconBmp = drawableToBitmap(drawable, iconPx)
+        canvas.drawBitmap(iconBmp, null, Rect(left, top, left + iconPx, top + iconPx), paint)
+
+        if (idx == 0) {
+            val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = (1.5f * density).coerceAtLeast(2f)
+                color = android.graphics.Color.parseColor("#3B82F6")
+            }
+            val radius = (6f * density).coerceAtLeast(8f)
+            canvas.drawRoundRect(
+                left.toFloat(),
+                top.toFloat(),
+                (left + iconPx).toFloat(),
+                (top + iconPx).toFloat(),
+                radius,
+                radius,
+                ringPaint
+            )
+            val dotRadius = (3.5f * density).coerceAtLeast(5f)
+            val cx = (left + iconPx - dotRadius * 0.6f)
+            val cy = (top + dotRadius * 0.6f)
+            val borderDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = android.graphics.Color.WHITE
+            }
+            val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = android.graphics.Color.parseColor("#2563EB")
+            }
+            canvas.drawCircle(cx, cy, dotRadius + 1.5f, borderDotPaint)
+            canvas.drawCircle(cx, cy, dotRadius, dotPaint)
+        }
     }
     return bitmap
 }

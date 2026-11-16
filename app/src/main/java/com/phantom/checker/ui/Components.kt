@@ -71,7 +71,15 @@ import java.util.Locale
 @Composable
 fun Modifier.phantomGlassSource(state: HazeState): Modifier {
     val ctx = LocalContext.current
-    return if (ThemePreferences.isGlassEffectEnabled(ctx)) {
+    val isPowerSave = remember(ctx) {
+        try {
+            (ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager)
+                ?.isPowerSaveMode == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+    return if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
         this.glassSource(state)
     } else {
         this
@@ -86,7 +94,15 @@ fun Modifier.phantomGlassSurface(
     cornerRadius: Dp = 24.dp
 ): Modifier {
     val ctx = LocalContext.current
-    return if (ThemePreferences.isGlassEffectEnabled(ctx)) {
+    val isPowerSave = remember(ctx) {
+        try {
+            (ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager)
+                ?.isPowerSaveMode == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+    return if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
         this.glassSurface(
             state = state,
             fallbackColor = fallbackColor,
@@ -117,7 +133,15 @@ fun PhantomGlassCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val ctx = LocalContext.current
-    if (ThemePreferences.isGlassEffectEnabled(ctx)) {
+    val isPowerSave = remember(ctx) {
+        try {
+            (ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager)
+                ?.isPowerSaveMode == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+    if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
         GlassCard(
             glassState = glassState,
             modifier = modifier,
@@ -162,10 +186,21 @@ fun rememberPhantomHaptic(): (HapticFeedbackType) -> Unit {
                     }
                     if (vibrator?.hasVibrator() == true) {
                         val isLong = type == HapticFeedbackType.LongPress
-                        val effect = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        val effect = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+                            vibrator.areAllEffectsSupported(
+                                android.os.VibrationEffect.EFFECT_CLICK,
+                                android.os.VibrationEffect.EFFECT_HEAVY_CLICK
+                            ) == android.os.Vibrator.VIBRATION_EFFECT_SUPPORT_YES
+                        ) {
                             android.os.VibrationEffect.createPredefined(
                                 if (isLong) android.os.VibrationEffect.EFFECT_HEAVY_CLICK
                                 else android.os.VibrationEffect.EFFECT_CLICK
+                            )
+                        } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                            android.os.VibrationEffect.createWaveform(
+                                if (isLong) longArrayOf(0L, 40L) else longArrayOf(0L, 25L),
+                                if (isLong) intArrayOf(0, 255) else intArrayOf(0, 220),
+                                -1
                             )
                         } else {
                             android.os.VibrationEffect.createOneShot(

@@ -77,6 +77,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -257,11 +258,14 @@ private fun PhantomCheckApp(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var selectedTab by remember { mutableStateOf(MainTab.MESSAGES) }
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(MainTab.MESSAGES) }
     var showSearchBar by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var searchRiskFilter by remember { mutableStateOf(SearchRiskFilter.ALL) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
+    val tabLastLoadedMs = remember { mutableStateMapOf<MainTab, Long>() }
+    var lastLoadedFilter by remember { mutableStateOf<MessageFilter?>(null) }
+    var lastLoadedRefreshTrigger by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(requestedTab) {
         if (requestedTab != null) {
@@ -403,9 +407,19 @@ private fun PhantomCheckApp(
         }
     }
 
-    // 依分頁、篩選或搜尋詞載入資料（不清空現有清單避免切換閃爍）
+    // 依分頁、篩選或搜尋詞載入資料（15s TTL 快取，切換分頁不重複查詢 DB）
     LaunchedEffect(selectedTab, searchQuery, activeFilter, refreshTrigger) {
         val q = searchQuery.trim()
+        val now = System.currentTimeMillis()
+        val filterChanged = lastLoadedFilter != activeFilter
+        val refreshChanged = lastLoadedRefreshTrigger != refreshTrigger
+        if (q.isEmpty() && !filterChanged && !refreshChanged) {
+            val lastMs = tabLastLoadedMs[selectedTab] ?: 0L
+            if (now - lastMs < 15_000L) {
+                isLoading = false
+                return@LaunchedEffect
+            }
+        }
         if (q.isNotEmpty()) {
             delay(300L)
         }
@@ -556,6 +570,11 @@ private fun PhantomCheckApp(
                     }
                 }
             }
+        }
+        if (q.isEmpty()) {
+            tabLastLoadedMs[selectedTab] = System.currentTimeMillis()
+            lastLoadedFilter = activeFilter
+            lastLoadedRefreshTrigger = refreshTrigger
         }
         isLoading = false
     }
@@ -1251,7 +1270,7 @@ private fun PhantomCheckApp(
                 )
                 Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(SearchRiskFilter.entries) { filter ->
+                    items(SearchRiskFilter.entries, key = { it.name }) { filter ->
                         FilterChip(
                             selected = searchRiskFilter == filter,
                             onClick = { searchRiskFilter = filter },
@@ -2289,6 +2308,8 @@ private fun StatsTab(
     var showExportDialog by remember { mutableStateOf(false) }
     var showHistoryDialog by remember { mutableStateOf(false) }
     var summaryHistory by remember { mutableStateOf(listOf<AiSummaryEntity>()) }
+    val profiles = remember { AiClient.getProfiles(appCtx) }
+    var activeProfile by remember { mutableStateOf(AiClient.getActiveProfile(appCtx)) }
 
     if (showExportDialog) {
         ExportCsvDialog(
@@ -2419,6 +2440,15 @@ private fun StatsTab(
                         Text("查看歷史")
                     }
                 }
+                AiProviderSwitcherChip(
+                    profiles = profiles,
+                    activeProfile = activeProfile,
+                    onSelectProfile = { selected ->
+                        AiClient.setActiveProvider(appCtx, selected.id)
+                        activeProfile = selected
+                        onShowMessage("已切換模型：${selected.name}・${selected.model}")
+                    }
+                )
                 Spacer(Modifier.height(4.dp))
                 val summary = state.latestSummary
                 if (summary != null) {
