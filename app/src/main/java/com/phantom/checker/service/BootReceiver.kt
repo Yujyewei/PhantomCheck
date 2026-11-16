@@ -20,9 +20,10 @@ class BootReceiver : BroadcastReceiver() {
         val appCtx = ctx.applicationContext
         AutoReplyConfig.load(appCtx)
         DailySummaryPolicy.schedule(appCtx)
+        WeeklySummaryPolicy.schedule(appCtx)
         RetentionPolicy.scheduleOrUpdate(appCtx)
         KeepAlivePolicy.scheduleAll(appCtx)
-        StatsForegroundService.startOrRefresh(appCtx)
+        StatsForegroundService.startOrRefresh(appCtx, force = true)
 
         val listenerEnabled = NotificationManagerCompat.getEnabledListenerPackages(appCtx)
             .contains(appCtx.packageName)
