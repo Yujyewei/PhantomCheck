@@ -42,15 +42,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -113,6 +116,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.room.withTransaction
 import com.phantom.checker.data.AppGroupRow
 import com.phantom.checker.data.FilterRule
+import com.phantom.checker.network.AiClient
 import com.phantom.checker.network.ApiKeySource
 import com.phantom.checker.network.IntelClient
 import com.phantom.checker.service.AppDatabaseHolder
@@ -139,6 +143,44 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
+
+private data class SettingSearchItem(
+    val id: String,
+    val cardKey: String,
+    val title: String,
+    val description: String,
+    val aliases: List<String>
+)
+
+private val SETTINGS_SEARCH_CATALOG = listOf(
+    SettingSearchItem("quick_token_saver", "quick", "省 token 模式", "暫停每則 AI 掃描與每日摘要排程，僅命中可疑特徵才分析", listOf("省電", "省錢", "節流", "api", "token", "額度")),
+    SettingSearchItem("quick_persistent_notif", "quick", "常駐統計通知", "通知欄即時統計與 App 圖示列", listOf("通知", "常駐", "狀態列", "統計通知", "背景")),
+    SettingSearchItem("quick_ai_risk", "quick", "AI 風險偵測", "自動分析新通知是否為詐騙或可疑訊息", listOf("防詐", "風險", "偵測", "ai", "掃描")),
+    SettingSearchItem("ai_providers", "ai", "多 Provider AI 設定", "管理 OpenAI / Gemini / Groq / 自訂端點與 API Key", listOf("key", "apikey", "模型", "openai", "gemini", "provider", "金鑰")),
+    SettingSearchItem("ai_daily_limit", "ai", "每日 AI 額度上限", "限制每日 AI 呼叫次數", listOf("額度", "上限", "次數", "quota", "limit")),
+    SettingSearchItem("ai_auto_tag", "ai", "AI 自動標籤", "依訊息內容自動套用 AI 管理標籤", listOf("標籤", "自動分類", "tag")),
+    SettingSearchItem("ai_daily_summary", "ai", "每日 AI 摘要與排程", "設定每日自動生成摘要時間與摘要通知", listOf("摘要", "日報", "每日", "排程", "summary")),
+    SettingSearchItem("ai_rules", "ai", "標籤與 AI 規則管理", "自訂分類標籤、App 規則與關鍵字過濾規則", listOf("規則", "過濾", "標籤管理", "關鍵字")),
+    SettingSearchItem("notif_style", "notif", "通知列圖示與樣式", "控制常駐通知是否顯示最近 App 圖示與詳細/精簡樣式", listOf("常駐通知", "圖示", "精簡", "詳細", "樣式")),
+    SettingSearchItem("notif_ongoing", "notif", "記錄持續性通知", "是否記錄媒體播放、下載進度等 ongoing 通知", listOf("持續性", "ongoing", "音樂", "下載")),
+    SettingSearchItem("notif_scam_alert", "notif", "詐騙警示通知與關鍵字提醒", "高風險訊息即時警示通知與自訂關鍵字提醒", listOf("詐騙", "警示", "提醒", "關鍵字", "alert")),
+    SettingSearchItem("notif_quiet_hours", "notif", "勿擾時段", "指定時段內暫停詐騙警示與關鍵字推播", listOf("勿擾", "靜音", "夜間", "睡覺", "quiet")),
+    SettingSearchItem("notif_auto_reply", "notif", "自動回覆設定", "設定特定條件的自動回覆規則", listOf("自動回覆", "reply")),
+    SettingSearchItem("notif_interaction", "notif", "通知點擊行為、左滑刪除與觸覺震動", "調整點擊通知開啟幻訊或原 App、對話左滑刪除與震動回饋", listOf("點擊", "左滑", "刪除", "震動", "haptic", "swipe")),
+    SettingSearchItem("data_throttle_retention", "data", "節流與保留上限", "相同通知節流秒數、保留天數與最大則數", listOf("節流", "保留", "天數", "上限", "清理")),
+    SettingSearchItem("data_muted_apps", "data", "靜音 App 管理", "設定特定 App 完全不記錄或靜音記錄", listOf("靜音", "封鎖", "app", "略過")),
+    SettingSearchItem("data_export_clear", "data", "匯出資料與清除紀錄", "匯出 CSV / JSON 或清除已讀/全部訊息", listOf("匯出", "備份", "csv", "json", "清除", "刪除全部")),
+    SettingSearchItem("appearance_theme", "appearance", "動態取色、字體大小與液態玻璃", "Material You 動態取色、字體縮放、液態玻璃特效與推薦問題", listOf("外觀", "主題", "字體", "大小", "玻璃", "動態取色", "深色", "淺色")),
+    SettingSearchItem("appearance_keepalive", "appearance", "通知權限、電池優化與保活指引", "檢查通知存取權、關閉電池優化與各品牌自啟動設定", listOf("權限", "電池", "保活", "自啟動", "小米", "三星", "背景被殺")),
+    SettingSearchItem("appearance_widget_tour", "appearance", "桌面小工具與功能導覽", "加入桌面統計小工具或重播設定頁導覽", listOf("小工具", "widget", "桌面", "導覽", "教學")),
+    SettingSearchItem("intel_sources", "intel", "防詐情報四來源與 API Key", "設定 fraud.tw / 165、Google Safe Browsing、PhishTank、Chainabuse 開關與金鑰", listOf("防詐情報", "165", "fraud", "safebrowsing", "phishtank", "chainabuse", "url", "網址檢查", "金鑰")),
+    SettingSearchItem("shizuku_mode", "shizuku", "Shizuku 進階模式", "透過 Shizuku 取得進階系統資訊或保活輔助", listOf("shizuku", "進階", "root", "adb")),
+    SettingSearchItem("personal_density", "personalization", "卡片密度（舒適 / 緊湊）", "調整首頁訊息卡片與對話氣泡的間距與行數密度", listOf("個人化", "密度", "緊湊", "舒適", "間距", "compact")),
+    SettingSearchItem("personal_sort", "personalization", "首頁排序方式", "切換首頁 App 清單依時間新→舊、未讀多→少或風險高→低排序", listOf("個人化", "排序", "未讀", "風險", "時間", "sort")),
+    SettingSearchItem("personal_filters", "personalization", "篩選欄顯示自訂", "自訂首頁篩選欄是否顯示星標、詐騙、已過濾與標籤按鈕", listOf("個人化", "篩選", "filter", "星標", "標籤", "隱藏")),
+    SettingSearchItem("personal_summary_collapse", "personalization", "摘要卡預設收合", "控制每日與本週 AI 摘要卡是否預設收合為單行預覽", listOf("個人化", "摘要", "收合", "展開", "折疊")),
+    SettingSearchItem("personal_time_format", "personalization", "12 / 24 小時制", "切換訊息與對話的時間顯示格式", listOf("個人化", "時間", "12小時", "24小時", "am", "pm"))
+)
 
 private data class InstalledAppInfo(
     val packageName: String,
@@ -329,6 +371,20 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
     var expandAppearance by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "appearance")) }
     var expandShizuku by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "shizuku_advanced")) }
     var expandIntel by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "intel")) }
+    var expandPersonalization by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "personalization")) }
+
+    // 個人化設定
+    var cardDensity by remember { mutableStateOf(PhantomPrefs.getCardDensity(appCtx)) }
+    var homeSortOrder by remember { mutableStateOf(PhantomPrefs.getHomeSortOrder(appCtx)) }
+    var visibleHomeFilters by remember { mutableStateOf(PhantomPrefs.getVisibleHomeFilters(appCtx)) }
+    var summaryDefaultCollapsed by remember { mutableStateOf(PhantomPrefs.isSummaryDefaultCollapsed(appCtx)) }
+    var use24HourFormat by remember { mutableStateOf(PhantomPrefs.is24HourFormat(appCtx)) }
+
+    // 設定頁搜尋狀態（本地即時過濾 + AI 語意導覽）
+    var searchQuery by remember { mutableStateOf("") }
+    var isAiSearching by remember { mutableStateOf(false) }
+    var aiMatchedIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var aiSearchNote by remember { mutableStateOf<String?>(null) }
 
     // 設定頁高亮導覽狀態（0 = 未顯示，1..6 = 對應步驟）
     var tourStepIndex by remember {
@@ -612,7 +668,15 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("全部設定") },
+                    expandedHeight = 52.dp,
+                    title = {
+                        Text(
+                            text = "全部設定",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -622,29 +686,207 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
         ) { padding ->
-            LazyColumn(
-                state = listState,
+            val allCardKeys = remember {
+                listOf("quick", "personalization", "ai", "notif", "data", "appearance", "shizuku", "intel")
+            }
+            val queryTokens = remember(searchQuery) {
+                searchQuery.trim().lowercase(Locale.getDefault())
+                    .split(Regex("\\s+"))
+                    .filter { it.isNotEmpty() }
+            }
+            val localMatchedItems = remember(queryTokens) {
+                if (queryTokens.isEmpty()) emptyList()
+                else SETTINGS_SEARCH_CATALOG.filter { item ->
+                    val haystack = "${item.title} ${item.description} ${item.aliases.joinToString(" ")}".lowercase(Locale.getDefault())
+                    queryTokens.all { tok -> haystack.contains(tok) }
+                }
+            }
+            val isLocalFiltering = queryTokens.isNotEmpty() && aiMatchedIds.isEmpty()
+            val aiMatchedCardKeys = remember(aiMatchedIds) {
+                aiMatchedIds.mapNotNull { id ->
+                    SETTINGS_SEARCH_CATALOG.firstOrNull { it.id == id }?.cardKey
+                }.toSet()
+            }
+            val highlightedCardKeys = remember(isLocalFiltering, localMatchedItems, aiMatchedCardKeys) {
+                when {
+                    aiMatchedCardKeys.isNotEmpty() -> aiMatchedCardKeys
+                    isLocalFiltering -> localMatchedItems.map { it.cardKey }.toSet()
+                    else -> emptySet()
+                }
+            }
+            val visibleCardKeys = remember(isLocalFiltering, localMatchedItems, allCardKeys) {
+                if (isLocalFiltering) localMatchedItems.map { it.cardKey }.toSet()
+                else allCardKeys.toSet()
+            }
+
+            fun runAiSettingsSearch() {
+                val q = searchQuery.trim()
+                if (q.isEmpty() || isAiSearching) return
+                scope.launch {
+                    isAiSearching = true
+                    val catalogText = SETTINGS_SEARCH_CATALOG.joinToString("\n") {
+                        "- ${it.id}: ${it.title}（${it.description}）"
+                    }
+                    val allowedIds = SETTINGS_SEARCH_CATALOG.map { it.id }.toSet()
+                    val result = AiClient.searchSettings(
+                        query = q,
+                        catalogText = catalogText,
+                        allowedIds = allowedIds,
+                        context = appCtx
+                    )
+                    isAiSearching = false
+                    result.onSuccess { ids ->
+                        aiMatchedIds = ids
+                        val matchedItems = ids.mapNotNull { id ->
+                            SETTINGS_SEARCH_CATALOG.firstOrNull { it.id == id }
+                        }
+                        val targetCards = matchedItems.map { it.cardKey }.toSet()
+                        if ("quick" in targetCards) expandQuick = true
+                        if ("personalization" in targetCards) expandPersonalization = true
+                        if ("ai" in targetCards) expandAi = true
+                        if ("notif" in targetCards) expandNotif = true
+                        if ("data" in targetCards) expandData = true
+                        if ("appearance" in targetCards) expandAppearance = true
+                        if ("shizuku" in targetCards) expandShizuku = true
+                        if ("intel" in targetCards) expandIntel = true
+
+                        aiSearchNote = "AI 定位：${matchedItems.joinToString("、") { it.title }}"
+                        val firstCardKey = matchedItems.firstOrNull()?.cardKey
+                        val scrollIdx = allCardKeys.indexOf(firstCardKey)
+                        if (scrollIdx >= 0) {
+                            listState.animateScrollToItem(scrollIdx)
+                        }
+                    }.onFailure { err ->
+                        snackbarHostState.showSnackbar(err.message ?: "AI 搜尋失敗")
+                    }
+                }
+            }
+
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .phantomGlassSource(glassState)
                     .padding(padding)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // 1. 快速設定（置頂）
-                item {
-                    CollapsibleSettingsCard(
-                        title = "快速設定",
-                        expanded = expandQuick,
-                        onToggle = {
-                            expandQuick = !expandQuick
-                            PhantomPrefs.setSettingsCardExpanded(appCtx, "quick", expandQuick)
-                        },
-                        glassState = glassState,
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            cardBounds["quick"] = coords.boundsInRoot()
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { next ->
+                        searchQuery = next
+                        aiMatchedIds = emptyList()
+                        aiSearchNote = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    placeholder = {
+                        Text(
+                            text = "搜尋設定、開關或用自然語言提問…",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = "搜尋設定")
+                    },
+                    trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    searchQuery = ""
+                                    aiMatchedIds = emptyList()
+                                    aiSearchNote = null
+                                }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "清除搜尋")
+                                }
+                            }
+                            IconButton(
+                                onClick = { runAiSettingsSearch() },
+                                enabled = searchQuery.isNotBlank() && !isAiSearching
+                            ) {
+                                if (isAiSearching) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = AutoAwesomeIcon,
+                                        contentDescription = "AI 語意搜尋設定",
+                                        tint = if (searchQuery.isNotBlank()) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
+                    }
+                )
+
+                if (aiSearchNote != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = aiSearchNote!!,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            TextButton(onClick = {
+                                aiMatchedIds = emptyList()
+                                aiSearchNote = null
+                            }) {
+                                Text("清除定位")
+                            }
+                        }
+                    }
+                }
+
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (isLocalFiltering && visibleCardKeys.isEmpty()) {
+                        item(key = "empty_search") {
+                            EmptyStateView(
+                                icon = Icons.Default.Search,
+                                title = "找不到符合「$searchQuery」的設定",
+                                description = "可點擊搜尋框右側 ✨ 圖示，讓 AI 幫您語意定位設定項目。",
+                                actionLabel = "試試 AI 語意搜尋",
+                                onAction = { runAiSettingsSearch() }
+                            )
+                        }
+                    }
+
+                    // 1. 快速設定（置頂）
+                    if ("quick" in visibleCardKeys) {
+                        item(key = "card_quick") {
+                            CollapsibleSettingsCard(
+                                title = "快速設定",
+                                expanded = expandQuick || ("quick" in highlightedCardKeys),
+                                highlighted = "quick" in highlightedCardKeys,
+                                onToggle = {
+                                    expandQuick = !expandQuick
+                                    PhantomPrefs.setSettingsCardExpanded(appCtx, "quick", expandQuick)
+                                },
+                                glassState = glassState,
+                                modifier = Modifier.onGloballyPositioned { coords ->
+                                    cardBounds["quick"] = coords.boundsInRoot()
+                                }
+                            ) {
                     SettingSwitchRow(
                         title = "省 token 模式",
                         subtitle = "暫停每則 AI 掃描與每日摘要排程，僅命中可疑特徵才分析；關閉即恢復原設定",
@@ -720,12 +962,131 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     )
                 }
             }
+            }
+
+            // 1.5 個人化
+            if ("personalization" in visibleCardKeys) {
+                item(key = "card_personalization") {
+                    CollapsibleSettingsCard(
+                        title = "個人化",
+                        expanded = expandPersonalization || ("personalization" in highlightedCardKeys),
+                        highlighted = "personalization" in highlightedCardKeys,
+                        onToggle = {
+                            expandPersonalization = !expandPersonalization
+                            PhantomPrefs.setSettingsCardExpanded(appCtx, "personalization", expandPersonalization)
+                        },
+                        glassState = glassState,
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            cardBounds["personalization"] = coords.boundsInRoot()
+                        }
+                    ) {
+                        Text("卡片密度", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            com.phantom.checker.util.CardDensity.entries.forEach { density ->
+                                FilterChip(
+                                    selected = cardDensity == density,
+                                    onClick = {
+                                        cardDensity = density
+                                        PhantomPrefs.setCardDensity(appCtx, density)
+                                    },
+                                    label = { Text(density.label) }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                        Text("首頁 App 排序", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            com.phantom.checker.util.HomeSortOrder.entries.forEach { order ->
+                                FilterChip(
+                                    selected = homeSortOrder == order,
+                                    onClick = {
+                                        homeSortOrder = order
+                                        PhantomPrefs.setHomeSortOrder(appCtx, order)
+                                    },
+                                    label = { Text(order.label) }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                        Text("首頁篩選欄顯示項目", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = "「全部」與「未讀」固定顯示，可自訂其餘按鈕",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        val filterOptions = listOf(
+                            "starred" to "星標",
+                            "scams" to "詐騙",
+                            "filtered" to "已過濾",
+                            "tag" to "標籤"
+                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            filterOptions.forEach { (key, label) ->
+                                val selected = key in visibleHomeFilters
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = {
+                                        val next = if (selected) visibleHomeFilters - key else visibleHomeFilters + key
+                                        visibleHomeFilters = next
+                                        PhantomPrefs.setVisibleHomeFilters(appCtx, next)
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                        SettingSwitchRow(
+                            title = "摘要卡預設收合",
+                            subtitle = "統計頁「每日／本週 AI 摘要」預設收合為單行預覽",
+                            checked = summaryDefaultCollapsed,
+                            onCheckedChange = { checked ->
+                                summaryDefaultCollapsed = checked
+                                PhantomPrefs.setSummaryDefaultCollapsed(appCtx, checked)
+                            }
+                        )
+
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                        Text("時間顯示格式", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = use24HourFormat,
+                                onClick = {
+                                    use24HourFormat = true
+                                    PhantomPrefs.set24HourFormat(appCtx, true)
+                                },
+                                label = { Text("24 小時制（14:30）") }
+                            )
+                            FilterChip(
+                                selected = !use24HourFormat,
+                                onClick = {
+                                    use24HourFormat = false
+                                    PhantomPrefs.set24HourFormat(appCtx, false)
+                                },
+                                label = { Text("12 小時制（下午 02:30）") }
+                            )
+                        }
+                    }
+                }
+            }
 
             // 2. AI 與分析
-            item {
+            if ("ai" in visibleCardKeys) {
+            item(key = "card_ai") {
                 CollapsibleSettingsCard(
                     title = "AI 與分析",
-                    expanded = expandAi,
+                    expanded = expandAi || ("ai" in highlightedCardKeys),
+                    highlighted = "ai" in highlightedCardKeys,
                     onToggle = {
                         expandAi = !expandAi
                         PhantomPrefs.setSettingsCardExpanded(appCtx, "ai", expandAi)
@@ -880,12 +1241,15 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            }
 
             // 3. 訊息與通知
-            item {
+            if ("notif" in visibleCardKeys) {
+            item(key = "card_notif") {
                 CollapsibleSettingsCard(
                     title = "訊息與通知",
-                    expanded = expandNotif,
+                    expanded = expandNotif || ("notif" in highlightedCardKeys),
+                    highlighted = "notif" in highlightedCardKeys,
                     onToggle = {
                         expandNotif = !expandNotif
                         PhantomPrefs.setSettingsCardExpanded(appCtx, "notif", expandNotif)
@@ -1182,12 +1546,15 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            }
 
             // 4. 資料管理
-            item {
+            if ("data" in visibleCardKeys) {
+            item(key = "card_data") {
                 CollapsibleSettingsCard(
                     title = "資料管理",
-                    expanded = expandData,
+                    expanded = expandData || ("data" in highlightedCardKeys),
+                    highlighted = "data" in highlightedCardKeys,
                     onToggle = {
                         expandData = !expandData
                         PhantomPrefs.setSettingsCardExpanded(appCtx, "data", expandData)
@@ -1366,12 +1733,15 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            }
 
             // 5. 外觀與保活
-            item {
+            if ("appearance" in visibleCardKeys) {
+            item(key = "card_appearance") {
                 CollapsibleSettingsCard(
                     title = "外觀與保活",
-                    expanded = expandAppearance,
+                    expanded = expandAppearance || ("appearance" in highlightedCardKeys),
+                    highlighted = "appearance" in highlightedCardKeys,
                     onToggle = {
                         expandAppearance = !expandAppearance
                         PhantomPrefs.setSettingsCardExpanded(appCtx, "appearance", expandAppearance)
@@ -1538,11 +1908,14 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            }
 
             // 6. Shizuku 進階
-            item {
+            if ("shizuku" in visibleCardKeys) {
+            item(key = "card_shizuku") {
                 ShizukuAdvancedCard(
-                    expanded = expandShizuku,
+                    expanded = expandShizuku || ("shizuku" in highlightedCardKeys),
+                    highlighted = "shizuku" in highlightedCardKeys,
                     onToggle = {
                         expandShizuku = !expandShizuku
                         PhantomPrefs.setSettingsCardExpanded(appCtx, "shizuku_advanced", expandShizuku)
@@ -1554,11 +1927,14 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     onShowMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
                 )
             }
+            }
 
             // 7. 防詐情報
+            if ("intel" in visibleCardKeys) {
             item(key = "card_intel") {
                 FraudIntelCard(
-                    expanded = expandIntel,
+                    expanded = expandIntel || ("intel" in highlightedCardKeys),
+                    highlighted = "intel" in highlightedCardKeys,
                     onToggle = {
                         expandIntel = !expandIntel
                         PhantomPrefs.setSettingsCardExpanded(appCtx, "intel", expandIntel)
@@ -1567,6 +1943,8 @@ fun FilterSettingsScreen(onBack: () -> Unit) {
                     onShowMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
                 )
             }
+            }
+        }
         }
     }
 
@@ -1597,6 +1975,7 @@ private fun FraudIntelCard(
     expanded: Boolean,
     onToggle: () -> Unit,
     glassState: HazeState,
+    highlighted: Boolean = false,
     onShowMessage: (String) -> Unit
 ) {
     val ctx = LocalContext.current
@@ -1623,7 +2002,8 @@ private fun FraudIntelCard(
         title = "防詐情報",
         expanded = expanded,
         onToggle = onToggle,
-        glassState = glassState
+        glassState = glassState,
+        highlighted = highlighted
     ) {
         SettingSwitchRow(
             title = "啟用公開防詐情報預查",
@@ -1877,6 +2257,7 @@ private fun ShizukuAdvancedCard(
     onToggle: () -> Unit,
     glassState: HazeState,
     modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
     onShowMessage: (String) -> Unit
 ) {
     val ctx = LocalContext.current
@@ -1904,7 +2285,8 @@ private fun ShizukuAdvancedCard(
         expanded = expanded,
         onToggle = onToggle,
         glassState = glassState,
-        modifier = modifier
+        modifier = modifier,
+        highlighted = highlighted
     ) {
         Text(
             text = statusText,
@@ -2071,11 +2453,20 @@ private fun CollapsibleSettingsCard(
     onToggle: () -> Unit,
     glassState: HazeState,
     modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     PhantomGlassCard(
         glassState = glassState,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (highlighted) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp))
+                } else {
+                    Modifier
+                }
+            ),
         cornerRadius = 20.dp,
         contentPadding = 14.dp
     ) {
@@ -2086,11 +2477,30 @@ private fun CollapsibleSettingsCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (highlighted) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Text(
+                            text = "符合",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
             Icon(
                 imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                 contentDescription = if (expanded) "收合" else "展開"

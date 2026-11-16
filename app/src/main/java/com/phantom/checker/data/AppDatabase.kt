@@ -24,7 +24,8 @@ data class MessageEntity(
     val isFiltered: Boolean = false, // 命中關鍵字過濾
     val isRead: Boolean = false,   // 幻訊內的已讀標記（不影響原 App）
     val dedupKey: String? = null,  // 通知去重雜湊鍵
-    val isStarred: Boolean = false // 星標
+    val isStarred: Boolean = false, // 星標
+    val remindAt: Long? = null     // 待辦提醒時間（epoch ms）
 )
 
 @Entity(tableName = "filter_rules")
@@ -160,7 +161,8 @@ data class AppGroupRow(
     val packageName: String,
     val appLabel: String,
     val cnt: Int,
-    val lastTs: Long
+    val lastTs: Long,
+    val riskScore: Int = 0
 )
 
 data class SenderGroupRow(
@@ -204,7 +206,8 @@ data class MessageTagRow(
     val messageId: Long,
     val tagId: Long,
     val name: String,
-    val colorHex: String
+    val colorHex: String,
+    val source: String = MessageTagCrossRef.SOURCE_MANUAL
 )
 
 data class TagTotalCountRow(
@@ -298,7 +301,7 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = 'scam' AND timestamp >= :startTs AND timestamp < :endTs")
     suspend fun scamCountBetween(startTs: Long, endTs: Long): Int
 
-    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs FROM messages WHERE timestamp >= :startOfDay GROUP BY packageName ORDER BY lastTs DESC LIMIT 5")
+    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs, SUM(CASE WHEN riskLabel = 'scam' THEN 2 WHEN riskLabel = 'suspicious' THEN 1 ELSE 0 END) as riskScore FROM messages WHERE timestamp >= :startOfDay GROUP BY packageName ORDER BY lastTs DESC LIMIT 5")
     suspend fun todayRecentApps(startOfDay: Long): List<AppGroupRow>
 
     @Query("SELECT packageName FROM messages ORDER BY timestamp DESC LIMIT 1")
@@ -316,7 +319,13 @@ interface MessageDao {
     @Query("UPDATE messages SET isStarred = :starred WHERE id IN (:ids)")
     suspend fun setStarredByIds(ids: List<Long>, starred: Boolean)
 
-    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs FROM messages GROUP BY packageName ORDER BY lastTs DESC")
+    @Query("UPDATE messages SET remindAt = :remindAt WHERE id = :id")
+    suspend fun setRemindAt(id: Long, remindAt: Long?)
+
+    @Query("SELECT * FROM messages WHERE remindAt IS NOT NULL AND remindAt > :now ORDER BY remindAt ASC")
+    suspend fun pendingReminders(now: Long): List<MessageEntity>
+
+    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs, SUM(CASE WHEN riskLabel = 'scam' THEN 2 WHEN riskLabel = 'suspicious' THEN 1 ELSE 0 END) as riskScore FROM messages GROUP BY packageName ORDER BY lastTs DESC")
     suspend fun groupByApp(): List<AppGroupRow>
 
     @Query("SELECT packageName, COUNT(*) as cnt FROM messages WHERE timestamp >= :startOfDay GROUP BY packageName")
@@ -501,7 +510,7 @@ interface TagDao {
     suspend fun todayAiTagCounts(startOfDay: Long): List<AiTagCountRow>
 
     @Query(
-        "SELECT mt.messageId AS messageId, t.id AS tagId, t.name AS name, t.colorHex AS colorHex " +
+        "SELECT mt.messageId AS messageId, t.id AS tagId, t.name AS name, t.colorHex AS colorHex, mt.source AS source " +
             "FROM message_tags mt INNER JOIN tags t ON mt.tagId = t.id " +
             "WHERE mt.messageId IN (:messageIds) " +
             "ORDER BY t.sortOrder ASC, t.id ASC"
@@ -636,7 +645,7 @@ interface IntelDao {
         IntelCacheEntity::class,
         IntelResultEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -793,6 +802,12 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN remindAt INTEGER DEFAULT NULL")
             }
         }
     }

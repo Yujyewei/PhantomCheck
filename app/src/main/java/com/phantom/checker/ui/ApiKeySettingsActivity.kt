@@ -124,7 +124,15 @@ fun ApiKeySettingsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("多 Provider AI 設定") },
+                expandedHeight = 52.dp,
+                title = {
+                    Text(
+                        text = "多 Provider AI 設定",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -154,7 +162,7 @@ fun ApiKeySettingsScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .phantomGlassSource(glassState)
                 .padding(padding)
-                .padding(12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(

@@ -332,7 +332,15 @@ fun TagManagementScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("標籤與 AI 規則管理") },
+                expandedHeight = 52.dp,
+                title = {
+                    Text(
+                        text = "標籤與 AI 規則管理",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -359,11 +367,11 @@ fun TagManagementScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .phantomGlassSource(glassState)
                 .padding(padding)
-                .padding(12.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
                     Text(

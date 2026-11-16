@@ -77,6 +77,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.room.withTransaction
 import com.phantom.checker.data.MessageEntity
 import com.phantom.checker.data.MessageTagCrossRef
+import com.phantom.checker.data.MessageTagRow
 import com.phantom.checker.data.TagEntity
 import com.phantom.checker.network.AiClient
 import com.phantom.checker.service.AppDatabaseHolder
@@ -161,7 +162,7 @@ fun ConversationScreen(
     var messages by remember { mutableStateOf(listOf<MessageEntity>()) }
     var allTags by remember { mutableStateOf(listOf<TagEntity>()) }
     var msgTagIdsMap by remember { mutableStateOf<Map<Long, Set<Long>>>(emptyMap()) }
-    var msgTagColorsMap by remember { mutableStateOf<Map<Long, List<Color>>>(emptyMap()) }
+    var msgTagsMap by remember { mutableStateOf<Map<Long, List<MessageTagRow>>>(emptyMap()) }
     var swipeToDeleteEnabled by remember { mutableStateOf(PhantomPrefs.isSwipeToDeleteEnabled(appCtx)) }
     val haptic = rememberPhantomHaptic()
     var isLoading by remember { mutableStateOf(true) }
@@ -172,6 +173,7 @@ fun ConversationScreen(
     var showClearConfirm by remember { mutableStateOf(false) }
     var sheetMessage by remember { mutableStateOf<MessageEntity?>(null) }
     var deleteCandidate by remember { mutableStateOf<MessageEntity?>(null) }
+    var reminderTarget by remember { mutableStateOf<MessageEntity?>(null) }
     var revealedMessageId by remember { mutableStateOf<Long?>(null) }
     var isAnalyzing by remember { mutableStateOf(false) }
     var hasMoreOlder by remember { mutableStateOf(false) }
@@ -214,17 +216,13 @@ fun ConversationScreen(
             dao.markConversationRead(packageName, sender)
             StatsForegroundService.startOrRefresh(appCtx)
             allTags = db.tagDao().all()
-            val refs = db.tagDao().allCrossRefs()
-            msgTagIdsMap = refs.groupBy { it.messageId }
+            val msgs = dao.byConversationKeyset(packageName, sender, null, pageSize).asReversed()
+            val ids = msgs.map { it.id }
+            val tagRows = if (ids.isEmpty()) emptyList() else db.tagDao().tagsForMessages(ids)
+            msgTagsMap = tagRows.groupBy { it.messageId }
+            msgTagIdsMap = tagRows.groupBy { it.messageId }
                 .mapValues { (_, list) -> list.map { it.tagId }.toSet() }
-            val tagById = allTags.associateBy { it.id }
-            msgTagColorsMap = refs.groupBy { it.messageId }.mapValues { (_, list) ->
-                list.mapNotNull { tagById[it.tagId] }
-                    .distinctBy { it.id }
-                    .take(3)
-                    .map { parseTagColor(it.colorHex) }
-            }
-            dao.byConversationKeyset(packageName, sender, null, pageSize).asReversed()
+            msgs
         }
         messages = loaded
         hasMoreOlder = loaded.size >= pageSize
@@ -239,15 +237,24 @@ fun ConversationScreen(
         val oldestTs = messages.firstOrNull()?.timestamp ?: return@LaunchedEffect
         isLoadingMoreOlder = true
         val pageSize = 200
-        val older = withContext(Dispatchers.IO) {
-            AppDatabaseHolder.db(appCtx).messageDao()
+        val (older, olderTagRows) = withContext(Dispatchers.IO) {
+            val db = AppDatabaseHolder.db(appCtx)
+            val olderMsgs = db.messageDao()
                 .byConversationKeyset(packageName, sender, oldestTs, pageSize)
                 .asReversed()
+            val olderIds = olderMsgs.map { it.id }
+            val tagRows = if (olderIds.isEmpty()) emptyList() else db.tagDao().tagsForMessages(olderIds)
+            olderMsgs to tagRows
         }
         if (older.isNotEmpty()) {
             val existingIds = messages.map { it.id }.toHashSet()
             val uniqueOlder = older.filter { it.id !in existingIds }
             if (uniqueOlder.isNotEmpty()) {
+                val olderTagsGrouped = olderTagRows.groupBy { it.messageId }
+                msgTagsMap = msgTagsMap + olderTagsGrouped
+                msgTagIdsMap = msgTagIdsMap + olderTagsGrouped.mapValues { (_, list) ->
+                    list.map { it.tagId }.toSet()
+                }
                 val prevFirstIdx = listState.firstVisibleItemIndex
                 val prevOffset = listState.firstVisibleItemScrollOffset
                 messages = uniqueOlder + messages
@@ -433,11 +440,20 @@ fun ConversationScreen(
                     OutlinedButton(
                         onClick = {
                             sheetMessage = null
+                            reminderTarget = msg
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("稍後處理")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            sheetMessage = null
                             ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("查看完整詳情")
+                        Text("詳情")
                     }
                     Button(
                         onClick = {
@@ -455,13 +471,34 @@ fun ConversationScreen(
         }
     }
 
+    reminderTarget?.let { target ->
+        ReminderPickerDialog(
+            onDismiss = { reminderTarget = null },
+            onSelectTimestamp = { ts ->
+                reminderTarget = null
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        AppDatabaseHolder.db(appCtx).messageDao().setRemindAt(target.id, ts)
+                    }
+                    com.phantom.checker.service.ReminderScheduler.schedule(appCtx, target.id, ts)
+                    refreshTrigger++
+                    val formatted = PhantomPrefs.formatMessageTime(appCtx, ts, includeDate = true)
+                    snackbarHostState.showSnackbar("已排程提醒：$formatted")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
+                expandedHeight = 52.dp,
                 title = {
                     Column {
                         Text(
                             text = sender,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -588,7 +625,7 @@ fun ConversationScreen(
                                 ChatBubbleItem(
                                     message = msg,
                                     glassState = glassState,
-                                    tagDotColors = msgTagColorsMap[msg.id].orEmpty(),
+                                    tags = msgTagsMap[msg.id].orEmpty(),
                                     onClick = {
                                         revealedMessageId = null
                                         ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
@@ -639,12 +676,15 @@ fun ConversationScreen(
 private fun ChatBubbleItem(
     message: MessageEntity,
     glassState: HazeState,
-    tagDotColors: List<Color> = emptyList(),
+    tags: List<MessageTagRow> = emptyList(),
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    val timeText = remember(message.timestamp) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
+    val ctx = LocalContext.current
+    val isCompact = PhantomPrefs.getCardDensity(ctx) == com.phantom.checker.util.CardDensity.COMPACT
+    val is24h = PhantomPrefs.is24HourFormat(ctx)
+    val timeText = remember(message.timestamp, is24h) {
+        PhantomPrefs.formatMessageTime(ctx, message.timestamp, includeDate = false)
     }
     val riskDotColor: Color? = when (message.riskLabel) {
         "scam" -> MaterialTheme.colorScheme.error
@@ -665,31 +705,12 @@ private fun ChatBubbleItem(
                     onLongClick = onLongClick
                 ),
             cornerRadius = 16.dp,
-            contentPadding = 12.dp
+            contentPadding = if (isCompact) 8.dp else 12.dp
         ) {
-            Row(verticalAlignment = Alignment.Top) {
-                if (tagDotColors.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        tagDotColors.take(3).forEach { dotColor ->
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(dotColor)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            Text(
+                text = message.content,
+                style = MaterialTheme.typography.bodyMedium
+            )
             if (message.riskReason.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 PhantomMarkdownText(
@@ -697,6 +718,33 @@ private fun ChatBubbleItem(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (tags.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                MessageTagChipRow(tags = tags)
+            }
+            val otpCode = remember(message.content) {
+                com.phantom.checker.util.OtpDetector.extractOtp(message.content)
+            }
+            if (otpCode != null) {
+                Spacer(Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    onClick = {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("otp_code", otpCode))
+                        android.widget.Toast.makeText(ctx, "已複製驗證碼 $otpCode", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(
+                        text = "複製驗證碼 $otpCode",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
             }
             Spacer(Modifier.height(6.dp))
             Row(
@@ -708,6 +756,14 @@ private fun ChatBubbleItem(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (message.remindAt != null && message.remindAt > System.currentTimeMillis()) {
+                    Text(
+                        text = "⏰ 待辦",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
                 if (message.isStarred) {
                     Icon(
                         imageVector = Icons.Default.Star,

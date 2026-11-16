@@ -59,6 +59,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.room.withTransaction
+import com.phantom.checker.data.MessageTagRow
 import com.phantom.checker.data.SenderGroupRow
 import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.StatsForegroundService
@@ -78,7 +79,8 @@ data class SenderThreadUi(
     val unreadCount: Int,
     val lastTs: Long,
     val lastPreview: String,
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    val latestTags: List<MessageTagRow> = emptyList()
 )
 
 class AppThreadsActivity : ComponentActivity() {
@@ -144,20 +146,29 @@ fun AppThreadsScreen(
     LaunchedEffect(packageName, refreshTrigger) {
         isLoading = true
         threads = withContext(Dispatchers.IO) {
-            val dao = AppDatabaseHolder.db(appCtx).messageDao()
+            val db = AppDatabaseHolder.db(appCtx)
+            val dao = db.messageDao()
             val vipSenders = PhantomPrefs.getVipSenders(appCtx, packageName)
             val groups: List<SenderGroupRow> = dao.groupBySender(packageName)
             val allAppMsgs = dao.byApp(packageName)
             val latestBySender = allAppMsgs.groupBy { it.sender }
-                .mapValues { (_, list) -> list.maxByOrNull { it.timestamp }?.content.orEmpty() }
+                .mapValues { (_, list) -> list.maxByOrNull { it.timestamp } }
+            val latestIds = latestBySender.values.mapNotNull { it?.id }.distinct()
+            val tagsMap = if (latestIds.isEmpty()) {
+                emptyMap()
+            } else {
+                db.tagDao().tagsForMessages(latestIds).groupBy { it.messageId }
+            }
             groups.map { g ->
+                val latestMsg = latestBySender[g.sender]
                 SenderThreadUi(
                     sender = g.sender,
                     count = g.cnt,
                     unreadCount = g.unreadCnt,
                     lastTs = g.lastTs,
-                    lastPreview = latestBySender[g.sender].orEmpty(),
-                    isPinned = g.sender in vipSenders
+                    lastPreview = latestMsg?.content.orEmpty(),
+                    isPinned = g.sender in vipSenders,
+                    latestTags = latestMsg?.let { tagsMap[it.id] }.orEmpty()
                 )
             }.sortedWith(compareByDescending<SenderThreadUi> { it.isPinned }.thenByDescending { it.lastTs })
         }
@@ -270,16 +281,19 @@ fun AppThreadsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                expandedHeight = 52.dp,
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AppIconImage(
                             packageName = packageName,
                             contentDescription = appLabel,
-                            size = 28.dp
+                            size = 24.dp
                         )
-                        Spacer(Modifier.width(10.dp))
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             text = appLabel,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -327,7 +341,7 @@ fun AppThreadsScreen(
                 .fillMaxSize()
                 .phantomGlassSource(glassState)
                 .padding(padding)
-                .padding(12.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             when {
                 isLoading && threads.isEmpty() -> {
@@ -345,7 +359,7 @@ fun AppThreadsScreen(
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(threads, key = { it.sender }) { thread ->
                             SenderThreadCard(
@@ -379,8 +393,10 @@ private fun SenderThreadCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    val timeText = remember(thread.lastTs) {
-        SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(Date(thread.lastTs))
+    val ctx = LocalContext.current
+    val is24h = PhantomPrefs.is24HourFormat(ctx)
+    val timeText = remember(thread.lastTs, is24h) {
+        PhantomPrefs.formatMessageTime(ctx, thread.lastTs, includeDate = true)
     }
 
     PhantomGlassCard(
@@ -468,5 +484,9 @@ private fun SenderThreadCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+        if (thread.latestTags.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            MessageTagChipRow(tags = thread.latestTags)
+        }
     }
 }
