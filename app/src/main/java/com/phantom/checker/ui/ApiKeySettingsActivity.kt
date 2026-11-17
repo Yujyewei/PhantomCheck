@@ -690,17 +690,17 @@ private fun PurposeModelsCard(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = "用途模型（7 類分流）",
+                text = "用途模型（6 類分流）",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "可為各功能獨立指派模型；未設定時自動跟隨上方預設 Provider。",
+                text = "可為各功能獨立指派模型；自動備忘錄跟隨每則訊息風險分析模型；未設定時自動跟隨上方預設 Provider。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            AiPurpose.entries.forEachIndexed { idx, purpose ->
+            AiPurpose.entries.filter { it != AiPurpose.AUTO_MEMO }.forEachIndexed { idx, purpose ->
                 if (idx > 0) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                 }

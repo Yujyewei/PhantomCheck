@@ -6,8 +6,8 @@
 
 ### 新增
 - **分用途 AI 模型路由（#163）**：
-  - 支援 7 種 AI 用途（`ai_chat`、`ai_message_analysis`、`ai_daily_summary`、`ai_weekly_summary`、`ai_deep_analysis`、`ai_settings_search`、`ai_auto_memo`）各自綁定獨立 AI Profile 或「跟隨預設」；`ApiKeySettingsActivity` 新增用途模型設定卡（7 列下拉選單與逐列測試連線）。
-  - `ChatScreen` 模型切換器改為僅切換 `ai_chat` 用途模型（不再更動全域預設 Provider），並於 `SettingsCatalog` 新增 `ai_model_chat` 等 7 項設定搜尋條目。
+  - 支援 6 種 AI 用途（`ai_chat`、`ai_message_analysis`、`ai_daily_summary`、`ai_weekly_summary`、`ai_deep_analysis`、`ai_settings_search`）各自綁定獨立 AI Profile 或「跟隨預設」（自動備忘錄跟隨每則訊息風險分析模型）；`ApiKeySettingsActivity` 新增用途模型設定卡（6 列下拉選單與逐列測試連線）。
+  - `ChatScreen` 模型切換器改為僅切換 `ai_chat` 用途模型（不再更動全域預設 Provider），並於 `SettingsCatalog` 新增 `ai_model_chat` 等 6 項設定搜尋條目。
 - **離線 AI 補分析佇列與自動重試（#164）**：
   - `AppDatabase` 升版至 v13（`MIGRATION_12_13`）新增 `pending_ai_analysis` 資料表；僅針對暫時性失敗（`UnknownHostException`、`SocketTimeoutException`、`ConnectException`、HTTP 5xx、429 耗盡）自動入隊，401/403/404/413 誠實略過。
   - 新增 WorkManager `PendingAiAnalysisWorker`（`NetworkType.CONNECTED`、指數退避、unique work `ai_pending_analysis_worker`），每輪最多補分析 20 則，`attempts >= 3` 放棄並通知；提供低干擾通知（`NotifIds.AI_OFFLINE_QUEUE`）、訊息頁頂部 `AnimatedVisibility` 佇列橫幅（暫停／繼續／立即重試）與設定頁 `ai_offline_retry_enabled` 開關（預設開，關閉即清空佇列）。

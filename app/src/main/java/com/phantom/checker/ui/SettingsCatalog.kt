@@ -47,7 +47,6 @@ object SettingsCatalog {
         SettingSearchItem("ai_model_weekly_summary", "ai", "分用途模型：每週摘要", "為每週 AI 摘要獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "摘要模型", "每週摘要", "weekly"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_deep_analysis", "ai", "分用途模型：訊息深度分析", "為訊息深度分析獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "深度分析模型", "deep"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_settings_search", "ai", "分用途模型：設定 AI 語意搜尋", "為設定頁 AI 語意搜尋獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "搜尋模型", "設定搜尋", "search"), page = "ApiKeySettingsActivity"),
-        SettingSearchItem("ai_model_auto_memo", "ai", "分用途模型：自動備忘錄生成", "為自動備忘錄生成獨立選擇 Provider 模型（同次分析時以訊息分析模型為準）", listOf("模型", "分用途", "備忘錄模型", "memo"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("notif_style", "notif", "常駐通知樣式", "控制常駐通知為精簡或詳細樣式", listOf("常駐通知", "精簡", "詳細", "樣式")),
         SettingSearchItem("notif_persistent_icons", "notif", "常駐通知顯示 App 圖示條", "於常駐統計通知內顯示最近收到訊息的 App 圖示", listOf("常駐通知", "圖示列", "圖示條", "icon")),
         SettingSearchItem("notif_ongoing", "notif", "記錄持續性通知", "是否記錄媒體播放、下載進度等 ongoing 通知", listOf("持續性", "ongoing", "音樂", "下載")),
