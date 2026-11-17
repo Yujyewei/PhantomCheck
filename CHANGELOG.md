@@ -2,6 +2,29 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 格式，並採用語意化版本控制。
 
+## [2.3.0] - 2026-11-17
+
+### 新增
+- **分用途 AI 模型路由（#163）**：
+  - 支援 7 種 AI 用途（`ai_chat`、`ai_message_analysis`、`ai_daily_summary`、`ai_weekly_summary`、`ai_deep_analysis`、`ai_settings_search`、`ai_auto_memo`）各自綁定獨立 AI Profile 或「跟隨預設」；`ApiKeySettingsActivity` 新增用途模型設定卡（7 列下拉選單與逐列測試連線）。
+  - `ChatScreen` 模型切換器改為僅切換 `ai_chat` 用途模型（不再更動全域預設 Provider），並於 `SettingsCatalog` 新增 `ai_model_chat` 等 7 項設定搜尋條目。
+- **離線 AI 補分析佇列與自動重試（#164）**：
+  - `AppDatabase` 升版至 v13（`MIGRATION_12_13`）新增 `pending_ai_analysis` 資料表；僅針對暫時性失敗（`UnknownHostException`、`SocketTimeoutException`、`ConnectException`、HTTP 5xx、429 耗盡）自動入隊，401/403/404/413 誠實略過。
+  - 新增 WorkManager `PendingAiAnalysisWorker`（`NetworkType.CONNECTED`、指數退避、unique work `ai_pending_analysis_worker`），每輪最多補分析 20 則，`attempts >= 3` 放棄並通知；提供低干擾通知（`NotifIds.AI_OFFLINE_QUEUE`）、訊息頁頂部 `AnimatedVisibility` 佇列橫幅（暫停／繼續／立即重試）與設定頁 `ai_offline_retry_enabled` 開關（預設開，關閉即清空佇列）。
+- **「記事」分頁與 AI 自動備忘錄（#166）**：
+  - 主分頁將「詐騙警示」替換為「記事」（維持 4 Tab），整合待辦事項（共用 `todos` 表）與手動／自動記事 CRUD、釘選與色標（`notes` 表併入 `MIGRATION_12_13`）；詐騙警示中心改由訊息頁風險卡與統計頁 Top 5 卡「查看詐騙警示中心」進入。
+  - 設定頁新增 `ai_auto_memo_enabled` 開關（預設關），開啟後 `AiClient` 於風險分析同時產出 40 字內繁中重點摘要，並以 `relatedMessageId` 去重寫入自動備忘錄（`riskCache` 鍵含 `autoMemo` 旗標）。
+- **AI 分析字數門檻自訂（#167）**：
+  - `PhantomPrefs.getAiMinTriggerLength`（1–30 字，預設 10）取代 `NotificationCollectorService` 硬編碼門檻，設定頁 AI 卡新增滑桿並於 `SettingsCatalog` 註冊 `ai_min_trigger_length`（支援 AI 對話調整）。
+
+### 變更與修正
+- **圖片視覺上傳與背景選圖雙重修復（#162）**：
+  - `ChatScreen.encodeImageUriToDataUri` 改採 bounds-first `inSampleSize` 降採樣（最長邊 ≤ 1024px，OOM 時加倍 `inSampleSize` 重試一次）、細分錯誤原因誠實回報並記錄 `PhantomImage` log；更新 `AiClient.isVisionModelSupported`（納入 Groq `qwen/qwen3.8-27b` 並將 `deepseek` 納入純文字模型清單）。
+  - 修復 `BackgroundImageHelper.saveBackgroundFromUri` 因 `inJustDecodeBounds = true` 回傳 `null` 導致 `use { ... } ?: return failure` 永遠觸發的 bug，恢復全域／AI 聊天／對話頁三層選圖。
+- **「清除已讀」入口移至設定頁（#165）**：
+  - 移除 `MainActivity` 訊息頁右上角「清除已讀」按鈕與確認對話框，移至設定頁「訊息與通知」卡片，並於 `SettingsCatalog` 新增 `notif_clear_read` 與同步 `data_export_clear` 描述。
+- **版號更新**：`versionCode` 20、`versionName` `"2.3.0"`。
+
 ## [2.2.0] - 2026-11-17
 
 ### 新增
