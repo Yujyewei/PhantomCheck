@@ -212,7 +212,7 @@ object SettingsCatalog {
             id = "ai_daily_limit",
             title = "每日 AI 額度上限",
             min = 0,
-            max = 200,
+            max = 100,
             step = 10,
             unit = "則",
             zeroLabel = "不限（0 則）"
