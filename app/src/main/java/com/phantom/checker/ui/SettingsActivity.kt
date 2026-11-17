@@ -332,11 +332,14 @@ fun FilterSettingsScreen(
     var tokenSaverEnabled by remember { mutableStateOf(PhantomPrefs.isTokenSaverEnabled(appCtx)) }
     var aiRiskEnabled by remember { mutableStateOf(PhantomPrefs.isAiRiskEnabled(appCtx)) }
     var aiAutoTagEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoTagEnabled(appCtx)) }
+    var aiOfflineRetryEnabled by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryEnabled(appCtx)) }
+    var aiAutoMemoEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoMemoEnabled(appCtx)) }
     var chatSuggestionsEnabled by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var quickCommandDefaultMode by remember { mutableStateOf(PhantomPrefs.getQuickCommandDefaultMode(appCtx)) }
     var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
     var dailyAiLimit by remember { mutableIntStateOf(PhantomPrefs.getDailyAiLimit(appCtx)) }
     var chatRagLimit by remember { mutableIntStateOf(PhantomPrefs.getChatRagMessageLimit(appCtx)) }
+    var aiMinTriggerLength by remember { mutableIntStateOf(PhantomPrefs.getAiMinTriggerLength(appCtx)) }
     var todayAiUsage by remember { mutableIntStateOf(PhantomPrefs.getTodayAiUsage(appCtx)) }
     var dailySummaryEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryEnabled(appCtx)) }
     var dailySummaryNotifEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryNotifEnabled(appCtx)) }
@@ -1662,6 +1665,57 @@ fun FilterSettingsScreen(
                         steps = 74
                     )
 
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "AI 分析觸發字數門檻：$aiMinTriggerLength 字",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "新訊息內容至少達此字數才觸發 AI 分析（1–30 字，預設 10 字）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = aiMinTriggerLength.toFloat(),
+                        onValueChange = { raw ->
+                            val stepped = raw.roundToInt().coerceIn(1, 30)
+                            if (stepped != aiMinTriggerLength) {
+                                aiMinTriggerLength = stepped
+                                PhantomPrefs.setAiMinTriggerLength(appCtx, stepped)
+                            }
+                        },
+                        valueRange = 1f..30f,
+                        steps = 28
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingSwitchRow(
+                        title = "離線 AI 分析自動補佇列",
+                        subtitle = "斷網或暫時性錯誤失敗時自動排入佇列，恢復網路後補齊分析（關閉將清空佇列）",
+                        checked = aiOfflineRetryEnabled,
+                        onCheckedChange = { checked ->
+                            aiOfflineRetryEnabled = checked
+                            PhantomPrefs.setAiOfflineRetryEnabled(appCtx, checked)
+                            if (!checked) {
+                                scope.launch {
+                                    com.phantom.checker.service.PendingAiAnalysisPolicy.disableAndClear(appCtx)
+                                }
+                            }
+                        }
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingSwitchRow(
+                        title = "自動備忘錄",
+                        subtitle = "AI 分析新訊息時自動擷取約定時間、繳費期限、取貨編號等備忘寫入「記事」分頁",
+                        checked = aiAutoMemoEnabled,
+                        onCheckedChange = { checked ->
+                            aiAutoMemoEnabled = checked
+                            PhantomPrefs.setAiAutoMemoEnabled(appCtx, checked)
+                        }
+                    )
+
                     if (dailySummaryEnabled) {
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                         OutlinedButton(
@@ -2130,6 +2184,14 @@ fun FilterSettingsScreen(
                             }
                         }
                     }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    OutlinedButton(
+                        onClick = { showClearReadConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("清除已讀訊息")
+                    }
                 }
             }
             }
@@ -2276,15 +2338,6 @@ fun FilterSettingsScreen(
                         modifier = Modifier.fillMaxWidth().pressableScale()
                     ) {
                         Text(if (isExporting) "匯出中…" else "匯出訊息 CSV（可選範圍）")
-                    }
-                    Spacer(Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { showClearReadConfirm = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("清除已讀訊息")
                     }
                     Spacer(Modifier.height(8.dp))
 

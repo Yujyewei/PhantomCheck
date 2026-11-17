@@ -74,9 +74,11 @@ object BackgroundImageHelper {
             val reqH = dm.heightPixels.coerceAtLeast(1920)
 
             val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            appCtx.contentResolver.openInputStream(uri)?.use { stream ->
+            val openedBounds = appCtx.contentResolver.openInputStream(uri)
+                ?: return@withContext Result.failure(IllegalStateException("無法開啟圖片（可能是雲端圖未下載），請先將圖片下載至本機再選取"))
+            openedBounds.use { stream ->
                 BitmapFactory.decodeStream(stream, null, boundsOpts)
-            } ?: return@withContext Result.failure(IllegalStateException("無法讀取選取的圖片"))
+            }
 
             if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) {
                 return@withContext Result.failure(IllegalStateException("不支援或已損毀的圖片格式"))
@@ -116,6 +118,10 @@ object BackgroundImageHelper {
         } catch (e: OutOfMemoryError) {
             trimMemory()
             Result.failure(IllegalStateException("圖片過大，記憶體不足（${e.message ?: "OOM"}）"))
+        } catch (e: SecurityException) {
+            Result.failure(IllegalStateException("無權限讀取此圖片，請改選本地圖片", e))
+        } catch (e: java.io.FileNotFoundException) {
+            Result.failure(IllegalStateException("無法開啟圖片（可能是雲端圖未下載），請先將圖片下載至本機再選取", e))
         } catch (e: Exception) {
             Result.failure(e)
         }

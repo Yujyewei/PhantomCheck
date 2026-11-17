@@ -3,6 +3,7 @@ package com.phantom.checker.data
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.flow.Flow
 
 @Entity(
     tableName = "messages",
@@ -812,6 +813,91 @@ interface TodoDao {
     suspend fun deleteById(id: Long)
 }
 
+@Entity(tableName = "pending_ai_analysis")
+data class PendingAiAnalysisEntity(
+    @PrimaryKey val messageId: Long,
+    val queuedAt: Long = System.currentTimeMillis(),
+    val attempts: Int = 0
+)
+
+@Dao
+interface PendingAiAnalysisDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun enqueue(item: PendingAiAnalysisEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun enqueueAll(items: List<PendingAiAnalysisEntity>)
+
+    @Query("SELECT * FROM pending_ai_analysis WHERE attempts < 3 ORDER BY queuedAt ASC LIMIT :limit")
+    suspend fun nextBatch(limit: Int = 20): List<PendingAiAnalysisEntity>
+
+    @Query("SELECT COUNT(*) FROM pending_ai_analysis WHERE attempts < 3")
+    suspend fun pendingCount(): Int
+
+    @Query("SELECT COUNT(*) FROM pending_ai_analysis WHERE attempts < 3")
+    fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM pending_ai_analysis WHERE messageId IN (:messageIds)")
+    suspend fun deleteByIds(messageIds: List<Long>)
+
+    @Query("UPDATE pending_ai_analysis SET attempts = attempts + 1 WHERE messageId IN (:messageIds)")
+    suspend fun incrementAttempts(messageIds: List<Long>)
+
+    @Query("SELECT * FROM pending_ai_analysis WHERE attempts >= 3")
+    suspend fun exhaustedItems(): List<PendingAiAnalysisEntity>
+
+    @Query("DELETE FROM pending_ai_analysis WHERE attempts >= 3")
+    suspend fun deleteExhausted()
+
+    @Query("DELETE FROM pending_ai_analysis")
+    suspend fun clearAll()
+}
+
+@Entity(
+    tableName = "notes",
+    indices = [
+        Index(value = ["pinned", "updatedAt"]),
+        Index(value = ["relatedMessageId", "source"])
+    ]
+)
+data class NoteEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val content: String,
+    val colorHex: String? = null,
+    val pinned: Boolean = false,
+    val source: String = SOURCE_MANUAL,
+    val relatedMessageId: Long? = null,
+    val relatedAppLabel: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+) {
+    companion object {
+        const val SOURCE_MANUAL = "manual"
+        const val SOURCE_AUTO = "auto"
+    }
+}
+
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes ORDER BY pinned DESC, updatedAt DESC")
+    suspend fun all(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes ORDER BY pinned DESC, updatedAt DESC")
+    fun observeAll(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes WHERE relatedMessageId = :messageId AND source = 'auto' LIMIT 1")
+    suspend fun findAutoByMessageId(messageId: Long): NoteEntity?
+
+    @Insert
+    suspend fun insert(note: NoteEntity): Long
+
+    @Update
+    suspend fun update(note: NoteEntity)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
 @Database(
     entities = [
         MessageEntity::class,
@@ -826,9 +912,11 @@ interface TodoDao {
         IntelCacheEntity::class,
         IntelResultEntity::class,
         UserTagRuleEntity::class,
-        TodoEntity::class
+        TodoEntity::class,
+        PendingAiAnalysisEntity::class,
+        NoteEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -842,6 +930,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun intelDao(): IntelDao
     abstract fun userTagRuleDao(): UserTagRuleDao
     abstract fun todoDao(): TodoDao
+    abstract fun pendingAiAnalysisDao(): PendingAiAnalysisDao
+    abstract fun noteDao(): NoteDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1051,6 +1141,38 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_isDone_dueAt` ON `todos` (`isDone`, `dueAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_dueAt` ON `todos` (`dueAt`)")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `pending_ai_analysis` (
+                        `messageId` INTEGER NOT NULL,
+                        `queuedAt` INTEGER NOT NULL,
+                        `attempts` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`messageId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `notes` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `colorHex` TEXT DEFAULT NULL,
+                        `pinned` INTEGER NOT NULL DEFAULT 0,
+                        `source` TEXT NOT NULL DEFAULT 'manual',
+                        `relatedMessageId` INTEGER DEFAULT NULL,
+                        `relatedAppLabel` TEXT DEFAULT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_pinned_updatedAt` ON `notes` (`pinned`, `updatedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_relatedMessageId_source` ON `notes` (`relatedMessageId`, `source`)")
             }
         }
     }

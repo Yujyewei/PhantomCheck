@@ -5,6 +5,7 @@ import com.phantom.checker.service.DailySummaryPolicy
 import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.util.PhantomPrefs
+import kotlinx.coroutines.launch
 
 data class SettingSearchItem(
     val id: String,
@@ -35,8 +36,17 @@ object SettingsCatalog {
         SettingSearchItem("ai_daily_summary", "quick", "每日 AI 摘要", "排程每日自動生成訊息摘要", listOf("摘要", "日報", "每日", "summary")),
         SettingSearchItem("ai_daily_summary_notif", "ai", "每日摘要排程時間與完成推播", "調整每日摘要排程時間與生成後低干擾通知", listOf("摘要", "推播", "排程", "時間", "每日摘要")),
         SettingSearchItem("ai_auto_reply", "ai", "SMS 自動回覆設定", "開啟 SMS 自動回覆設定頁：啟用開關、回覆時段與回覆範本", listOf("自動回覆", "sms", "簡訊", "回覆", "時段", "reply"), page = "AutoReplySettingsActivity"),
-        SettingSearchItem("ai_scam_center", "ai", "詐騙警示中心", "檢視高風險詐騙記錄與處置", listOf("詐騙", "警示", "中心", "高風險", "封鎖"), page = "ScamCenterActivity"),
+        SettingSearchItem("ai_scam_center", "ai", "詐騙警示中心", "檢視高風險詐騙記錄與處置（可由訊息頁風險卡或統計頁進入）", listOf("詐騙", "警示", "中心", "高風險", "封鎖"), page = "ScamCenterActivity"),
         SettingSearchItem("ai_alert_keywords", "ai", "即時提醒關鍵字", "設定自訂即時提醒關鍵字，命中時觸發通知提醒", listOf("關鍵字", "提醒", "keyword")),
+        SettingSearchItem("ai_min_trigger_length", "ai", "AI 分析觸發字數門檻", "設定新訊息內容至少達幾字才觸發 AI 分析（1–30 字，預設 10 字）", listOf("字數", "長度", "門檻", "觸發", "最短", "幾個字", "分析字數")),
+        SettingSearchItem("ai_offline_retry_enabled", "ai", "離線 AI 分析自動補佇列", "斷網或暫時性錯誤失敗時自動排入佇列，恢復網路後補齊風險分析", listOf("離線", "補分析", "重試", "佇列", "網路恢復")),
+        SettingSearchItem("ai_auto_memo_enabled", "ai", "自動備忘錄", "AI 分析訊息時自動擷取約定時間、繳費期限、取貨編號等備忘事項寫入記事分頁", listOf("備忘錄", "自動筆記", "memo", "記事", "筆記")),
+        SettingSearchItem("ai_model_chat", "ai", "分用途模型：AI 助手對話", "為 AI 助手對話（含圖片）獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "對話模型", "切換模型", "chat"), page = "ApiKeySettingsActivity"),
+        SettingSearchItem("ai_model_message_analysis", "ai", "分用途模型：每則訊息風險分析", "為新訊息自動風險分析獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "分析模型", "風險分析", "message"), page = "ApiKeySettingsActivity"),
+        SettingSearchItem("ai_model_daily_summary", "ai", "分用途模型：每日摘要", "為每日 AI 摘要獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "摘要模型", "每日摘要", "daily"), page = "ApiKeySettingsActivity"),
+        SettingSearchItem("ai_model_weekly_summary", "ai", "分用途模型：每週摘要", "為每週 AI 摘要獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "摘要模型", "每週摘要", "weekly"), page = "ApiKeySettingsActivity"),
+        SettingSearchItem("ai_model_deep_analysis", "ai", "分用途模型：訊息深度分析", "為訊息深度分析獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "深度分析模型", "deep"), page = "ApiKeySettingsActivity"),
+        SettingSearchItem("ai_model_settings_search", "ai", "分用途模型：設定 AI 語意搜尋", "為設定頁 AI 語意搜尋獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "搜尋模型", "設定搜尋", "search"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("notif_style", "notif", "常駐通知樣式", "控制常駐通知為精簡或詳細樣式", listOf("常駐通知", "精簡", "詳細", "樣式")),
         SettingSearchItem("notif_persistent_icons", "notif", "常駐通知顯示 App 圖示條", "於常駐統計通知內顯示最近收到訊息的 App 圖示", listOf("常駐通知", "圖示列", "圖示條", "icon")),
         SettingSearchItem("notif_ongoing", "notif", "記錄持續性通知", "是否記錄媒體播放、下載進度等 ongoing 通知", listOf("持續性", "ongoing", "音樂", "下載")),
@@ -46,10 +56,11 @@ object SettingsCatalog {
         SettingSearchItem("notif_swipe_delete", "notif", "對話頁滑動刪除", "在對話訊息氣泡向左滑動快速刪除", listOf("左滑", "滑動刪除", "swipe")),
         SettingSearchItem("notif_throttle", "notif", "同 key 重複節流與個別 App 覆寫", "相同通知節流秒數與個別 App 節流覆寫", listOf("節流", "同 key", "重複通知", "漏訊", "覆寫", "節流秒數", "重複節流")),
         SettingSearchItem("notif_digit_variance", "notif", "數字微變視為同一則更新", "對監控類通知將僅數字變動視為同 key 更新並節流", listOf("數字微變", "節流", "電量", "流量")),
+        SettingSearchItem("notif_clear_read", "notif", "清除已讀訊息", "永久刪除所有已讀訊息（保留未讀訊息）", listOf("清除已讀", "已讀", "刪除已讀", "清已讀")),
         SettingSearchItem("data_retention", "data", "訊息保留與清理", "訊息保留天數與最大保留則數上限", listOf("保留", "天數", "上限", "清理")),
         SettingSearchItem("data_muted_apps", "data", "App 靜音清單", "設定特定 App 完全不記錄或靜默記錄", listOf("靜音", "封鎖", "app", "略過")),
         SettingSearchItem("ai_rules", "data", "自訂標籤與白名單規則管理", "管理自訂標籤、App 分類與寄件者/訊息白名單規則", listOf("標籤", "規則", "分類", "標籤管理", "白名單", "whitelist"), page = "TagManagementActivity"),
-        SettingSearchItem("data_export_clear", "data", "匯出資料與清除紀錄", "匯出 CSV 或清除已讀/全部訊息", listOf("匯出", "備份", "csv", "清除", "刪除全部")),
+        SettingSearchItem("data_export_clear", "data", "匯出資料與清除紀錄", "匯出 CSV 或刪除全部訊息", listOf("匯出", "備份", "csv", "清除", "刪除全部")),
         SettingSearchItem("appearance_widget_tour", "data", "教學重播與桌面小工具", "重播新手或設定頁教學；統計小工具請在桌面長按 → 小工具加入", listOf("小工具", "widget", "桌面", "導覽", "教學")),
         SettingSearchItem("appearance_theme", "appearance", "主題模式、動態取色與字體大小", "深淺色主題、Material You 動態色與字體縮放", listOf("外觀", "主題", "字體", "大小", "動態取色", "深色", "淺色")),
         SettingSearchItem("appearance_glass_effect", "appearance", "液態玻璃模糊效果", "Android 12+ 模糊特效；更低版本或省電模式自動停用", listOf("液態玻璃", "玻璃", "模糊", "特效", "glass")),
@@ -79,6 +90,8 @@ object SettingsCatalog {
         "quick_ai_risk",
         "quick_scam_popup",
         "ai_auto_tag",
+        "ai_offline_retry_enabled",
+        "ai_auto_memo_enabled",
         "ai_chat_suggestions",
         "ai_daily_summary",
         "ai_daily_summary_notif",
@@ -105,6 +118,8 @@ object SettingsCatalog {
             "quick_ai_risk" -> PhantomPrefs.isAiRiskEnabled(appCtx)
             "quick_scam_popup" -> PhantomPrefs.isScamAlertNotifEnabled(appCtx)
             "ai_auto_tag" -> PhantomPrefs.isAiAutoTagEnabled(appCtx)
+            "ai_offline_retry_enabled" -> PhantomPrefs.isAiOfflineRetryEnabled(appCtx)
+            "ai_auto_memo_enabled" -> PhantomPrefs.isAiAutoMemoEnabled(appCtx)
             "ai_chat_suggestions" -> PhantomPrefs.isChatSuggestionsEnabled(appCtx)
             "ai_daily_summary" -> PhantomPrefs.isDailySummaryEnabled(appCtx)
             "ai_daily_summary_notif" -> PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
@@ -146,6 +161,15 @@ object SettingsCatalog {
             "quick_ai_risk" -> PhantomPrefs.setAiRiskEnabled(appCtx, enabled)
             "quick_scam_popup" -> PhantomPrefs.setScamAlertNotifEnabled(appCtx, enabled)
             "ai_auto_tag" -> PhantomPrefs.setAiAutoTagEnabled(appCtx, enabled)
+            "ai_offline_retry_enabled" -> {
+                PhantomPrefs.setAiOfflineRetryEnabled(appCtx, enabled)
+                if (!enabled) {
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        com.phantom.checker.service.PendingAiAnalysisPolicy.disableAndClear(appCtx)
+                    }
+                }
+            }
+            "ai_auto_memo_enabled" -> PhantomPrefs.setAiAutoMemoEnabled(appCtx, enabled)
             "ai_chat_suggestions" -> PhantomPrefs.setChatSuggestionsEnabled(appCtx, enabled)
             "ai_daily_summary" -> {
                 PhantomPrefs.setDailySummaryEnabled(appCtx, enabled)
@@ -234,6 +258,14 @@ object SettingsCatalog {
             step = 10,
             unit = "秒",
             zeroLabel = "0 秒（關閉）"
+        ),
+        NumericSettingSpec(
+            id = "ai_min_trigger_length",
+            title = "AI 分析觸發字數門檻",
+            min = 1,
+            max = 30,
+            step = 1,
+            unit = "字"
         )
     )
 
@@ -245,6 +277,7 @@ object SettingsCatalog {
             "ai_chat_rag_limit" -> PhantomPrefs.getChatRagMessageLimit(appCtx)
             "ai_daily_limit" -> PhantomPrefs.getDailyAiLimit(appCtx)
             "notif_throttle" -> PhantomPrefs.getSameKeyThrottleSeconds(appCtx)
+            "ai_min_trigger_length" -> PhantomPrefs.getAiMinTriggerLength(appCtx)
             else -> null
         }
     }
@@ -262,6 +295,7 @@ object SettingsCatalog {
             "ai_chat_rag_limit" -> PhantomPrefs.setChatRagMessageLimit(appCtx, target)
             "ai_daily_limit" -> PhantomPrefs.setDailyAiLimit(appCtx, target)
             "notif_throttle" -> PhantomPrefs.setSameKeyThrottleSeconds(appCtx, target)
+            "ai_min_trigger_length" -> PhantomPrefs.setAiMinTriggerLength(appCtx, target)
             else -> return null
         }
         return Triple(before, target, wasClamped)

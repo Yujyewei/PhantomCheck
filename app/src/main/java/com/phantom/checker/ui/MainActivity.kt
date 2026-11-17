@@ -51,6 +51,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
@@ -87,6 +89,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -130,14 +133,17 @@ import com.phantom.checker.data.AppRiskRow
 import com.phantom.checker.data.MessageEntity
 import com.phantom.checker.data.MessageTagCrossRef
 import com.phantom.checker.data.MessageTagRow
+import com.phantom.checker.data.NoteEntity
 import com.phantom.checker.data.TagEntity
 import com.phantom.checker.data.TagTotalCountRow
+import com.phantom.checker.data.TodoEntity
 import com.phantom.checker.network.AiClient
 import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.DailySummaryPolicy
 import com.phantom.checker.service.WeeklySummaryPolicy
 import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.NotificationCollectorService
+import com.phantom.checker.service.ReminderScheduler
 import com.phantom.checker.service.RetentionPolicy
 import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.ui.components.LiquidGlassTabBar
@@ -218,7 +224,7 @@ private fun isPostNotificationsGranted(context: Context): Boolean {
 private enum class MainTab(val title: String) {
     MESSAGES("訊息"),
     ASSISTANT("AI 助手"),
-    SCAMS("詐騙警示"),
+    NOTES("記事"),
     STATS("統計")
 }
 
@@ -320,12 +326,10 @@ private fun PhantomCheckApp(
     // 搜尋 / 詐騙 / 統計狀態
     var searchResults by remember { mutableStateOf(listOf<MessageEntity>()) }
     var activeFilterKeywords by remember { mutableStateOf(listOf<String>()) }
-    var scamMessages by remember { mutableStateOf(listOf<MessageEntity>()) }
     var statsState by remember { mutableStateOf(StatsUiState()) }
     var isLoading by remember { mutableStateOf(true) }
     var actionTargetApp by remember { mutableStateOf<AppGroupUi?>(null) }
     var deleteAppConfirm by remember { mutableStateOf<AppGroupUi?>(null) }
-    var showClearReadConfirm by remember { mutableStateOf(false) }
 
     // 平面清單長按 Bottom Sheet & 單則刪除確認
     var messageSheetTarget by remember { mutableStateOf<MessageEntity?>(null) }
@@ -557,9 +561,7 @@ private fun PhantomCheckApp(
                         }
                     }
                     MainTab.ASSISTANT -> Unit
-                    MainTab.SCAMS -> {
-                        scamMessages = dao.scamsPaged(PAGE_SIZE, 0)
-                    }
+                    MainTab.NOTES -> Unit
                     MainTab.STATS -> {
                         val summary = db.aiSummaryDao().latest()
                         val cal = Calendar.getInstance().apply {
@@ -732,41 +734,6 @@ private fun PhantomCheckApp(
             },
             dismissButton = {
                 TextButton(onClick = { deleteAppConfirm = null }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
-
-    if (showClearReadConfirm) {
-        AlertDialog(
-            onDismissRequest = { showClearReadConfirm = false },
-            title = { Text("清除已讀訊息") },
-            text = { Text("確定要永久刪除所有已讀訊息嗎？未讀訊息將保留。") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                val db = AppDatabaseHolder.db(appCtx)
-                                db.withTransaction {
-                                    db.tagDao().deleteCrossRefsForReadMessages()
-                                    db.messageDao().deleteReadMessages()
-                                }
-                            }
-                            StatsForegroundService.startOrRefresh(appCtx)
-                            showClearReadConfirm = false
-                            refreshTrigger++
-                            snackbarHostState.showSnackbar("已清除所有已讀訊息")
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("確認清除")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearReadConfirm = false }) {
                     Text("取消")
                 }
             }
@@ -1262,7 +1229,7 @@ private fun PhantomCheckApp(
                                     val icon = when (tab) {
                                         MainTab.MESSAGES -> Icons.Default.Email
                                         MainTab.ASSISTANT -> AutoAwesomeIcon
-                                        MainTab.SCAMS -> Icons.Default.Warning
+                                        MainTab.NOTES -> Icons.Default.Edit
                                         MainTab.STATS -> Icons.Default.Info
                                     }
                                     val itemModifier = if (tab == MainTab.ASSISTANT) {
@@ -1506,7 +1473,6 @@ private fun PhantomCheckApp(
                                 snackbarHostState.showSnackbar("已將全部訊息標記為已讀")
                             }
                         },
-                        onClearRead = { showClearReadConfirm = true },
                         onLoadMore = {
                             if (!isLoadingMore && hasMoreFiltered) {
                                 scope.launch {
@@ -1586,15 +1552,13 @@ private fun PhantomCheckApp(
                             )
                         }
                     }
-                    MainTab.SCAMS -> ScamsTab(
-                        scamMessages = scamMessages,
-                        isLoading = isLoading,
+                    MainTab.NOTES -> NotesTab(
                         glassState = glassState,
-                        onOpenScamCenter = {
-                            ctx.startActivity(Intent(ctx, ScamCenterActivity::class.java))
+                        onOpenMessageDetail = { messageId ->
+                            ctx.startActivity(MessageDetailActivity.createIntent(ctx, messageId))
                         },
-                        onOpenDetail = { msg ->
-                            ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
+                        onShowMessage = { msg ->
+                            scope.launch { snackbarHostState.showSnackbar(msg) }
                         }
                     )
                     MainTab.STATS -> StatsTab(
@@ -1807,7 +1771,6 @@ private fun MessagesHomeTab(
     onSelectFilter: (MessageFilter) -> Unit,
     onOpenTagPicker: () -> Unit,
     onMarkAllRead: () -> Unit,
-    onClearRead: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenApp: (String, String) -> Unit,
     onLongPressApp: (AppGroupUi) -> Unit,
@@ -1820,6 +1783,11 @@ private fun MessagesHomeTab(
     val ctx = LocalContext.current
     val groupMap = remember(appGroups) { appGroups.associateBy { it.packageName } }
     val listState = rememberLazyListState()
+    val pendingRetryCount by remember(ctx) {
+        AppDatabaseHolder.db(ctx).pendingAiAnalysisDao().observePendingCount()
+    }.collectAsState(initial = 0)
+    var isRetryPaused by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryPaused(ctx)) }
+    val offlineRetryEnabled = PhantomPrefs.isAiOfflineRetryEnabled(ctx)
 
     // 捲動到底部自動載入下一頁（非「全部」篩選模式）
     LaunchedEffect(listState, activeFilter, hasMoreFiltered, isLoadingMore) {
@@ -1842,6 +1810,67 @@ private fun MessagesHomeTab(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item(key = "offline_retry_banner") {
+            AnimatedVisibility(visible = offlineRetryEnabled && pendingRetryCount > 0) {
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 18.dp,
+                    contentPadding = 12.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isRetryPaused) {
+                                    "已暫停補分析（待處理 $pendingRetryCount 則）"
+                                } else {
+                                    "$pendingRetryCount 則訊息待 AI 補分析"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (isRetryPaused) {
+                                    "點擊「繼續」於網路恢復後自動補分析"
+                                } else {
+                                    "網路恢復後將自動排程補齊風險分析"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row {
+                            TextButton(
+                                onClick = {
+                                    if (isRetryPaused) {
+                                        com.phantom.checker.service.PendingAiAnalysisPolicy.resume(ctx)
+                                        isRetryPaused = false
+                                    } else {
+                                        com.phantom.checker.service.PendingAiAnalysisPolicy.pause(ctx)
+                                        isRetryPaused = true
+                                    }
+                                }
+                            ) {
+                                Text(if (isRetryPaused) "繼續" else "暫停")
+                            }
+                            TextButton(
+                                onClick = {
+                                    com.phantom.checker.service.PendingAiAnalysisPolicy.retryNow(ctx)
+                                    isRetryPaused = false
+                                }
+                            ) {
+                                Text("立即重試")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 頂部統計玻璃卡
         item {
             PhantomGlassCard(
@@ -1877,9 +1906,6 @@ private fun MessagesHomeTab(
                             TextButton(onClick = onMarkAllRead) {
                                 Text("全部標已讀")
                             }
-                        }
-                        TextButton(onClick = onClearRead) {
-                            Text("清除已讀", color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
@@ -2360,53 +2386,409 @@ private fun MessagesHomeTab(
 }
 
 @Composable
-private fun ScamsTab(
-    scamMessages: List<MessageEntity>,
-    isLoading: Boolean,
+private fun NotesTab(
     glassState: HazeState,
-    onOpenScamCenter: () -> Unit,
-    onOpenDetail: (MessageEntity) -> Unit
+    onOpenMessageDetail: (Long) -> Unit,
+    onShowMessage: (String) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedButton(
-            onClick = onOpenScamCenter,
-            modifier = Modifier
-                .fillMaxWidth()
-                .pressableScale()
-        ) {
-            Text("開啟詐騙警示中心（查看完整風險分析）")
+    val ctx = LocalContext.current
+    val appCtx = ctx.applicationContext
+    val scope = rememberCoroutineScope()
+    val db = remember(appCtx) { AppDatabaseHolder.db(appCtx) }
+
+    val notes by remember(db) { db.noteDao().observeAll() }.collectAsState(initial = emptyList())
+    var todos by remember { mutableStateOf<List<TodoEntity>>(emptyList()) }
+    var todoRefresh by remember { mutableIntStateOf(0) }
+    var showEditor by remember { mutableStateOf(false) }
+    var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
+
+    LaunchedEffect(todoRefresh) {
+        todos = withContext(Dispatchers.IO) {
+            db.todoDao().all()
         }
-        Spacer(Modifier.height(8.dp))
-        when {
-            isLoading && scamMessages.isEmpty() -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+    }
+
+    if (showEditor) {
+        NoteEditorDialog(
+            initial = editingNote,
+            onDismiss = {
+                showEditor = false
+                editingNote = null
+            },
+            onSave = { content, colorHex ->
+                val target = editingNote
+                showEditor = false
+                editingNote = null
+                scope.launch {
+                    val now = System.currentTimeMillis()
+                    withContext(Dispatchers.IO) {
+                        if (target == null) {
+                            db.noteDao().insert(
+                                NoteEntity(
+                                    content = content,
+                                    colorHex = colorHex,
+                                    source = NoteEntity.SOURCE_MANUAL,
+                                    createdAt = now,
+                                    updatedAt = now
+                                )
+                            )
+                        } else {
+                            db.noteDao().update(
+                                target.copy(
+                                    content = content,
+                                    colorHex = colorHex,
+                                    updatedAt = now
+                                )
+                            )
+                        }
+                    }
+                    onShowMessage(if (target == null) "已新增記事" else "已更新記事")
                 }
             }
-            scamMessages.isEmpty() -> {
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 1. 待辦事項區（與 AI 助手共用 todos 表）
+        item(key = "notes_todos_section") {
+            val pendingCount = todos.count { !it.isDone }
+            PhantomGlassCard(
+                glassState = glassState,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = 20.dp,
+                contentPadding = 14.dp
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "待辦事項（$pendingCount 未完成）",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "與 AI 助手同步",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                if (todos.isEmpty()) {
+                    Text(
+                        text = "尚無待辦事項（可在 AI 助手對話中新增待辦）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    todos.forEachIndexed { idx, todo ->
+                        if (idx > 0) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = todo.isDone,
+                                onCheckedChange = { checked ->
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            db.todoDao().setDone(todo.id, checked)
+                                        }
+                                        if (checked) {
+                                            ReminderScheduler.cancelTodo(appCtx, todo.id)
+                                        } else if (todo.dueAt > System.currentTimeMillis()) {
+                                            ReminderScheduler.scheduleTodo(
+                                                appCtx,
+                                                todo.id,
+                                                todo.dueAt
+                                            )
+                                        }
+                                        todoRefresh++
+                                    }
+                                }
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = todo.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textDecoration = if (todo.isDone) {
+                                        androidx.compose.ui.text.style.TextDecoration.LineThrough
+                                    } else {
+                                        null
+                                    },
+                                    color = if (todo.isDone) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                                Text(
+                                    text = "到期：${PhantomPrefs.formatMessageTime(ctx, todo.dueAt, includeDate = true)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    scope.launch {
+                                        ReminderScheduler.cancelTodo(appCtx, todo.id)
+                                        withContext(Dispatchers.IO) {
+                                            db.todoDao().deleteById(todo.id)
+                                        }
+                                        todoRefresh++
+                                        onShowMessage("已刪除待辦事項")
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "刪除待辦",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 記事／備忘錄標題列 + 新增按鈕
+        item(key = "notes_header") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "記事／備忘錄（${notes.size}）",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Button(
+                    onClick = {
+                        editingNote = null
+                        showEditor = true
+                    },
+                    modifier = Modifier.pressableScale()
+                ) {
+                    Text("新增記事")
+                }
+            }
+        }
+
+        if (notes.isEmpty()) {
+            item(key = "notes_empty") {
                 EmptyStateView(
-                    icon = Icons.Default.Warning,
-                    title = "目前尚無詐騙警示訊息",
-                    description = "當 AI 或規則偵測到高風險詐騙訊息時，會集中顯示於此。"
+                    icon = Icons.Default.Edit,
+                    title = "尚無記事",
+                    description = "點擊「新增記事」記錄備忘事項，或至設定頁開啟「自動備忘錄」。"
                 )
             }
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+        } else {
+            items(notes, key = { it.id }) { note ->
+                val accentColor = remember(note.colorHex) {
+                    note.colorHex?.let { hex ->
+                        runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+                    }
+                }
+                val isAuto = note.source == NoteEntity.SOURCE_AUTO
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isAuto && note.relatedMessageId != null) {
+                                Modifier.clickable { onOpenMessageDetail(note.relatedMessageId) }
+                            } else {
+                                Modifier
+                            }
+                        ),
+                    cornerRadius = 18.dp,
+                    contentPadding = 14.dp
                 ) {
-                    items(scamMessages, key = { it.id }) { m ->
-                        MessageCard(
-                            message = m,
-                            glassState = glassState,
-                            highlightAsScam = true,
-                            modifier = Modifier.clickable { onOpenDetail(m) }
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        if (accentColor != null) {
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(accentColor)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (note.pinned) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "置頂",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                if (isAuto) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "自動",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                val appLabel = note.relatedAppLabel
+                                if (!appLabel.isNullOrBlank()) {
+                                    Text(
+                                        text = appLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (note.pinned || isAuto || !note.relatedAppLabel.isNullOrBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                            }
+                            Text(
+                                text = note.content,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = PhantomPrefs.formatMessageTime(ctx, note.updatedAt, includeDate = true),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            db.noteDao().update(
+                                                note.copy(
+                                                    pinned = !note.pinned,
+                                                    updatedAt = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text(if (note.pinned) "取消置頂" else "置頂")
+                            }
+                            Row {
+                                TextButton(
+                                    onClick = {
+                                        editingNote = note
+                                        showEditor = true
+                                    }
+                                ) {
+                                    Text("編輯")
+                                }
+                                TextButton(
+                                    onClick = {
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) {
+                                                db.noteDao().deleteById(note.id)
+                                            }
+                                            onShowMessage("已刪除記事")
+                                        }
+                                    }
+                                ) {
+                                    Text("刪除", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NoteEditorDialog(
+    initial: NoteEntity?,
+    onDismiss: () -> Unit,
+    onSave: (content: String, colorHex: String?) -> Unit
+) {
+    var content by remember(initial) { mutableStateOf(initial?.content ?: "") }
+    var selectedColor by remember(initial) { mutableStateOf(initial?.colorHex) }
+    val colorOptions = listOf<Pair<String?, String>>(
+        null to "預設",
+        "#EF5350" to "紅",
+        "#FFA726" to "橘",
+        "#66BB6A" to "綠",
+        "#42A5F5" to "藍",
+        "#AB47BC" to "紫"
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "新增記事" else "編輯記事") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("記事內容") },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "標記顏色（選填）",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    colorOptions.forEach { (hex, label) ->
+                        FilterChip(
+                            selected = selectedColor == hex,
+                            onClick = { selectedColor = hex },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = content.trim().isNotEmpty(),
+                onClick = { onSave(content.trim(), selectedColor) }
+            ) {
+                Text("儲存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }
 
 @Composable
@@ -3369,6 +3751,13 @@ private fun StatsTab(
                             )
                         }
                     }
+                }
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = { ctx.startActivity(Intent(ctx, ScamCenterActivity::class.java)) },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("查看詐騙警示中心")
                 }
             }
         }

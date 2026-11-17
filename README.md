@@ -16,15 +16,15 @@ Android 智慧防詐訊息管理 App：在不觸發原 App 已讀的前提下攔
 
 - 📩 **通知攔截預覽**：透過 `NotificationListenerService` 即時讀取通知內容，無需開啟 LINE、IG 或簡訊等原 App，不觸發「已讀」。
 - 🕵️ **公開防詐情報預查（零 Token）**：AI 分析前先抽取 URL、短連結與加密貨幣地址（BTC/ETH/TRON），依序查詢本地 72 小時快取、`fraud.tw`（165 通報）、Google Safe Browsing v4 及可選 PhishTank / Chainabuse（不傳送訊息全文，命中直接警示且不消耗每日 AI 額度）。
-- 🛡️ **多 Provider AI 詐騙分析與即時切換**：支援 Mistral、OpenAI、Groq、OpenRouter、Gemini（OpenAI 相容）、DeepSeek 等多組 AI Profile，可於 AI 助手與統計頁摘要卡即時切換模型。
+- 🛡️ **多 Provider AI 詐騙分析、分用途路由與離線補分析**：支援 Mistral、OpenAI、Groq、OpenRouter、Gemini（OpenAI 相容）、DeepSeek 等多組 AI Profile，可為 6 種用途獨立指定模型（自動備忘錄跟隨訊息分析模型）並於 AI 助手即時切換對話模型；暫時性網路/伺服器失敗自動進入離線補分析佇列（WorkManager 連網重試）。
 - 🚫 **智慧通知去重與過濾**：自動過濾持續性通知、群組摘要與斷線重播重複通知，支援同 Key 重複節流與個別 App 覆寫（`0 秒 = 永不節流`；通訊類通知若 `postTime` 更新則收錄同內容新訊息）、關鍵字過濾（含指定 App）與 App 靜音清單。
-- 📊 **常駐統計通知與儀表板**：自訂 `RemoteViews` 常駐通知左側固定顯示幻訊圖示、右側「左新右舊」呈現最近通知 App 並標記最新一則，點擊遵循原 App／幻訊設定（滑掉無縫原地重建 + 15 分鐘心跳 + Shizuku 跨行程看門狗）；App 內提供 4 Tab 統計儀表板。
-- 🤖 **AI 助手、自然語言待辦與昨日簡報**：內建唯讀 RAG 對話助手（預設開啟新對話，支援多會話切換與一鍵清除全部對話）、`PhantomMarkdownText` 渲染、「昨日簡報」、自然語言待辦提醒（同步鬧鐘排程與桌面小工具），以及透過對話提出新增白名單／標籤規則（強制彈出確認對話框防範 prompt injection）。
+- 📊 **常駐統計通知與 4 Tab 介面**：自訂 `RemoteViews` 常駐通知左側固定顯示幻訊圖示、右側「左新右舊」呈現最近通知 App 並標記最新一則，點擊遵循原 App／幻訊設定（滑掉無縫原地重建 + 15 分鐘心跳 + Shizuku 跨行程看門狗）；App 內提供「訊息、AI 助手、記事、統計」4 Tab 介面。
+- 🤖 **AI 助手、記事待辦、自動備忘錄與昨日簡報**：內建唯讀 RAG 對話助手（預設開啟新對話，支援多會話切換、圖片視覺檢視與一鍵清除全部對話）、`PhantomMarkdownText` 渲染、「昨日簡報」、自然語言待辦提醒（同步鬧鐘排程、桌面小工具與「記事」分頁）、AI 自動備忘錄，以及透過對話提出新增白名單／標籤規則（強制彈出確認對話框防範 prompt injection）。
 - 🏷️ **AI 智慧標記、App 分類與規則管理**：單次 AI 分析支援 0~3 個標籤＋零 token App 分類規則自動疊加；支援自訂自然語言白名單與標籤規則；氣泡顯示最多 3 個標籤色點。
 - 💬 **App 分組與聊天式對話頁**：依 App 與 `MessagingStyle` 對話鍵分組瀏覽（精準區分群組與私聊），支援我的最愛與 VIP 寄件者置頂、對話 keyset 分頁載入（LIMIT 200）、左滑氣泡刪除，以及首頁清單、對話頁與對話清單多選批次管理（上限 100，詐騙保護排除）。
 - 🧭 **視覺化新手與設定教學**：10 步主頁高光引導＋6 步設定頁導覽，支援淺色、深色、動態取色三模式高對比閱讀與洞內觸控穿透。
 - 🔋 **省 token 模式與省電優化**：一鍵開啟省 token 模式；省電模式下自動停用玻璃模糊；支援關閉液態玻璃模糊效果以節省 GPU。
-- 🚨 **詐騙警示中心、勿擾時段與 SMS 自動回覆**：集中顯示高風險詐騙訊息、情報來源與趨勢比較；支援勿擾時段與 SMS 自動回覆（含 per-sender 4 小時冷卻、單日上限 3 次與範本自回防護）。
+- 🚨 **詐騙警示中心、勿擾時段與 SMS 自動回覆**：集中顯示高風險詐騙訊息、情報來源與趨勢比較（可由訊息頁風險卡或統計頁 Top 5 卡進入）；支援勿擾時段與 SMS 自動回覆（含 per-sender 4 小時冷卻、單日上限 3 次與範本自回防護）。
 - 📄 **CSV 匯出、保留政策與加密金鑰**：一鍵匯出 CSV 至 `Downloads`；`EncryptedSharedPreferences` 本機加密儲存 AI 與情報源（Safe Browsing／PhishTank／Chainabuse）API Key，支援設定頁直接輸入（`local.properties` 為 fallback）。
 
 - 🎨 **個人化三層背景圖片與視覺微調**：支援全域／AI 聊天／對話頁三層背景圖自訂（逐層 fallback、降採樣儲存防 OOM）、暗色可讀性遮罩（scrim）與液態玻璃卡片強度滑桿。
@@ -35,6 +35,14 @@ Android 智慧防詐訊息管理 App：在不觸發原 App 已讀的前提下攔
 ## 版本紀錄
 
 完整變更紀錄請參閱 [CHANGELOG.md](CHANGELOG.md)。
+
+### v2.3.0 更新重點（versionCode 20）
+
+- **圖片視覺上傳與背景選圖修復（#162）**：`ChatScreen` 圖片改採 bounds-first `inSampleSize` 降採樣（≤ 1024px，OOM 自動加倍重試）與誠實錯誤分類、更新 Groq/DeepSeek 視覺模型支援清單；並修復 `BackgroundImageHelper` `inJustDecodeBounds` 回傳 `null` 導致三層背景選圖失敗的 bug。
+- **分用途 AI 模型路由（#163）**：6 種 AI 用途可各自綁定獨立 Profile 或跟隨預設（自動備忘錄跟隨訊息分析模型），於 `ApiKeySettingsActivity` 提供 6 列下拉設定與測試連線；`ChatScreen` 頂部切換器僅切換對話用途模型。
+- **離線 AI 補分析佇列（#164）**：Room 升版至 v13（`MIGRATION_12_13`）新增 `pending_ai_analysis` 表，暫時性失敗自動入隊並由 WorkManager `PendingAiAnalysisWorker` 於連網後指數退避補分析（每輪最多 20 則、上限 3 次），搭配低干擾通知與訊息頁頂部控制橫幅。
+- **「記事」分頁與 AI 自動備忘錄（#166）**：以「記事」取代「詐騙警示」Tab（整合待辦事項與手動／自動記事 CRUD、釘選與色標，詐騙警示中心改由訊息頁／統計頁進入），並支援 `ai_auto_memo_enabled` 自動摘要寫入備忘錄。
+- **體驗微調與門檻設定（#165, #167）**：將「清除已讀」入口由訊息頁移至設定頁「訊息與通知」卡片；新增 AI 分析字數門檻滑桿（1–30 字，預設 10）與 `SettingsCatalog` 全目錄連動。
 
 ### v2.2.0 更新重點（versionCode 19）
 

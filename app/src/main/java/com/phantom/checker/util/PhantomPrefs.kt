@@ -58,6 +58,16 @@ enum class CardDensity(val prefValue: String, val label: String) {
     }
 }
 
+enum class AiPurpose(val id: String, val label: String, val catalogId: String) {
+    CHAT("ai_chat", "AI 助手對話", "ai_model_chat"),
+    MESSAGE_ANALYSIS("ai_message_analysis", "每則訊息風險分析", "ai_model_message_analysis"),
+    DAILY_SUMMARY("ai_daily_summary", "每日摘要", "ai_model_daily_summary"),
+    WEEKLY_SUMMARY("ai_weekly_summary", "每週摘要", "ai_model_weekly_summary"),
+    DEEP_ANALYSIS("ai_deep_analysis", "訊息深度分析", "ai_model_deep_analysis"),
+    SETTINGS_SEARCH("ai_settings_search", "設定 AI 語意搜尋", "ai_model_settings_search"),
+    AUTO_MEMO("ai_auto_memo", "自動備忘錄生成", "ai_model_auto_memo")
+}
+
 enum class TabBarDisplayMode(val prefValue: String, val label: String) {
     STANDARD("standard", "標準"),
     COMPACT("compact", "縮小"),
@@ -974,5 +984,75 @@ object PhantomPrefs {
 
     fun setGlassStrengthPercent(ctx: Context, percent: Int) {
         prefs(ctx).edit().putInt("glass_strength_percent", percent.coerceIn(0, 100)).apply()
+    }
+
+    /** 新訊息 AI 分析觸發字數門檻（1..30，預設 10） */
+    fun getAiMinTriggerLength(ctx: Context): Int =
+        prefs(ctx).getInt("ai_min_trigger_length", 10).coerceIn(1, 30)
+
+    fun setAiMinTriggerLength(ctx: Context, length: Int) {
+        prefs(ctx).edit().putInt("ai_min_trigger_length", length.coerceIn(1, 30)).apply()
+    }
+
+    @Volatile private var cachedPurposeModelMap: Map<String, String>? = null
+
+    fun getPurposeModelMap(ctx: Context): Map<String, String> {
+        synchronized(prefCacheLock) {
+            cachedPurposeModelMap?.let { return it }
+        }
+        val raw = prefs(ctx).getString("ai_purpose_model_map", null)
+        val parsed = if (raw.isNullOrBlank()) {
+            emptyMap()
+        } else {
+            runCatching {
+                val type = object : TypeToken<Map<String, String>>() {}.type
+                gson.fromJson<Map<String, String>>(raw, type) ?: emptyMap()
+            }.getOrDefault(emptyMap())
+        }
+        synchronized(prefCacheLock) {
+            cachedPurposeModelMap = parsed
+        }
+        return parsed
+    }
+
+    fun getPurposeProfileId(ctx: Context, purposeId: String): String? =
+        getPurposeModelMap(ctx)[purposeId]?.takeIf { it.isNotBlank() }
+
+    fun setPurposeProfileId(ctx: Context, purposeId: String, profileId: String?) {
+        val next = getPurposeModelMap(ctx).toMutableMap()
+        if (profileId.isNullOrBlank()) {
+            next.remove(purposeId)
+        } else {
+            next[purposeId] = profileId
+        }
+        val frozen = next.toMap()
+        synchronized(prefCacheLock) {
+            cachedPurposeModelMap = frozen
+        }
+        prefs(ctx).edit().putString("ai_purpose_model_map", gson.toJson(frozen)).apply()
+    }
+
+    /** 離線 AI 分析自動補佇列開關（預設開） */
+    fun isAiOfflineRetryEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("ai_offline_retry_enabled", true)
+
+    fun setAiOfflineRetryEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("ai_offline_retry_enabled", enabled).apply()
+    }
+
+    /** 離線 AI 分析自動補佇列是否暫停（預設 false） */
+    fun isAiOfflineRetryPaused(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("ai_offline_retry_paused", false)
+
+    fun setAiOfflineRetryPaused(ctx: Context, paused: Boolean) {
+        prefs(ctx).edit().putBoolean("ai_offline_retry_paused", paused).apply()
+    }
+
+    /** 自動備忘錄開關（預設關） */
+    fun isAiAutoMemoEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("ai_auto_memo_enabled", false)
+
+    fun setAiAutoMemoEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("ai_auto_memo_enabled", enabled).apply()
     }
 }
