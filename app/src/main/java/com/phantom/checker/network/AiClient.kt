@@ -193,7 +193,8 @@ object AiClient {
         val riskScore: Int,
         val riskLabel: String,
         val riskReason: String,
-        val tagIds: List<Long> = emptyList()
+        val tagIds: List<Long> = emptyList(),
+        val memo: String = ""
     )
 
     private data class CachedRisk(
@@ -528,7 +529,8 @@ object AiClient {
     private fun buildSystemPrompt(
         tags: List<TagEntity>,
         rules: List<AiRuleEntity>,
-        enableAutoTag: Boolean
+        enableAutoTag: Boolean,
+        includeAutoMemo: Boolean = false
     ): String {
         val base = StringBuilder()
         base.appendLine("你是防詐與訊息分類引擎。分析使用者收到的訊息，判斷是否為詐騙/釣魚。")
@@ -574,9 +576,17 @@ object AiClient {
                 }
             }
             base.appendLine("範例判斷：PChome 發送 P 幣或折扣碼＝必看；PChome 純新品推薦＝行銷。")
-            base.append("只輸出 JSON：{\"risk_score\": 0-100, \"risk_label\": \"safe|suspicious|scam\", \"risk_reason\": \"一句話說明\", \"tags\": [1]}")
+        }
+
+        if (includeAutoMemo) {
+            base.appendLine("若訊息含值得備忘的資訊（約定時間/日期、繳費或付款期限、取貨編號、會議、回訪約定、待回覆事項等），輸出 memo 欄位（繁體中文、40 字內、不含訊息原文照抄）；無則 memo 為空字串 \"\"。")
+        }
+
+        val memoSchemaPart = if (includeAutoMemo) ", \"memo\": \"\"" else ""
+        if (activeTags.isNotEmpty()) {
+            base.append("只輸出 JSON：{\"risk_score\": 0-100, \"risk_label\": \"safe|suspicious|scam\", \"risk_reason\": \"一句話說明\", \"tags\": [1]$memoSchemaPart}")
         } else {
-            base.append("只輸出 JSON：{\"risk_score\": 0-100, \"risk_label\": \"safe|suspicious|scam\", \"risk_reason\": \"一句話說明\"}")
+            base.append("只輸出 JSON：{\"risk_score\": 0-100, \"risk_label\": \"safe|suspicious|scam\", \"risk_reason\": \"一句話說明\"$memoSchemaPart}")
         }
         return base.toString()
     }
@@ -622,7 +632,8 @@ object AiClient {
         val activeRules = rules.filter { it.isEnabled }.take(20)
         val tagSig = activeTags.joinToString(",") { "${it.id}:${it.name}:${it.aiHint}" }
         val ruleSig = activeRules.joinToString(",") { "${it.id}:${it.kind}:${it.targetTagId}:${it.ruleText}" }
-        val cacheKey = sha256("$content|autoTag=$enableAutoTag|$tagSig|$ruleSig")
+        val autoMemo = context != null && PhantomPrefs.isAiAutoMemoEnabled(context)
+        val cacheKey = sha256("$content|autoTag=$enableAutoTag|autoMemo=$autoMemo|$tagSig|$ruleSig")
         val now = System.currentTimeMillis()
         if (!bypassCache) {
             synchronized(riskCache) {
@@ -636,7 +647,7 @@ object AiClient {
         val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS)
             ?: throw IllegalStateException("尚未設定 AI Provider API Key")
         val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
-        val systemPrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
+        val systemPrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag, includeAutoMemo = autoMemo)
         val safeSender = sanitizeForPrompt(sender)
         val safeContent = sanitizeForPrompt(content)
 
@@ -820,12 +831,14 @@ object AiClient {
             val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS)
                 ?: return@withContext BatchAnalysisOutcome.PermanentFailure("尚未設定 AI Provider API Key")
             val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
-            val singlePrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
+            val autoMemo = context != null && PhantomPrefs.isAiAutoMemoEnabled(context)
+            val singlePrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag, includeAutoMemo = autoMemo)
+            val memoSchemaPart = if (autoMemo) ", \"memo\": \"\"" else ""
             val batchSystemPrompt = buildString {
                 appendLine(singlePrompt)
                 appendLine()
                 appendLine("本次為批次分析多則訊息（各則以 <msg id=\"數字\"> 包裹）。")
-                append("請只輸出 JSON 陣列，每則包含 id 與上述欄位：[{\"id\": 123, \"risk_score\": 0-100, \"risk_label\": \"safe|suspicious|scam\", \"risk_reason\": \"...\", \"tags\": [...]}]")
+                append("請只輸出 JSON 陣列，每則包含 id 與上述欄位：[{\"id\": 123, \"risk_score\": 0-100, \"risk_label\": \"safe|suspicious|scam\", \"risk_reason\": \"...\", \"tags\": [...]$memoSchemaPart}]")
             }
             val baseMaxTokens = if (isGroqProvider(profile)) {
                 (220 * batchItems.size).coerceAtMost(1024)
@@ -958,11 +971,22 @@ object AiClient {
         } catch (_: Exception) {
             emptyList()
         }
+        val memo = try {
+            val el = obj.get("memo")
+            if (el != null && !el.isJsonNull && el.isJsonPrimitive) {
+                el.asString.trim().take(40)
+            } else {
+                ""
+            }
+        } catch (_: Exception) {
+            ""
+        }
         return AiAnalysisResult(
             riskScore = score,
             riskLabel = label,
             riskReason = reason,
-            tagIds = tagIds
+            tagIds = tagIds,
+            memo = memo
         )
     }
 

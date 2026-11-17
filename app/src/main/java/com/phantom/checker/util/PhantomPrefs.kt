@@ -1047,4 +1047,12 @@ object PhantomPrefs {
     fun setAiOfflineRetryPaused(ctx: Context, paused: Boolean) {
         prefs(ctx).edit().putBoolean("ai_offline_retry_paused", paused).apply()
     }
+
+    /** 自動備忘錄開關（預設關） */
+    fun isAiAutoMemoEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("ai_auto_memo_enabled", false)
+
+    fun setAiAutoMemoEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("ai_auto_memo_enabled", enabled).apply()
+    }
 }

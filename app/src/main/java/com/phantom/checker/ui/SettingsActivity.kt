@@ -333,6 +333,7 @@ fun FilterSettingsScreen(
     var aiRiskEnabled by remember { mutableStateOf(PhantomPrefs.isAiRiskEnabled(appCtx)) }
     var aiAutoTagEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoTagEnabled(appCtx)) }
     var aiOfflineRetryEnabled by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryEnabled(appCtx)) }
+    var aiAutoMemoEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoMemoEnabled(appCtx)) }
     var chatSuggestionsEnabled by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var quickCommandDefaultMode by remember { mutableStateOf(PhantomPrefs.getQuickCommandDefaultMode(appCtx)) }
     var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
@@ -1701,6 +1702,17 @@ fun FilterSettingsScreen(
                                     com.phantom.checker.service.PendingAiAnalysisPolicy.disableAndClear(appCtx)
                                 }
                             }
+                        }
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingSwitchRow(
+                        title = "自動備忘錄",
+                        subtitle = "AI 分析新訊息時自動擷取約定時間、繳費期限、取貨編號等備忘寫入「記事」分頁",
+                        checked = aiAutoMemoEnabled,
+                        onCheckedChange = { checked ->
+                            aiAutoMemoEnabled = checked
+                            PhantomPrefs.setAiAutoMemoEnabled(appCtx, checked)
                         }
                     )
 

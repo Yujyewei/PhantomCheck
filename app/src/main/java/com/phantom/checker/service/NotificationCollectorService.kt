@@ -580,6 +580,9 @@ class NotificationCollectorService : NotificationListenerService() {
                     db.tagDao().addTagsToMessageBatch(refs)
                 }
             }
+            if (PhantomPrefs.isAiAutoMemoEnabled(applicationContext) && result.memo.isNotBlank()) {
+                saveAutoMemoIfPresent(db, msg, result.memo)
+            }
             if (result.riskLabel == "scam") {
                 hasNewScam = true
                 alertScam(applicationContext, msgId, pkg, msg.sender, result.riskReason)
@@ -1027,6 +1030,31 @@ class NotificationCollectorService : NotificationListenerService() {
             try {
                 nm.notify(notifId, notif)
             } catch (_: SecurityException) {
+            }
+        }
+
+        suspend fun saveAutoMemoIfPresent(
+            db: AppDatabase,
+            msg: MessageEntity,
+            rawMemo: String
+        ) {
+            val clean = rawMemo.trim().take(40)
+            if (clean.isEmpty()) return
+            val now = System.currentTimeMillis()
+            val existing = db.noteDao().findAutoByMessageId(msg.id)
+            if (existing != null) {
+                db.noteDao().update(existing.copy(content = clean, updatedAt = now))
+            } else {
+                db.noteDao().insert(
+                    NoteEntity(
+                        content = clean,
+                        source = NoteEntity.SOURCE_AUTO,
+                        relatedMessageId = msg.id,
+                        relatedAppLabel = msg.appLabel.ifBlank { msg.packageName },
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                )
             }
         }
 

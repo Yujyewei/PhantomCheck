@@ -852,6 +852,51 @@ interface PendingAiAnalysisDao {
     suspend fun clearAll()
 }
 
+@Entity(
+    tableName = "notes",
+    indices = [
+        Index(value = ["pinned", "updatedAt"]),
+        Index(value = ["relatedMessageId", "source"])
+    ]
+)
+data class NoteEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val content: String,
+    val colorHex: String? = null,
+    val pinned: Boolean = false,
+    val source: String = SOURCE_MANUAL,
+    val relatedMessageId: Long? = null,
+    val relatedAppLabel: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+) {
+    companion object {
+        const val SOURCE_MANUAL = "manual"
+        const val SOURCE_AUTO = "auto"
+    }
+}
+
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes ORDER BY pinned DESC, updatedAt DESC")
+    suspend fun all(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes ORDER BY pinned DESC, updatedAt DESC")
+    fun observeAll(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes WHERE relatedMessageId = :messageId AND source = 'auto' LIMIT 1")
+    suspend fun findAutoByMessageId(messageId: Long): NoteEntity?
+
+    @Insert
+    suspend fun insert(note: NoteEntity): Long
+
+    @Update
+    suspend fun update(note: NoteEntity)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
 @Database(
     entities = [
         MessageEntity::class,
@@ -867,7 +912,8 @@ interface PendingAiAnalysisDao {
         IntelResultEntity::class,
         UserTagRuleEntity::class,
         TodoEntity::class,
-        PendingAiAnalysisEntity::class
+        PendingAiAnalysisEntity::class,
+        NoteEntity::class
     ],
     version = 13,
     exportSchema = false
@@ -884,6 +930,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun userTagRuleDao(): UserTagRuleDao
     abstract fun todoDao(): TodoDao
     abstract fun pendingAiAnalysisDao(): PendingAiAnalysisDao
+    abstract fun noteDao(): NoteDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1108,6 +1155,23 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `notes` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `colorHex` TEXT DEFAULT NULL,
+                        `pinned` INTEGER NOT NULL DEFAULT 0,
+                        `source` TEXT NOT NULL DEFAULT 'manual',
+                        `relatedMessageId` INTEGER DEFAULT NULL,
+                        `relatedAppLabel` TEXT DEFAULT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_pinned_updatedAt` ON `notes` (`pinned`, `updatedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_relatedMessageId_source` ON `notes` (`relatedMessageId`, `source`)")
             }
         }
     }

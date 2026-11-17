@@ -171,6 +171,9 @@ class PendingAiAnalysisWorker(
                     db.tagDao().addTagsToMessageBatch(refs)
                 }
             }
+            if (PhantomPrefs.isAiAutoMemoEnabled(appCtx) && result.memo.isNotBlank()) {
+                NotificationCollectorService.saveAutoMemoIfPresent(db, msg, result.memo)
+            }
             if (result.riskLabel == "scam") {
                 hasNewScam = true
                 NotificationCollectorService.alertScamFromWorker(
