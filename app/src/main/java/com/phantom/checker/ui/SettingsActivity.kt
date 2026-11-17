@@ -19,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -334,6 +335,7 @@ fun FilterSettingsScreen(
     var aiAutoTagEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoTagEnabled(appCtx)) }
     var aiOfflineRetryEnabled by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryEnabled(appCtx)) }
     var aiAutoMemoEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoMemoEnabled(appCtx)) }
+    var aiTagFailureNotifEnabled by remember { mutableStateOf(PhantomPrefs.isAiTagFailureNotifEnabled(appCtx)) }
     var chatSuggestionsEnabled by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var quickCommandDefaultMode by remember { mutableStateOf(PhantomPrefs.getQuickCommandDefaultMode(appCtx)) }
     var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
@@ -1151,26 +1153,50 @@ fun FilterSettingsScreen(
                         )
                         Spacer(Modifier.height(8.dp))
 
-                        var pickingLayer by remember { mutableStateOf<BackgroundLayer?>(null) }
+                        var pickingLayerName by rememberSaveable { mutableStateOf<String?>(null) }
                         var bgUiVersion by remember { mutableIntStateOf(ThemePreferences.getBackgroundVersion()) }
-                        var bgStatusMsg by remember { mutableStateOf<String?>(null) }
-                        val bgPickerLauncher = rememberLauncherForActivityResult(
-                            contract = ActivityResultContracts.PickVisualMedia()
-                        ) { uri ->
-                            val targetLayer = pickingLayer
-                            pickingLayer = null
-                            if (uri != null && targetLayer != null) {
-                                scope.launch {
-                                    val res = BackgroundImageHelper.saveBackgroundFromUri(appCtx, targetLayer, uri)
-                                    res.onSuccess {
-                                        ThemePreferences.bumpBackgroundVersion()
-                                        bgUiVersion = ThemePreferences.getBackgroundVersion()
-                                        bgStatusMsg = "已設定「${targetLayer.label}」"
-                                    }.onFailure { err ->
-                                        bgStatusMsg = err.message ?: "圖片處理失敗"
+                        var bgStatusMsg by rememberSaveable { mutableStateOf<String?>(null) }
+                        var bgPickerFailed by rememberSaveable { mutableStateOf(false) }
+                        var failedLayerName by rememberSaveable { mutableStateOf<String?>(null) }
+
+                        fun handlePickedBackgroundUri(uri: Uri?, fromFallback: Boolean) {
+                            val targetLayer = pickingLayerName?.let { name ->
+                                BackgroundLayer.entries.firstOrNull { it.name == name }
+                            }
+                            pickingLayerName = null
+                            if (uri == null) return
+                            if (targetLayer == null) {
+                                bgStatusMsg = "選擇圖片時圖層狀態已重置，請再點擊一次欲設定的背景圖層"
+                                bgPickerFailed = false
+                                return
+                            }
+                            scope.launch {
+                                val res = BackgroundImageHelper.saveBackgroundFromUri(appCtx, targetLayer, uri)
+                                res.onSuccess {
+                                    ThemePreferences.bumpBackgroundVersion()
+                                    bgUiVersion = ThemePreferences.getBackgroundVersion()
+                                    bgStatusMsg = "已設定「${targetLayer.label}」"
+                                    bgPickerFailed = false
+                                    failedLayerName = null
+                                }.onFailure { err ->
+                                    bgStatusMsg = err.message ?: "圖片處理失敗"
+                                    if (!fromFallback) {
+                                        bgPickerFailed = true
+                                        failedLayerName = targetLayer.name
                                     }
                                 }
                             }
+                        }
+
+                        val bgPickerLauncher = rememberLauncherForActivityResult(
+                            contract = ActivityResultContracts.PickVisualMedia()
+                        ) { uri ->
+                            handlePickedBackgroundUri(uri, fromFallback = false)
+                        }
+                        val bgDocPickerLauncher = rememberLauncherForActivityResult(
+                            contract = ActivityResultContracts.OpenDocument()
+                        ) { uri ->
+                            handlePickedBackgroundUri(uri, fromFallback = true)
                         }
 
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1220,10 +1246,18 @@ fun FilterSettingsScreen(
                                     }
                                     OutlinedButton(
                                         onClick = {
-                                            pickingLayer = layer
-                                            bgPickerLauncher.launch(
-                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                            )
+                                            pickingLayerName = layer.name
+                                            bgPickerFailed = false
+                                            failedLayerName = null
+                                            try {
+                                                bgPickerLauncher.launch(
+                                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                )
+                                            } catch (e: Exception) {
+                                                bgStatusMsg = "無法開啟系統相簿選擇器（${e.localizedMessage ?: "不支援"}），請改用檔案選擇器"
+                                                bgPickerFailed = true
+                                                failedLayerName = layer.name
+                                            }
                                         }
                                     ) {
                                         Text("選擇圖片")
@@ -1235,6 +1269,7 @@ fun FilterSettingsScreen(
                                                 ThemePreferences.bumpBackgroundVersion()
                                                 bgUiVersion = ThemePreferences.getBackgroundVersion()
                                                 bgStatusMsg = "已移除「${layer.label}」"
+                                                bgPickerFailed = false
                                             }
                                         ) {
                                             Text("移除")
@@ -1249,8 +1284,25 @@ fun FilterSettingsScreen(
                             Text(
                                 text = msg,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
+                                color = if (bgPickerFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
+                        }
+                        if (bgPickerFailed) {
+                            val fallbackLayer = failedLayerName?.let { name ->
+                                BackgroundLayer.entries.firstOrNull { it.name == name }
+                            } ?: BackgroundLayer.GLOBAL
+                            TextButton(
+                                onClick = {
+                                    pickingLayerName = fallbackLayer.name
+                                    try {
+                                        bgDocPickerLauncher.launch(arrayOf("image/*"))
+                                    } catch (e: Exception) {
+                                        bgStatusMsg = "無法開啟檔案選擇器：${e.localizedMessage ?: "未知錯誤"}"
+                                    }
+                                }
+                            ) {
+                                Text("改用檔案選擇器（${fallbackLayer.label}）")
+                            }
                         }
 
                         val anyBgSet = remember(bgUiVersion) {
@@ -1408,6 +1460,17 @@ fun FilterSettingsScreen(
                         }
                     }
                     Spacer(Modifier.height(10.dp))
+
+                    SettingSwitchRow(
+                        title = "AI 標籤分發失敗通知",
+                        subtitle = "24 小時內累積失敗 5 次時發送低干擾提醒（6 小時冷卻）",
+                        checked = aiTagFailureNotifEnabled,
+                        onCheckedChange = { checked ->
+                            aiTagFailureNotifEnabled = checked
+                            PhantomPrefs.setAiTagFailureNotifEnabled(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     SettingSwitchRow(
                         title = "AI 助手常用指令選單",
@@ -2352,6 +2415,7 @@ fun FilterSettingsScreen(
 
                     OutlinedButton(
                         onClick = {
+                            PhantomPrefs.setOnboardingStep(appCtx, 1)
                             PhantomPrefs.setOnboardingCompleted(appCtx, false)
                             onBack()
                         },
@@ -3826,25 +3890,25 @@ private enum class SettingsTourStep(
         index = 2,
         cardKey = "ai",
         title = "AI 與分析",
-        description = "管理多 Provider API Key、每日分析額度、自然語言白名單規則、AI 自動標記與每日 AI 摘要排程。"
+        description = "管理多 Provider API Key 與分用途模型、每日分析額度、AI 觸發字數門檻、離線補佇列、自動備忘錄、AI 標籤分發測試／失敗通知，以及每日摘要排程。"
     ),
     NOTIF(
         index = 3,
         cardKey = "notif",
         title = "訊息與通知",
-        description = "設定勿擾時段、即時關鍵字提醒、重複通知節流秒數，以及滑動刪除與點擊開啟行為。"
+        description = "設定勿擾時段、即時關鍵字提醒、重複通知節流秒數、滑動刪除與點擊開啟行為，並可使用已遷入此卡的「清除已讀訊息」。"
     ),
     DATA(
         index = 4,
         cardKey = "data",
         title = "資料管理",
-        description = "管理 App 靜音清單、自訂標籤、訊息保留天數與則數上限、CSV 匯出，也可隨時重播新手或設定教學。"
+        description = "管理 App 靜音清單、自訂標籤與白名單規則、訊息保留天數與則數上限、CSV 匯出，也可隨時重播新手或設定教學。"
     ),
     APPEARANCE(
         index = 5,
         cardKey = "appearance",
         title = "外觀與保活",
-        description = "切換主題、動態取色、液態玻璃效果、觸覺震動回饋，並檢查系統電池最佳化與前景服務運作狀態。"
+        description = "切換主題、動態取色、三層背景圖片（全域／AI 聊天／對話頁）與暗色遮罩強度滑桿、液態玻璃與分頁欄模式，並檢查電池最佳化與前景保活狀態。"
     ),
     SHIZUKU(
         index = 6,
