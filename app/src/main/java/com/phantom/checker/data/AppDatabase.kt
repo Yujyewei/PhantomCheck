@@ -3,6 +3,7 @@ package com.phantom.checker.data
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.flow.Flow
 
 @Entity(
     tableName = "messages",
