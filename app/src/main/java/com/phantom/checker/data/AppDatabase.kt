@@ -812,6 +812,46 @@ interface TodoDao {
     suspend fun deleteById(id: Long)
 }
 
+@Entity(tableName = "pending_ai_analysis")
+data class PendingAiAnalysisEntity(
+    @PrimaryKey val messageId: Long,
+    val queuedAt: Long = System.currentTimeMillis(),
+    val attempts: Int = 0
+)
+
+@Dao
+interface PendingAiAnalysisDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun enqueue(item: PendingAiAnalysisEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun enqueueAll(items: List<PendingAiAnalysisEntity>)
+
+    @Query("SELECT * FROM pending_ai_analysis WHERE attempts < 3 ORDER BY queuedAt ASC LIMIT :limit")
+    suspend fun nextBatch(limit: Int = 20): List<PendingAiAnalysisEntity>
+
+    @Query("SELECT COUNT(*) FROM pending_ai_analysis WHERE attempts < 3")
+    suspend fun pendingCount(): Int
+
+    @Query("SELECT COUNT(*) FROM pending_ai_analysis WHERE attempts < 3")
+    fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM pending_ai_analysis WHERE messageId IN (:messageIds)")
+    suspend fun deleteByIds(messageIds: List<Long>)
+
+    @Query("UPDATE pending_ai_analysis SET attempts = attempts + 1 WHERE messageId IN (:messageIds)")
+    suspend fun incrementAttempts(messageIds: List<Long>)
+
+    @Query("SELECT * FROM pending_ai_analysis WHERE attempts >= 3")
+    suspend fun exhaustedItems(): List<PendingAiAnalysisEntity>
+
+    @Query("DELETE FROM pending_ai_analysis WHERE attempts >= 3")
+    suspend fun deleteExhausted()
+
+    @Query("DELETE FROM pending_ai_analysis")
+    suspend fun clearAll()
+}
+
 @Database(
     entities = [
         MessageEntity::class,
@@ -826,9 +866,10 @@ interface TodoDao {
         IntelCacheEntity::class,
         IntelResultEntity::class,
         UserTagRuleEntity::class,
-        TodoEntity::class
+        TodoEntity::class,
+        PendingAiAnalysisEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -842,6 +883,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun intelDao(): IntelDao
     abstract fun userTagRuleDao(): UserTagRuleDao
     abstract fun todoDao(): TodoDao
+    abstract fun pendingAiAnalysisDao(): PendingAiAnalysisDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1051,6 +1093,21 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_isDone_dueAt` ON `todos` (`isDone`, `dueAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_dueAt` ON `todos` (`dueAt`)")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `pending_ai_analysis` (
+                        `messageId` INTEGER NOT NULL,
+                        `queuedAt` INTEGER NOT NULL,
+                        `attempts` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`messageId`)
+                    )
+                    """.trimIndent()
+                )
             }
         }
     }

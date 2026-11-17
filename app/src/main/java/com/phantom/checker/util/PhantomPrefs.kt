@@ -1031,4 +1031,20 @@ object PhantomPrefs {
         }
         prefs(ctx).edit().putString("ai_purpose_model_map", gson.toJson(frozen)).apply()
     }
+
+    /** 離線 AI 分析自動補佇列開關（預設開） */
+    fun isAiOfflineRetryEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("ai_offline_retry_enabled", true)
+
+    fun setAiOfflineRetryEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("ai_offline_retry_enabled", enabled).apply()
+    }
+
+    /** 離線 AI 分析自動補佇列是否暫停（預設 false） */
+    fun isAiOfflineRetryPaused(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("ai_offline_retry_paused", false)
+
+    fun setAiOfflineRetryPaused(ctx: Context, paused: Boolean) {
+        prefs(ctx).edit().putBoolean("ai_offline_retry_paused", paused).apply()
+    }
 }

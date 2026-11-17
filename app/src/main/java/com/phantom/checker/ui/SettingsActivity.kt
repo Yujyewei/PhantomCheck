@@ -332,6 +332,7 @@ fun FilterSettingsScreen(
     var tokenSaverEnabled by remember { mutableStateOf(PhantomPrefs.isTokenSaverEnabled(appCtx)) }
     var aiRiskEnabled by remember { mutableStateOf(PhantomPrefs.isAiRiskEnabled(appCtx)) }
     var aiAutoTagEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoTagEnabled(appCtx)) }
+    var aiOfflineRetryEnabled by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryEnabled(appCtx)) }
     var chatSuggestionsEnabled by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var quickCommandDefaultMode by remember { mutableStateOf(PhantomPrefs.getQuickCommandDefaultMode(appCtx)) }
     var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
@@ -1685,6 +1686,22 @@ fun FilterSettingsScreen(
                         },
                         valueRange = 1f..30f,
                         steps = 28
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingSwitchRow(
+                        title = "離線 AI 分析自動補佇列",
+                        subtitle = "斷網或暫時性錯誤失敗時自動排入佇列，恢復網路後補齊分析（關閉將清空佇列）",
+                        checked = aiOfflineRetryEnabled,
+                        onCheckedChange = { checked ->
+                            aiOfflineRetryEnabled = checked
+                            PhantomPrefs.setAiOfflineRetryEnabled(appCtx, checked)
+                            if (!checked) {
+                                scope.launch {
+                                    com.phantom.checker.service.PendingAiAnalysisPolicy.disableAndClear(appCtx)
+                                }
+                            }
+                        }
                     )
 
                     if (dailySummaryEnabled) {

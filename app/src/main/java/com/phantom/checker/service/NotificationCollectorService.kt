@@ -485,15 +485,46 @@ class NotificationCollectorService : NotificationListenerService() {
         val aiTags = if (enableAutoTag) db.tagDao().aiManagedTags() else emptyList()
         val aiRules = cachedActiveAiRules(db)
 
-        val results = AiClient.analyzeMessageBatch(
+        val outcome = AiClient.analyzeMessageBatchDetailed(
             items = items,
             tags = aiTags,
             enableAutoTag = enableAutoTag,
             context = applicationContext,
             rules = aiRules
         )
+        val results = when (outcome) {
+            is AiClient.BatchAnalysisOutcome.Success -> outcome.results
+            is AiClient.BatchAnalysisOutcome.TransientFailure -> {
+                PhantomPrefs.refundTodayAiUsage(applicationContext)
+                if (PhantomPrefs.isAiOfflineRetryEnabled(applicationContext)) {
+                    val dao = db.pendingAiAnalysisDao()
+                    val wasEmpty = dao.pendingCount() == 0
+                    val now = System.currentTimeMillis()
+                    dao.enqueueAll(
+                        items.map {
+                            PendingAiAnalysisEntity(
+                                messageId = it.messageId,
+                                queuedAt = now,
+                                attempts = 0
+                            )
+                        }
+                    )
+                    if (wasEmpty) {
+                        PendingAiAnalysisPolicy.notifyQueued(applicationContext, items.size)
+                    }
+                    PendingAiAnalysisPolicy.enqueue(applicationContext)
+                }
+                emptyMap()
+            }
+            is AiClient.BatchAnalysisOutcome.PermanentFailure -> {
+                PhantomPrefs.refundTodayAiUsage(applicationContext)
+                emptyMap()
+            }
+        }
         if (results.isEmpty()) {
-            PhantomPrefs.refundTodayAiUsage(applicationContext)
+            if (outcome is AiClient.BatchAnalysisOutcome.Success) {
+                PhantomPrefs.refundTodayAiUsage(applicationContext)
+            }
             if (enableAutoTag) {
                 // 自動降回 App 分類標籤（不中斷訊息入庫與風險流程）
                 val appCatRules = cachedAppCategoryRules(db, pkg)
@@ -512,7 +543,9 @@ class NotificationCollectorService : NotificationListenerService() {
                         }
                     }
                 }
-                if (AiClient.getActiveProfile(applicationContext) != null) {
+                if (AiClient.getProfileForPurpose(applicationContext, AiPurpose.MESSAGE_ANALYSIS) != null &&
+                    outcome !is AiClient.BatchAnalysisOutcome.TransientFailure
+                ) {
                     recordAndMaybeNotifyAiTagFailure(applicationContext)
                 }
             }
@@ -957,6 +990,46 @@ class NotificationCollectorService : NotificationListenerService() {
             return cal.timeInMillis
         }
 
+        fun alertScamFromWorker(
+            ctx: Context,
+            msgId: Long,
+            pkg: String,
+            sender: String,
+            reason: String
+        ) {
+            if (!PhantomPrefs.isScamAlertNotifEnabled(ctx)) return
+            if (PhantomPrefs.isInQuietHoursNow(ctx)) return
+            val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+            nm.createNotificationChannel(
+                NotificationChannel("scam_alert", "詐騙警示", NotificationManager.IMPORTANCE_HIGH)
+            )
+            val notifId = NotifIds.scamAlert(msgId)
+            val intent = MessageDetailActivity.createIntent(ctx, msgId).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pi = PendingIntent.getActivity(
+                ctx,
+                notifId,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val plainReason = com.phantom.checker.ui.stripMarkdown(reason)
+                .replace(WHITESPACE_REGEX, " ")
+                .trim()
+                .ifBlank { "請前往詐騙警示中心查看風險分析" }
+            val notif = Notification.Builder(ctx, "scam_alert")
+                .setSmallIcon(R.drawable.ic_stat_phantom)
+                .setContentTitle("⚠️ 偵測到高風險訊息：$sender")
+                .setContentText(plainReason)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+            try {
+                nm.notify(notifId, notif)
+            } catch (_: SecurityException) {
+            }
+        }
+
         private fun sha256(input: String): String {
             val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
             return bytes.joinToString("") { "%02x".format(it) }
@@ -1087,7 +1160,8 @@ object AppDatabaseHolder {
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
                 AppDatabase.MIGRATION_10_11,
-                AppDatabase.MIGRATION_11_12
+                AppDatabase.MIGRATION_11_12,
+                AppDatabase.MIGRATION_12_13
             ).addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)

@@ -601,6 +601,22 @@ object AiClient {
         context: Context? = null,
         bypassCache: Boolean = false,
         rules: List<AiRuleEntity> = emptyList()
+    ): AiAnalysisResult? = try {
+        analyzeMessageOrThrow(sender, content, tags, enableAutoTag, context, bypassCache, rules)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun analyzeMessageOrThrow(
+        sender: String,
+        content: String,
+        tags: List<TagEntity> = emptyList(),
+        enableAutoTag: Boolean = false,
+        context: Context? = null,
+        bypassCache: Boolean = false,
+        rules: List<AiRuleEntity> = emptyList()
     ): AiAnalysisResult? = withContext(Dispatchers.IO) {
         val activeTags = if (enableAutoTag) tags.filter { it.isAiManaged } else emptyList()
         val activeRules = rules.filter { it.isEnabled }.take(20)
@@ -617,64 +633,59 @@ object AiClient {
             }
         }
 
-        try {
-            val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS) ?: return@withContext null
-            val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
-            val systemPrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
-            val safeSender = sanitizeForPrompt(sender)
-            val safeContent = sanitizeForPrompt(content)
+        val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS)
+            ?: throw IllegalStateException("尚未設定 AI Provider API Key")
+        val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
+        val systemPrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
+        val safeSender = sanitizeForPrompt(sender)
+        val safeContent = sanitizeForPrompt(content)
 
-            suspend fun callOnce(targetContent: String, maxTok: Int): AiAnalysisResult? {
-                var rateLimitRetries = 0
-                while (true) {
-                    try {
-                        enforceRateLimit()
-                        val res = getApi(profile.baseUrl).chat(
-                            url = fullUrl,
-                            auth = "Bearer ${profile.apiKey.trim()}",
-                            body = ChatRequest(
-                                model = profile.model.trim().ifEmpty { FALLBACK_MODEL },
-                                messages = listOf(
-                                    ChatMessage("system", systemPrompt),
-                                    ChatMessage(
-                                        "user",
-                                        "<message_sender>$safeSender</message_sender>\n<message_content>$targetContent</message_content>"
-                                    )
-                                ),
-                                maxTokens = maxTok
-                            )
+        suspend fun callOnce(targetContent: String, maxTok: Int): AiAnalysisResult? {
+            var rateLimitRetries = 0
+            while (true) {
+                try {
+                    enforceRateLimit()
+                    val res = getApi(profile.baseUrl).chat(
+                        url = fullUrl,
+                        auth = "Bearer ${profile.apiKey.trim()}",
+                        body = ChatRequest(
+                            model = profile.model.trim().ifEmpty { FALLBACK_MODEL },
+                            messages = listOf(
+                                ChatMessage("system", systemPrompt),
+                                ChatMessage(
+                                    "user",
+                                    "<message_sender>$safeSender</message_sender>\n<message_content>$targetContent</message_content>"
+                                )
+                            ),
+                            maxTokens = maxTok
                         )
-                        val text = res.choices.firstOrNull()?.message?.content ?: return null
-                        return parseAnalysisJson(text, activeTags)
-                    } catch (e: HttpException) {
-                        if (e.code() == 429 && rateLimitRetries < 2) {
-                            rateLimitRetries++
-                            delay(parseRetryAfterMs(e, rateLimitRetries))
-                            continue
-                        }
-                        throw e
+                    )
+                    val text = res.choices.firstOrNull()?.message?.content ?: return null
+                    return parseAnalysisJson(text, activeTags)
+                } catch (e: HttpException) {
+                    if (e.code() == 429 && rateLimitRetries < 2) {
+                        rateLimitRetries++
+                        delay(parseRetryAfterMs(e, rateLimitRetries))
+                        continue
                     }
-                }
-            }
-
-            val result = try {
-                callOnce(safeContent, 260)
-            } catch (e: HttpException) {
-                if (isRequestTooLargeError(e)) {
-                    callOnce(safeContent.take((safeContent.length / 2).coerceIn(120, 400)), 200)
-                } else {
                     throw e
                 }
-            } ?: return@withContext null
-            synchronized(riskCache) {
-                riskCache.put(cacheKey, CachedRisk(result, now))
             }
-            result
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
         }
+
+        val result = try {
+            callOnce(safeContent, 260)
+        } catch (e: HttpException) {
+            if (isRequestTooLargeError(e)) {
+                callOnce(safeContent.take((safeContent.length / 2).coerceIn(120, 400)), 200)
+            } else {
+                throw e
+            }
+        } ?: return@withContext null
+        synchronized(riskCache) {
+            riskCache.put(cacheKey, CachedRisk(result, now))
+        }
+        result
     }
 
     /**
@@ -730,6 +741,32 @@ object AiClient {
         }
     }
 
+    sealed class BatchAnalysisOutcome {
+        data class Success(val results: Map<Long, AiAnalysisResult>) : BatchAnalysisOutcome()
+        data class TransientFailure(val reason: String) : BatchAnalysisOutcome()
+        data class PermanentFailure(val reason: String) : BatchAnalysisOutcome()
+    }
+
+    fun isTransientFailure(t: Throwable?): Boolean {
+        var cur: Throwable? = t
+        var depth = 0
+        while (cur != null && depth < 6) {
+            when (cur) {
+                is java.net.UnknownHostException,
+                is SocketTimeoutException,
+                is java.net.ConnectException,
+                is InterruptedIOException -> return true
+                is HttpException -> {
+                    val code = cur.code()
+                    return code in 500..599 || code == 429
+                }
+            }
+            cur = cur.cause
+            depth++
+        }
+        return false
+    }
+
     /** 批次分析（1~5 則同寄件者連續訊息合併成單次 prompt 節省 token） */
     suspend fun analyzeMessageBatch(
         items: List<BatchAnalyzeItem>,
@@ -737,26 +774,51 @@ object AiClient {
         enableAutoTag: Boolean = false,
         context: Context? = null,
         rules: List<AiRuleEntity> = emptyList()
-    ): Map<Long, AiAnalysisResult> = withContext(Dispatchers.IO) {
-        if (items.isEmpty()) return@withContext emptyMap()
+    ): Map<Long, AiAnalysisResult> {
+        return when (val outcome = analyzeMessageBatchDetailed(items, tags, enableAutoTag, context, rules)) {
+            is BatchAnalysisOutcome.Success -> outcome.results
+            is BatchAnalysisOutcome.TransientFailure,
+            is BatchAnalysisOutcome.PermanentFailure -> emptyMap()
+        }
+    }
+
+    suspend fun analyzeMessageBatchDetailed(
+        items: List<BatchAnalyzeItem>,
+        tags: List<TagEntity> = emptyList(),
+        enableAutoTag: Boolean = false,
+        context: Context? = null,
+        rules: List<AiRuleEntity> = emptyList()
+    ): BatchAnalysisOutcome = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext BatchAnalysisOutcome.Success(emptyMap())
         if (items.size == 1) {
             val single = items.first()
-            val res = analyzeMessage(
-                sender = single.sender,
-                content = single.content,
-                tags = tags,
-                enableAutoTag = enableAutoTag,
-                context = context,
-                rules = rules
-            )
-            return@withContext if (res != null) mapOf(single.messageId to res) else emptyMap()
+            return@withContext try {
+                val res = analyzeMessageOrThrow(
+                    sender = single.sender,
+                    content = single.content,
+                    tags = tags,
+                    enableAutoTag = enableAutoTag,
+                    context = context,
+                    rules = rules
+                )
+                BatchAnalysisOutcome.Success(if (res != null) mapOf(single.messageId to res) else emptyMap())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (isTransientFailure(e)) {
+                    BatchAnalysisOutcome.TransientFailure(e.message ?: e.javaClass.simpleName)
+                } else {
+                    BatchAnalysisOutcome.PermanentFailure(e.message ?: e.javaClass.simpleName)
+                }
+            }
         }
 
         val activeTags = if (enableAutoTag) tags.filter { it.isAiManaged } else emptyList()
         val activeRules = rules.filter { it.isEnabled }.take(20)
         val batchItems = items.take(5)
         try {
-            val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS) ?: return@withContext emptyMap()
+            val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS)
+                ?: return@withContext BatchAnalysisOutcome.PermanentFailure("尚未設定 AI Provider API Key")
             val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
             val singlePrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
             val batchSystemPrompt = buildString {
@@ -811,19 +873,24 @@ object AiClient {
                 }
             }
 
-            try {
+            val parsedMap = try {
                 callBatchOnce(null, baseMaxTokens)
             } catch (e: HttpException) {
                 if (isRequestTooLargeError(e)) {
                     callBatchOnce(220, (180 * batchItems.size).coerceAtMost(900))
                 } else {
-                    emptyMap()
+                    throw e
                 }
             }
+            BatchAnalysisOutcome.Success(parsedMap)
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
-            emptyMap()
+        } catch (e: Exception) {
+            if (isTransientFailure(e)) {
+                BatchAnalysisOutcome.TransientFailure(e.message ?: e.javaClass.simpleName)
+            } else {
+                BatchAnalysisOutcome.PermanentFailure(e.message ?: e.javaClass.simpleName)
+            }
         }
     }
 

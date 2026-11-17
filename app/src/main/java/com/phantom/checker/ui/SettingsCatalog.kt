@@ -5,6 +5,7 @@ import com.phantom.checker.service.DailySummaryPolicy
 import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.util.PhantomPrefs
+import kotlinx.coroutines.launch
 
 data class SettingSearchItem(
     val id: String,
@@ -38,6 +39,7 @@ object SettingsCatalog {
         SettingSearchItem("ai_scam_center", "ai", "詐騙警示中心", "檢視高風險詐騙記錄與處置", listOf("詐騙", "警示", "中心", "高風險", "封鎖"), page = "ScamCenterActivity"),
         SettingSearchItem("ai_alert_keywords", "ai", "即時提醒關鍵字", "設定自訂即時提醒關鍵字，命中時觸發通知提醒", listOf("關鍵字", "提醒", "keyword")),
         SettingSearchItem("ai_min_trigger_length", "ai", "AI 分析觸發字數門檻", "設定新訊息內容至少達幾字才觸發 AI 分析（1–30 字，預設 10 字）", listOf("字數", "長度", "門檻", "觸發", "最短", "幾個字", "分析字數")),
+        SettingSearchItem("ai_offline_retry_enabled", "ai", "離線 AI 分析自動補佇列", "斷網或暫時性錯誤失敗時自動排入佇列，恢復網路後補齊風險分析", listOf("離線", "補分析", "重試", "佇列", "網路恢復")),
         SettingSearchItem("ai_model_chat", "ai", "分用途模型：AI 助手對話", "為 AI 助手對話（含圖片）獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "對話模型", "切換模型", "chat"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_message_analysis", "ai", "分用途模型：每則訊息風險分析", "為新訊息自動風險分析獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "分析模型", "風險分析", "message"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_daily_summary", "ai", "分用途模型：每日摘要", "為每日 AI 摘要獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "摘要模型", "每日摘要", "daily"), page = "ApiKeySettingsActivity"),
@@ -88,6 +90,7 @@ object SettingsCatalog {
         "quick_ai_risk",
         "quick_scam_popup",
         "ai_auto_tag",
+        "ai_offline_retry_enabled",
         "ai_chat_suggestions",
         "ai_daily_summary",
         "ai_daily_summary_notif",
@@ -114,6 +117,7 @@ object SettingsCatalog {
             "quick_ai_risk" -> PhantomPrefs.isAiRiskEnabled(appCtx)
             "quick_scam_popup" -> PhantomPrefs.isScamAlertNotifEnabled(appCtx)
             "ai_auto_tag" -> PhantomPrefs.isAiAutoTagEnabled(appCtx)
+            "ai_offline_retry_enabled" -> PhantomPrefs.isAiOfflineRetryEnabled(appCtx)
             "ai_chat_suggestions" -> PhantomPrefs.isChatSuggestionsEnabled(appCtx)
             "ai_daily_summary" -> PhantomPrefs.isDailySummaryEnabled(appCtx)
             "ai_daily_summary_notif" -> PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
@@ -155,6 +159,14 @@ object SettingsCatalog {
             "quick_ai_risk" -> PhantomPrefs.setAiRiskEnabled(appCtx, enabled)
             "quick_scam_popup" -> PhantomPrefs.setScamAlertNotifEnabled(appCtx, enabled)
             "ai_auto_tag" -> PhantomPrefs.setAiAutoTagEnabled(appCtx, enabled)
+            "ai_offline_retry_enabled" -> {
+                PhantomPrefs.setAiOfflineRetryEnabled(appCtx, enabled)
+                if (!enabled) {
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        com.phantom.checker.service.PendingAiAnalysisPolicy.disableAndClear(appCtx)
+                    }
+                }
+            }
             "ai_chat_suggestions" -> PhantomPrefs.setChatSuggestionsEnabled(appCtx, enabled)
             "ai_daily_summary" -> {
                 PhantomPrefs.setDailySummaryEnabled(appCtx, enabled)

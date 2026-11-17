@@ -87,6 +87,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -1782,6 +1783,11 @@ private fun MessagesHomeTab(
     val ctx = LocalContext.current
     val groupMap = remember(appGroups) { appGroups.associateBy { it.packageName } }
     val listState = rememberLazyListState()
+    val pendingRetryCount by remember(ctx) {
+        AppDatabaseHolder.db(ctx).pendingAiAnalysisDao().observePendingCount()
+    }.collectAsState(initial = 0)
+    var isRetryPaused by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryPaused(ctx)) }
+    val offlineRetryEnabled = PhantomPrefs.isAiOfflineRetryEnabled(ctx)
 
     // 捲動到底部自動載入下一頁（非「全部」篩選模式）
     LaunchedEffect(listState, activeFilter, hasMoreFiltered, isLoadingMore) {
@@ -1804,6 +1810,67 @@ private fun MessagesHomeTab(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item(key = "offline_retry_banner") {
+            AnimatedVisibility(visible = offlineRetryEnabled && pendingRetryCount > 0) {
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 18.dp,
+                    contentPadding = 12.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isRetryPaused) {
+                                    "已暫停補分析（待處理 $pendingRetryCount 則）"
+                                } else {
+                                    "$pendingRetryCount 則訊息待 AI 補分析"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (isRetryPaused) {
+                                    "點擊「繼續」於網路恢復後自動補分析"
+                                } else {
+                                    "網路恢復後將自動排程補齊風險分析"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row {
+                            TextButton(
+                                onClick = {
+                                    if (isRetryPaused) {
+                                        com.phantom.checker.service.PendingAiAnalysisPolicy.resume(ctx)
+                                        isRetryPaused = false
+                                    } else {
+                                        com.phantom.checker.service.PendingAiAnalysisPolicy.pause(ctx)
+                                        isRetryPaused = true
+                                    }
+                                }
+                            ) {
+                                Text(if (isRetryPaused) "繼續" else "暫停")
+                            }
+                            TextButton(
+                                onClick = {
+                                    com.phantom.checker.service.PendingAiAnalysisPolicy.retryNow(ctx)
+                                    isRetryPaused = false
+                                }
+                            ) {
+                                Text("立即重試")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 頂部統計玻璃卡
         item {
             PhantomGlassCard(
