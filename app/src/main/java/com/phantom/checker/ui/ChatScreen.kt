@@ -420,6 +420,7 @@ fun ChatAssistantTab(
                 // 驗證並執行 setting_toggle（僅 boolean 白名單可直改）
                 val newAppliedSettings = mutableListOf<AppliedSettingCardState>()
                 val fallbackCandidates = mutableListOf<SettingSearchItem>()
+                var pendingOpenSettingItem: SettingSearchItem? = null
                 parsed.toggleProposals.forEach { tp ->
                     val item = SettingsCatalog.findById(tp.settingId)
                     if (item != null && SettingsCatalog.isToggleable(item.id)) {
@@ -444,17 +445,42 @@ fun ChatAssistantTab(
                             )
                         )
                     } else {
-                        val keywordMatches = SettingsCatalog.ITEMS.filter {
-                            SettingsCatalog.isToggleable(it.id)
-                        }.take(5)
-                        fallbackCandidates.addAll(keywordMatches)
+                        val matchedSettingCandidates = SettingsCatalog.keywordSearch(tp.settingId, limit = 5)
+                        if (matchedSettingCandidates.isNotEmpty()) {
+                            fallbackCandidates.addAll(matchedSettingCandidates)
+                        } else {
+                            resolutionErrors.add("找不到名為「${tp.settingId}」的設定項目，請換個說法或至設定頁搜尋。")
+                        }
+                    }
+                }
+
+                parsed.openSettingProposals.forEach { op ->
+                    val item = SettingsCatalog.findById(op.settingId)
+                    if (item != null) {
+                        newAppliedSettings.add(
+                            AppliedSettingCardState(
+                                sessionId = sessionId,
+                                item = item,
+                                beforeEnabled = null,
+                                afterEnabled = null
+                            )
+                        )
+                        if (pendingOpenSettingItem == null) {
+                            pendingOpenSettingItem = item
+                        }
+                    } else {
+                        val matchedSettingCandidates = SettingsCatalog.keywordSearch(op.settingId, limit = 5)
+                        if (matchedSettingCandidates.isNotEmpty()) {
+                            fallbackCandidates.addAll(matchedSettingCandidates)
+                        } else {
+                            resolutionErrors.add("找不到名為「${op.settingId}」的設定項目，請換個說法或至設定頁搜尋。")
+                        }
                     }
                 }
 
                 val explicitCandidates = parsed.candidatesProposals
                     .flatMap { it.candidateIds }
                     .mapNotNull { SettingsCatalog.findById(it) }
-                    .filter { SettingsCatalog.isToggleable(it.id) }
                 val resolvedCandidates = (explicitCandidates + fallbackCandidates)
                     .distinctBy { it.id }
                     .take(6)
@@ -551,6 +577,13 @@ fun ChatAssistantTab(
                     pendingSettingCandidates = PendingSettingCandidatesState(
                         sessionId = sessionId,
                         candidates = resolvedCandidates
+                    )
+                }
+                pendingOpenSettingItem?.let { targetItem ->
+                    ctx.startActivity(
+                        Intent(ctx, SettingsActivity::class.java).apply {
+                            putExtra("highlight_card_key", targetItem.cardKey)
+                        }
                     )
                 }
             }.onFailure { err ->
@@ -1327,7 +1360,8 @@ fun ChatAssistantTab(
                                 Spacer(Modifier.height(8.dp))
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     candState.candidates.forEach { item ->
-                                        val currentOn = SettingsCatalog.getBooleanState(appCtx, item.id) == true
+                                        val toggleable = SettingsCatalog.isToggleable(item.id)
+                                        val currentOn = if (toggleable) SettingsCatalog.getBooleanState(appCtx, item.id) == true else false
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
                                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -1342,7 +1376,11 @@ fun ChatAssistantTab(
                                             ) {
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
-                                                        text = "${item.title}（目前：${if (currentOn) "開啟" else "關閉"}）",
+                                                        text = if (toggleable) {
+                                                            "${item.title}（目前：${if (currentOn) "開啟" else "關閉"}）"
+                                                        } else {
+                                                            item.title
+                                                        },
                                                         style = MaterialTheme.typography.bodyMedium,
                                                         fontWeight = FontWeight.SemiBold
                                                     )
@@ -1355,23 +1393,38 @@ fun ChatAssistantTab(
                                                     )
                                                 }
                                                 Spacer(Modifier.width(8.dp))
-                                                Button(
-                                                    onClick = {
-                                                        val target = !currentOn
-                                                        val applied = SettingsCatalog.applyBooleanSetting(appCtx, item.id, target)
-                                                        if (applied != null) {
-                                                            pendingSettingCandidates = null
-                                                            appliedSettingCards = appliedSettingCards + AppliedSettingCardState(
-                                                                sessionId = candState.sessionId,
-                                                                item = item,
-                                                                beforeEnabled = applied.first,
-                                                                afterEnabled = applied.second
-                                                            )
-                                                            onShowMessage("${item.title}已${if (target) "開啟" else "關閉"}")
+                                                if (toggleable) {
+                                                    Button(
+                                                        onClick = {
+                                                            val target = !currentOn
+                                                            val applied = SettingsCatalog.applyBooleanSetting(appCtx, item.id, target)
+                                                            if (applied != null) {
+                                                                pendingSettingCandidates = null
+                                                                appliedSettingCards = appliedSettingCards + AppliedSettingCardState(
+                                                                    sessionId = candState.sessionId,
+                                                                    item = item,
+                                                                    beforeEnabled = applied.first,
+                                                                    afterEnabled = applied.second
+                                                                )
+                                                                onShowMessage("${item.title}已${if (target) "開啟" else "關閉"}")
+                                                            }
                                                         }
+                                                    ) {
+                                                        Text(if (currentOn) "關閉" else "開啟")
                                                     }
-                                                ) {
-                                                    Text(if (currentOn) "關閉" else "開啟")
+                                                } else {
+                                                    Button(
+                                                        onClick = {
+                                                            pendingSettingCandidates = null
+                                                            ctx.startActivity(
+                                                                Intent(ctx, SettingsActivity::class.java).apply {
+                                                                    putExtra("highlight_card_key", item.cardKey)
+                                                                }
+                                                            )
+                                                        }
+                                                    ) {
+                                                        Text("前往")
+                                                    }
                                                 }
                                             }
                                         }
@@ -1874,10 +1927,17 @@ private suspend fun buildRagSystemPrompt(
         appendLine("```json")
         appendLine("{\"action\":\"setting_adjust\",\"settingId\":\"<可調整數值設定id>\",\"value\":350}")
         appendLine("```")
+        appendLine("3. 若使用者詢問「去哪裡調整／設定在哪裡」或需要前往特定設定項目，請引用【全量設定清單摘要】內的標題與說明，並在回覆末尾輸出：")
+        appendLine("```json")
+        appendLine("{\"action\":\"open_setting\",\"settingId\":\"<設定id>\"}")
+        appendLine("```")
+        appendLine("重要：描述設定位置時只能引用【全量設定清單摘要】內的標題與說明，禁止推測或編造選單路徑與畫面名稱；要帶使用者前往時輸出 open_setting。")
         appendLine("【可開關設定清單】")
         appendLine(SettingsCatalog.buildToggleablePromptList(ctx))
         appendLine("【可調整數值設定清單】")
         appendLine(SettingsCatalog.buildNumericPromptList(ctx))
+        appendLine("【全量設定清單摘要】")
+        appendLine(SettingsCatalog.buildAllSettingsPromptSummary())
         appendLine()
         appendLine("僅當「使用者本人」明確要求對訊息執行操作時，才在回覆末尾附上一行 JSON 指令區塊（系統會先顯示確認卡讓使用者確認後才執行）：")
         appendLine("1. 回覆訊息（透過通知快速回覆）：")
@@ -1965,6 +2025,10 @@ private data class SettingAdjustProposal(
     val value: Int
 )
 
+private data class OpenSettingProposal(
+    val settingId: String
+)
+
 private data class PendingSettingAdjustState(
     val sessionId: Long,
     val item: SettingSearchItem,
@@ -2021,6 +2085,7 @@ private data class ParsedChatActions(
     val toggleProposals: List<SettingToggleProposal> = emptyList(),
     val candidatesProposals: List<SettingCandidatesProposal> = emptyList(),
     val adjustProposals: List<SettingAdjustProposal> = emptyList(),
+    val openSettingProposals: List<OpenSettingProposal> = emptyList(),
     val messageActions: List<MessageActionProposal> = emptyList(),
     val invalidActionErrors: List<String> = emptyList()
 )
@@ -2036,6 +2101,7 @@ private val KNOWN_CHAT_ACTIONS = setOf(
     "setting_toggle",
     "setting_candidates",
     "setting_adjust",
+    "open_setting",
     "reply_message",
     "open_app",
     "delete_message",
@@ -2090,6 +2156,7 @@ private fun parseSingleActionJson(
     toggleOut: MutableList<SettingToggleProposal>,
     candidatesOut: MutableList<SettingCandidatesProposal>,
     adjustOut: MutableList<SettingAdjustProposal>,
+    openOut: MutableList<OpenSettingProposal>,
     messageOut: MutableList<MessageActionProposal>,
     errorsOut: MutableList<String>
 ): Boolean {
@@ -2162,6 +2229,14 @@ private fun parseSingleActionJson(
                 adjustOut.add(SettingAdjustProposal(id, valueInt))
             }
         }
+        "open_setting" -> {
+            val id = obj.get("settingId")?.takeIf { !it.isJsonNull }?.asString?.trim().orEmpty()
+            if (id.isBlank()) {
+                errorsOut.add("開啟設定動作缺少有效的 settingId。")
+            } else {
+                openOut.add(OpenSettingProposal(id))
+            }
+        }
         "reply_message", "open_app", "delete_message", "tag_message" -> {
             val ids = mutableListOf<Long>()
             obj.get("messageId")?.takeIf { !it.isJsonNull }?.let { el ->
@@ -2210,6 +2285,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
     val toggles = mutableListOf<SettingToggleProposal>()
     val candidates = mutableListOf<SettingCandidatesProposal>()
     val adjusts = mutableListOf<SettingAdjustProposal>()
+    val openSettings = mutableListOf<OpenSettingProposal>()
     val msgActions = mutableListOf<MessageActionProposal>()
     val errors = mutableListOf<String>()
 
@@ -2225,7 +2301,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
             errors.add("動作指令格式無法解析，請重新嘗試。")
         } else {
             objs.forEach { (_, jsonStr) ->
-                parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, adjusts, msgActions, errors)
+                parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, adjusts, openSettings, msgActions, errors)
             }
         }
     }
@@ -2243,7 +2319,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
     val inlineRangesToRemove = mutableListOf<IntRange>()
     splitBalancedJsonObjects(withoutFenced).forEach { (range, jsonStr) ->
         if (jsonStr.contains("\"action\"", ignoreCase = true)) {
-            val handled = parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, adjusts, msgActions, errors)
+            val handled = parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, adjusts, openSettings, msgActions, errors)
             if (handled) {
                 inlineRangesToRemove.add(range)
             }
@@ -2266,6 +2342,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
         toggleProposals = toggles,
         candidatesProposals = candidates,
         adjustProposals = adjusts,
+        openSettingProposals = openSettings,
         messageActions = msgActions,
         invalidActionErrors = errors.distinct()
     )
