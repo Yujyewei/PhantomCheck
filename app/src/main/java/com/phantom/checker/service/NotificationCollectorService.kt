@@ -72,11 +72,13 @@ class NotificationCollectorService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         AiClient.init(applicationContext)
         PhantomPrefs.onRuleCachesInvalidated = { invalidateRuleCaches() }
     }
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         PhantomPrefs.onRuleCachesInvalidated = null
         isConnected = false
         scope.cancel()
@@ -85,6 +87,7 @@ class NotificationCollectorService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        activeInstance = this
         isConnected = true
         connectTime = System.currentTimeMillis()
         StatsForegroundService.startOrRefresh(applicationContext, force = true)
@@ -93,6 +96,7 @@ class NotificationCollectorService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        if (activeInstance === this) activeInstance = null
         isConnected = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
@@ -289,53 +293,70 @@ class NotificationCollectorService : NotificationListenerService() {
                 return@launch
             }
 
+            val activeAiRules = try {
+                db.aiRuleDao().active()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val indicators = IndicatorExtractor.extract(text)
+            if (IntelClient.isMessageWhitelisted(
+                    sender = title,
+                    packageName = pkg,
+                    appLabel = cachedAppLabel(pkg),
+                    content = text,
+                    aiRules = activeAiRules,
+                    indicators = indicators
+                )
+            ) {
+                db.messageDao().byId(id)?.let { currentMsg ->
+                    db.messageDao().update(
+                        currentMsg.copy(
+                            riskScore = 10,
+                            riskLabel = "safe",
+                            riskReason = "命中白名單規則"
+                        )
+                    )
+                }
+                return@launch
+            }
+
             // 雲端防詐情報預查（零 LLM token，僅送 URL / crypto 地址；ai_rules 白名單優先跳過）
-            if (PhantomPrefs.isIntelEnabled(applicationContext)) {
-                val indicators = IndicatorExtractor.extract(text)
-                if (indicators.isNotEmpty()) {
-                    val activeAiRules = try {
-                        db.aiRuleDao().active()
+            if (PhantomPrefs.isIntelEnabled(applicationContext) && indicators.isNotEmpty()) {
+                val intelResult = try {
+                    IntelClient.checkIndicators(applicationContext, db, indicators)
+                } catch (_: Exception) {
+                    null
+                }
+                if (intelResult != null) {
+                    try {
+                        db.intelDao().putResult(
+                            IntelResultEntity(
+                                messageId = id,
+                                indicatorsSummary = indicators.summaryText(),
+                                isHit = intelResult.isHit,
+                                sourceLabel = intelResult.sourceLabel,
+                                detail = intelResult.detail,
+                                checkedAt = intelResult.checkedAt
+                            )
+                        )
                     } catch (_: Exception) {
-                        emptyList()
                     }
-                    if (!IntelClient.isWhitelisted(indicators, text, activeAiRules)) {
-                        val intelResult = try {
-                            IntelClient.checkIndicators(applicationContext, db, indicators)
-                        } catch (_: Exception) {
-                            null
-                        }
-                        if (intelResult != null) {
-                            try {
-                                db.intelDao().putResult(
-                                    IntelResultEntity(
-                                        messageId = id,
-                                        indicatorsSummary = indicators.summaryText(),
-                                        isHit = intelResult.isHit,
-                                        sourceLabel = intelResult.sourceLabel,
-                                        detail = intelResult.detail,
-                                        checkedAt = intelResult.checkedAt
-                                    )
+                    if (intelResult.isHit) {
+                        val hitReason = "【防詐情報命中：${intelResult.sourceLabel}】${intelResult.detail}"
+                        db.messageDao().byId(id)?.let { currentMsg ->
+                            db.messageDao().update(
+                                currentMsg.copy(
+                                    riskScore = 95,
+                                    riskLabel = "scam",
+                                    riskReason = hitReason
                                 )
-                            } catch (_: Exception) {
-                            }
-                            if (intelResult.isHit) {
-                                val hitReason = "【防詐情報命中：${intelResult.sourceLabel}】${intelResult.detail}"
-                                db.messageDao().byId(id)?.let { currentMsg ->
-                                    db.messageDao().update(
-                                        currentMsg.copy(
-                                            riskScore = 95,
-                                            riskLabel = "scam",
-                                            riskReason = hitReason
-                                        )
-                                    )
-                                }
-                                if (!silentMuted) {
-                                    alertScam(applicationContext, id, pkg, title, hitReason)
-                                    StatsForegroundService.startOrRefresh(applicationContext, force = true)
-                                }
-                                return@launch
-                            }
+                            )
                         }
+                        if (!silentMuted) {
+                            alertScam(applicationContext, id, pkg, title, hitReason)
+                            StatsForegroundService.startOrRefresh(applicationContext, force = true)
+                        }
+                        return@launch
                     }
                 }
             }
@@ -577,6 +598,98 @@ class NotificationCollectorService : NotificationListenerService() {
         @Volatile
         var isConnected: Boolean = false
 
+        @Volatile
+        private var activeInstance: NotificationCollectorService? = null
+
+        sealed class ReplySendResult {
+            data object Success : ReplySendResult()
+            data class Unavailable(val reason: String) : ReplySendResult()
+        }
+
+        fun sendReplyToNotification(
+            context: Context,
+            packageName: String,
+            sender: String,
+            contentSnippet: String,
+            replyText: String
+        ): ReplySendResult {
+            val service = activeInstance
+                ?: return ReplySendResult.Unavailable("通知監聽服務尚未連線，無法取得即時通知，建議開啟原 App 回覆。")
+            val trimmedReply = replyText.trim()
+            if (trimmedReply.isEmpty()) {
+                return ReplySendResult.Unavailable("回覆內容不可為空。")
+            }
+            val active = try {
+                service.activeNotifications?.toList().orEmpty()
+            } catch (_: Exception) {
+                return ReplySendResult.Unavailable("無法讀取目前通知列狀態，建議開啟原 App 回覆。")
+            }
+            val pkgNotifs = active.filter { it.packageName == packageName }
+            if (pkgNotifs.isEmpty()) {
+                return ReplySendResult.Unavailable("該通知已被清除或不在通知列中，無法快速回覆，建議開啟原 App 回覆。")
+            }
+
+            val senderNorm = sender.trim()
+            val snippetNorm = contentSnippet.trim().take(40)
+            var foundMatchingNotifWithoutRemoteInput = false
+
+            val candidates = pkgNotifs.sortedByDescending { sbn ->
+                val extras = sbn.notification?.extras ?: return@sortedByDescending 0
+                val t = (extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                    ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString()
+                    ?: "").trim()
+                val body = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+                    ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+                    ?: "").trim()
+                var score = 0
+                if (senderNorm.isNotEmpty() && t.equals(senderNorm, ignoreCase = true)) score += 10
+                else if (senderNorm.isNotEmpty() && t.contains(senderNorm, ignoreCase = true)) score += 5
+                if (snippetNorm.isNotEmpty() && body.contains(snippetNorm, ignoreCase = true)) score += 4
+                score
+            }
+
+            for (sbn in candidates) {
+                val notif = sbn.notification ?: continue
+                val extras = notif.extras ?: continue
+                val t = (extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                    ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString()
+                    ?: "").trim()
+                val senderMatches = senderNorm.isEmpty() ||
+                    t.equals(senderNorm, ignoreCase = true) ||
+                    t.contains(senderNorm, ignoreCase = true) ||
+                    senderNorm.contains(t, ignoreCase = true)
+                if (!senderMatches && pkgNotifs.size > 1) continue
+
+                val actions = notif.actions ?: emptyArray()
+                val replyAction = actions.firstOrNull { act ->
+                    act.actionIntent != null &&
+                        act.remoteInputs?.any { it.allowFreeFormInput } == true
+                }
+                if (replyAction == null) {
+                    foundMatchingNotifWithoutRemoteInput = true
+                    continue
+                }
+                val remoteInput = replyAction.remoteInputs.first { it.allowFreeFormInput }
+                return try {
+                    val replyIntent = Intent()
+                    val bundle = android.os.Bundle().apply {
+                        putCharSequence(remoteInput.resultKey, trimmedReply)
+                    }
+                    android.app.RemoteInput.addResultsToIntent(arrayOf(remoteInput), replyIntent, bundle)
+                    replyAction.actionIntent.send(context, 0, replyIntent)
+                    ReplySendResult.Success
+                } catch (e: Exception) {
+                    ReplySendResult.Unavailable("傳送快速回覆失敗（${e.message ?: "未知錯誤"}），建議開啟原 App 回覆。")
+                }
+            }
+
+            return if (foundMatchingNotifWithoutRemoteInput) {
+                ReplySendResult.Unavailable("該通知不支援快速回覆（無 RemoteInput），建議開啟原 App 回覆。")
+            } else {
+                ReplySendResult.Unavailable("找不到來自「${sender.ifBlank { packageName }}」的可回覆通知，可能已被清除，建議開啟原 App 回覆。")
+            }
+        }
+
         private const val DEDUP_WINDOW_MS = 10L * 60L * 1000L
         private const val REPLAY_GRACE_MS = 5000L
         private const val MIN_AI_CONTENT_LENGTH = 10
@@ -782,7 +895,8 @@ object AppDatabaseHolder {
                 AppDatabase.MIGRATION_4_5,
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
-                AppDatabase.MIGRATION_7_8
+                AppDatabase.MIGRATION_7_8,
+                AppDatabase.MIGRATION_8_9
             ).addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)
