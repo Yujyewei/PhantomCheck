@@ -1189,7 +1189,7 @@ fun FilterSettingsScreen(
                     Slider(
                         value = chatRagLimit.toFloat(),
                         onValueChange = { raw ->
-                            val stepped = ((raw / 50f).roundToInt() * 50)
+                            val stepped = ((raw / 10f).roundToInt() * 10)
                                 .coerceIn(PhantomPrefs.MIN_CHAT_RAG_MESSAGE_LIMIT, PhantomPrefs.MAX_CHAT_RAG_MESSAGE_LIMIT)
                             if (stepped != chatRagLimit) {
                                 chatRagLimit = stepped
@@ -1197,7 +1197,7 @@ fun FilterSettingsScreen(
                             }
                         },
                         valueRange = PhantomPrefs.MIN_CHAT_RAG_MESSAGE_LIMIT.toFloat()..PhantomPrefs.MAX_CHAT_RAG_MESSAGE_LIMIT.toFloat(),
-                        steps = 14
+                        steps = 74
                     )
 
                     if (dailySummaryEnabled) {

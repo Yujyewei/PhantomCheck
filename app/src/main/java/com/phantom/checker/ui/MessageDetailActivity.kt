@@ -593,6 +593,9 @@ fun MessageDetailScreen(
                                                 result.onSuccess { md ->
                                                     deepAnalysisMarkdown = md
                                                 }.onFailure { err ->
+                                                    if (err.message?.contains("HTTP 413") == true) {
+                                                        PhantomPrefs.refundTodayAiUsage(appCtx)
+                                                    }
                                                     deepAnalysisError = err.message ?: "深度分析失敗"
                                                 }
                                             } catch (_: CancellationException) {

@@ -2,6 +2,23 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 格式，並採用語意化版本控制。
 
+## [1.13.1] - 2026-11-17
+
+### 變更與修正
+- **HTTP 413 Payload 過大防護與自動重試（#122）**：
+  - `AiClient` 各 `HttpException` 分支改為依狀態碼誠實回報（`413` 專屬提示並附上 Provider 原始錯誤訊息，`401/403`、`404`、`422`、`429`、`5xx` 各別明確說明，不再於非認證錯誤誤導「請確認 API Key 或模型設定」）。
+  - `chatAssistant` 遇到 `HTTP 413` 時自動將單次閱讀上限減半（最低 `25` 則）重試一次並誠實標注已縮減閱讀範圍；`MessageDetailActivity` 深度分析若遇 `413` 失敗則透過 `PhantomPrefs.refundTodayAiUsage()` 退還當日額度。
+- **AI 對話多動作解析與誠實錯誤回報（#123）**：
+  - `ChatScreen` 五類動作解析器改為支援多動作與大括號平衡拆解（`splitBalancedJsonObjects`），允許單次回覆同時包含多個獨立動作指令或多個物件；多筆 `whitelist` 提案合併為單張可勾選確認卡逐列顯示並回報每筆結果。
+  - 無效動作（`messageId` 為空、`messageRef` 查無、JSON 損壞或不支援動作）一律插入誠實錯誤訊息，不再靜默丟棄；`cleanReply` 為空且無有效提案時不再 fallback 顯示原始 raw JSON 回覆。
+- **對話數值設定滑桿確認卡（#124）**：
+  - `SettingsCatalog` 新增 `NumericSettingSpec` 與 `NUMERIC_SPECS`（`ai_chat_rag_limit` 50–800 步進 10、`ai_daily_limit` 0–100 步進 10、`notif_throttle` 0–300 步進 10），並將設定頁 `ai_chat_rag_limit` 滑桿對齊步進 10。
+  - `ChatScreen` 新增 `setting_adjust` 動作與滑桿確認卡（支援 Slider 與 `+/-` 微調、超範圍自動夾緊提醒、套用後顯示前→後狀態卡），system prompt 同步附上【可調整數值設定清單】。
+- **設定導覽正確性與全量目錄防編造（#125）**：
+  - 新增 `{"action":"open_setting","settingId":"..."}` 直接開啟 `SettingsActivity` 並定位至目標設定卡；system prompt 附上【全量設定清單摘要】並禁止編造不存在的選單路徑。
+  - 未知 `settingId` fallback 改為以 `SettingsCatalog.keywordSearch` 對全目錄關鍵字比對前 5 筆，無匹配則誠實回報；`setting_candidates` 卡對非開關項目顯示「前往」按鈕而非「開／關」；統一 `SettingsCatalog`「AI 風險分析」措辭。
+- **版號更新**：`versionCode` 16、`versionName` `"1.13.1"`。
+
 ## [1.13.0] - 2026-11-17
 
 ### 新增與強化

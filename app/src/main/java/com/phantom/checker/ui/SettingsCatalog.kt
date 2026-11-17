@@ -23,7 +23,7 @@ object SettingsCatalog {
     val ITEMS: List<SettingSearchItem> = listOf(
         SettingSearchItem("quick_token_saver", "quick", "省 token 模式", "暫停每則 AI 掃描與每日摘要排程，僅命中可疑特徵才分析", listOf("省電", "省錢", "節流", "api", "token", "額度")),
         SettingSearchItem("quick_persistent_notif", "quick", "常駐統計通知", "通知欄即時統計與 App 圖示列", listOf("通知", "常駐", "狀態列", "統計通知", "背景")),
-        SettingSearchItem("quick_ai_risk", "quick", "AI 風險偵測", "自動分析新通知是否為詐騙或可疑訊息", listOf("防詐", "風險", "偵測", "ai", "掃描")),
+        SettingSearchItem("quick_ai_risk", "quick", "AI 風險分析", "自動分析新通知是否為詐騙或可疑訊息", listOf("防詐", "風險", "偵測", "分析", "ai", "掃描")),
         SettingSearchItem("quick_scam_popup", "quick", "詐騙警示彈出通知", "高風險訊息即時彈出警示通知", listOf("詐騙", "警示", "推播", "高風險", "alert")),
         SettingSearchItem("ai_auto_tag", "quick", "每則訊息 AI 智慧掃描", "AI 分析時自動指派「必看／行銷／垃圾通知」等標籤", listOf("標籤", "自動分類", "智慧掃描", "tag")),
         SettingSearchItem("ai_providers", "ai", "多 Provider AI 設定", "管理 OpenAI / Gemini / Groq / 自訂端點與 API Key", listOf("key", "apikey", "模型", "openai", "gemini", "provider", "金鑰"), page = "ApiKeySettingsActivity"),
@@ -173,5 +173,129 @@ object SettingsCatalog {
             val stateStr = if (getBooleanState(appCtx, item.id) == true) "開啟" else "關閉"
             "- id=${item.id} | 名稱=${item.title} | 目前狀態=$stateStr | 說明=${item.description}"
         }
+    }
+
+    data class NumericSettingSpec(
+        val id: String,
+        val title: String,
+        val min: Int,
+        val max: Int,
+        val step: Int,
+        val unit: String,
+        val zeroLabel: String? = null
+    ) {
+        fun clampAndSnap(raw: Int): Pair<Int, Boolean> {
+            val wasClamped = raw < min || raw > max
+            val clamped = raw.coerceIn(min, max)
+            val snapped = if (step > 1) {
+                (((clamped - min + step / 2) / step) * step + min).coerceIn(min, max)
+            } else {
+                clamped
+            }
+            return snapped to wasClamped
+        }
+
+        fun formatValue(value: Int): String =
+            if (value == 0 && zeroLabel != null) zeroLabel else "$value $unit"
+    }
+
+    val NUMERIC_SPECS: List<NumericSettingSpec> = listOf(
+        NumericSettingSpec(
+            id = "ai_chat_rag_limit",
+            title = "AI 助手單次閱讀訊息數",
+            min = PhantomPrefs.MIN_CHAT_RAG_MESSAGE_LIMIT,
+            max = PhantomPrefs.MAX_CHAT_RAG_MESSAGE_LIMIT,
+            step = 10,
+            unit = "則"
+        ),
+        NumericSettingSpec(
+            id = "ai_daily_limit",
+            title = "每日 AI 額度上限",
+            min = 0,
+            max = 100,
+            step = 10,
+            unit = "則",
+            zeroLabel = "不限（0 則）"
+        ),
+        NumericSettingSpec(
+            id = "notif_throttle",
+            title = "同 key 重複節流秒數",
+            min = 0,
+            max = 300,
+            step = 10,
+            unit = "秒",
+            zeroLabel = "0 秒（關閉）"
+        )
+    )
+
+    fun findNumericSpec(id: String): NumericSettingSpec? = NUMERIC_SPECS.firstOrNull { it.id == id }
+
+    fun getNumericValue(ctx: Context, id: String): Int? {
+        val appCtx = ctx.applicationContext
+        return when (id) {
+            "ai_chat_rag_limit" -> PhantomPrefs.getChatRagMessageLimit(appCtx)
+            "ai_daily_limit" -> PhantomPrefs.getDailyAiLimit(appCtx)
+            "notif_throttle" -> PhantomPrefs.getSameKeyThrottleSeconds(appCtx)
+            else -> null
+        }
+    }
+
+    /**
+     * 套用數值設定（走與 SettingsActivity 完全相同的 PhantomPrefs setter）。
+     * 回傳 Triple(before, after, wasClamped)，若 id 不在可調整清單則回傳 null。
+     */
+    fun applyNumericSetting(ctx: Context, id: String, rawValue: Int): Triple<Int, Int, Boolean>? {
+        val spec = findNumericSpec(id) ?: return null
+        val appCtx = ctx.applicationContext
+        val before = getNumericValue(appCtx, id) ?: return null
+        val (target, wasClamped) = spec.clampAndSnap(rawValue)
+        when (id) {
+            "ai_chat_rag_limit" -> PhantomPrefs.setChatRagMessageLimit(appCtx, target)
+            "ai_daily_limit" -> PhantomPrefs.setDailyAiLimit(appCtx, target)
+            "notif_throttle" -> PhantomPrefs.setSameKeyThrottleSeconds(appCtx, target)
+            else -> return null
+        }
+        return Triple(before, target, wasClamped)
+    }
+
+    /** 供 ChatScreen system prompt 動態產生可調整數值設定清單（含範圍與目前值） */
+    fun buildNumericPromptList(ctx: Context): String {
+        val appCtx = ctx.applicationContext
+        return NUMERIC_SPECS.joinToString("\n") { spec ->
+            val current = getNumericValue(appCtx, spec.id) ?: spec.min
+            "- id=${spec.id} | 名稱=${spec.title} | 範圍=${spec.min}–${spec.max}（步進 ${spec.step} ${spec.unit}） | 目前值=${spec.formatValue(current)}"
+        }
+    }
+
+    /** 供 ChatScreen system prompt 動態產生全量設定清單摘要（含非開關項目，避免 AI 編造路徑） */
+    fun buildAllSettingsPromptSummary(): String =
+        ITEMS.joinToString("\n") { item ->
+            "- id=${item.id} | 名稱=${item.title} | 說明=${item.description}"
+        }
+
+    /** 對全 catalog（id / 標題 / 別名 / 說明）進行關鍵字比對，回傳最相關的前 N 筆 */
+    fun keywordSearch(query: String, limit: Int = 5): List<SettingSearchItem> {
+        val tokens = query.trim().lowercase()
+            .split(Regex("[\\s_\\-/、,，]+"))
+            .filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return emptyList()
+        return ITEMS.mapNotNull { item ->
+            val idLower = item.id.lowercase()
+            val titleLower = item.title.lowercase()
+            val descLower = item.description.lowercase()
+            val aliasesLower = item.aliases.map { it.lowercase() }
+            var score = 0
+            tokens.forEach { tok ->
+                if (idLower == tok) score += 10
+                else if (idLower.contains(tok)) score += 4
+                if (titleLower.contains(tok)) score += 6
+                if (aliasesLower.any { it == tok }) score += 6
+                else if (aliasesLower.any { it.contains(tok) }) score += 4
+                if (descLower.contains(tok)) score += 2
+            }
+            if (score > 0) item to score else null
+        }.sortedByDescending { it.second }
+            .take(limit)
+            .map { it.first }
     }
 }
