@@ -37,6 +37,7 @@ object SettingsCatalog {
         SettingSearchItem("ai_auto_reply", "ai", "SMS 自動回覆設定", "開啟 SMS 自動回覆設定頁：啟用開關、回覆時段與回覆範本", listOf("自動回覆", "sms", "簡訊", "回覆", "時段", "reply"), page = "AutoReplySettingsActivity"),
         SettingSearchItem("ai_scam_center", "ai", "詐騙警示中心", "檢視高風險詐騙記錄與處置", listOf("詐騙", "警示", "中心", "高風險", "封鎖"), page = "ScamCenterActivity"),
         SettingSearchItem("ai_alert_keywords", "ai", "即時提醒關鍵字", "設定自訂即時提醒關鍵字，命中時觸發通知提醒", listOf("關鍵字", "提醒", "keyword")),
+        SettingSearchItem("ai_min_trigger_length", "ai", "AI 分析觸發字數門檻", "設定新訊息內容至少達幾字才觸發 AI 分析（1–30 字，預設 10 字）", listOf("字數", "長度", "門檻", "觸發", "最短", "幾個字", "分析字數")),
         SettingSearchItem("notif_style", "notif", "常駐通知樣式", "控制常駐通知為精簡或詳細樣式", listOf("常駐通知", "精簡", "詳細", "樣式")),
         SettingSearchItem("notif_persistent_icons", "notif", "常駐通知顯示 App 圖示條", "於常駐統計通知內顯示最近收到訊息的 App 圖示", listOf("常駐通知", "圖示列", "圖示條", "icon")),
         SettingSearchItem("notif_ongoing", "notif", "記錄持續性通知", "是否記錄媒體播放、下載進度等 ongoing 通知", listOf("持續性", "ongoing", "音樂", "下載")),
@@ -235,6 +236,14 @@ object SettingsCatalog {
             step = 10,
             unit = "秒",
             zeroLabel = "0 秒（關閉）"
+        ),
+        NumericSettingSpec(
+            id = "ai_min_trigger_length",
+            title = "AI 分析觸發字數門檻",
+            min = 1,
+            max = 30,
+            step = 1,
+            unit = "字"
         )
     )
 
@@ -246,6 +255,7 @@ object SettingsCatalog {
             "ai_chat_rag_limit" -> PhantomPrefs.getChatRagMessageLimit(appCtx)
             "ai_daily_limit" -> PhantomPrefs.getDailyAiLimit(appCtx)
             "notif_throttle" -> PhantomPrefs.getSameKeyThrottleSeconds(appCtx)
+            "ai_min_trigger_length" -> PhantomPrefs.getAiMinTriggerLength(appCtx)
             else -> null
         }
     }
@@ -263,6 +273,7 @@ object SettingsCatalog {
             "ai_chat_rag_limit" -> PhantomPrefs.setChatRagMessageLimit(appCtx, target)
             "ai_daily_limit" -> PhantomPrefs.setDailyAiLimit(appCtx, target)
             "notif_throttle" -> PhantomPrefs.setSameKeyThrottleSeconds(appCtx, target)
+            "ai_min_trigger_length" -> PhantomPrefs.setAiMinTriggerLength(appCtx, target)
             else -> return null
         }
         return Triple(before, target, wasClamped)

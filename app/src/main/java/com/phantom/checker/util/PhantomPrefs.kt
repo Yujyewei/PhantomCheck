@@ -975,4 +975,12 @@ object PhantomPrefs {
     fun setGlassStrengthPercent(ctx: Context, percent: Int) {
         prefs(ctx).edit().putInt("glass_strength_percent", percent.coerceIn(0, 100)).apply()
     }
+
+    /** 新訊息 AI 分析觸發字數門檻（1..30，預設 10） */
+    fun getAiMinTriggerLength(ctx: Context): Int =
+        prefs(ctx).getInt("ai_min_trigger_length", 10).coerceIn(1, 30)
+
+    fun setAiMinTriggerLength(ctx: Context, length: Int) {
+        prefs(ctx).edit().putInt("ai_min_trigger_length", length.coerceIn(1, 30)).apply()
+    }
 }

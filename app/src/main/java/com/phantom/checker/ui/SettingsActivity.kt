@@ -337,6 +337,7 @@ fun FilterSettingsScreen(
     var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
     var dailyAiLimit by remember { mutableIntStateOf(PhantomPrefs.getDailyAiLimit(appCtx)) }
     var chatRagLimit by remember { mutableIntStateOf(PhantomPrefs.getChatRagMessageLimit(appCtx)) }
+    var aiMinTriggerLength by remember { mutableIntStateOf(PhantomPrefs.getAiMinTriggerLength(appCtx)) }
     var todayAiUsage by remember { mutableIntStateOf(PhantomPrefs.getTodayAiUsage(appCtx)) }
     var dailySummaryEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryEnabled(appCtx)) }
     var dailySummaryNotifEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryNotifEnabled(appCtx)) }
@@ -1660,6 +1661,30 @@ fun FilterSettingsScreen(
                         },
                         valueRange = PhantomPrefs.MIN_CHAT_RAG_MESSAGE_LIMIT.toFloat()..PhantomPrefs.MAX_CHAT_RAG_MESSAGE_LIMIT.toFloat(),
                         steps = 74
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "AI 分析觸發字數門檻：$aiMinTriggerLength 字",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "新訊息內容至少達此字數才觸發 AI 分析（1–30 字，預設 10 字）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = aiMinTriggerLength.toFloat(),
+                        onValueChange = { raw ->
+                            val stepped = raw.roundToInt().coerceIn(1, 30)
+                            if (stepped != aiMinTriggerLength) {
+                                aiMinTriggerLength = stepped
+                                PhantomPrefs.setAiMinTriggerLength(appCtx, stepped)
+                            }
+                        },
+                        valueRange = 1f..30f,
+                        steps = 28
                     )
 
                     if (dailySummaryEnabled) {

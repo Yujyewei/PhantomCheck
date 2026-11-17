@@ -427,7 +427,7 @@ class NotificationCollectorService : NotificationListenerService() {
             if (shouldRunAi &&
                 !silentMuted &&
                 PhantomPrefs.isAiRiskEnabled(applicationContext) &&
-                text.length >= MIN_AI_CONTENT_LENGTH
+                text.length >= PhantomPrefs.getAiMinTriggerLength(applicationContext)
             ) {
                 enqueueForBatchAnalysis(
                     pkg = pkg,
@@ -846,7 +846,6 @@ class NotificationCollectorService : NotificationListenerService() {
 
         private const val DEDUP_WINDOW_MS = 10L * 60L * 1000L
         private const val REPLAY_GRACE_MS = 5000L
-        private const val MIN_AI_CONTENT_LENGTH = 10
         private const val STATS_RESPAWN_BURST_MS = 400L
         private const val BATCH_COALESCE_MS = 2500L
         private const val BATCH_WINDOW_MS = 60_000L
