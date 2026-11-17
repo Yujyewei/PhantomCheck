@@ -241,7 +241,7 @@ fun ChatAssistantTab(
     var showClearAllSessionsConfirm by remember { mutableStateOf(false) }
     var suggestionChips by remember { mutableStateOf(listOf<String>()) }
     var profiles by remember { mutableStateOf(AiClient.getProfiles(appCtx)) }
-    var activeProfile by remember { mutableStateOf(AiClient.getActiveProfile(appCtx)) }
+    var activeProfile by remember { mutableStateOf(AiClient.getProfileForPurpose(appCtx, com.phantom.checker.util.AiPurpose.CHAT)) }
     var hasApiKey by remember { mutableStateOf(activeProfile != null) }
     var showSuggestions by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var quickCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
@@ -301,7 +301,7 @@ fun ChatAssistantTab(
             sessions = allSessions
             suggestionChips = chips
             val loadedProfiles = AiClient.getProfiles(appCtx)
-            val loadedActive = AiClient.getActiveProfile(appCtx)
+            val loadedActive = AiClient.getProfileForPurpose(appCtx, com.phantom.checker.util.AiPurpose.CHAT)
             profiles = loadedProfiles
             activeProfile = loadedActive
             hasApiKey = loadedActive != null
@@ -335,7 +335,7 @@ fun ChatAssistantTab(
                 showSuggestions = PhantomPrefs.isChatSuggestionsEnabled(appCtx)
                 quickCommands = PhantomPrefs.getQuickChatCommands(appCtx)
                 profiles = AiClient.getProfiles(appCtx)
-                activeProfile = AiClient.getActiveProfile(appCtx)
+                activeProfile = AiClient.getProfileForPurpose(appCtx, com.phantom.checker.util.AiPurpose.CHAT)
                 hasApiKey = activeProfile != null
             }
         }
@@ -1692,10 +1692,10 @@ fun ChatAssistantTab(
                 profiles = profiles,
                 activeProfile = activeProfile,
                 onSelectProfile = { selected ->
-                    AiClient.setActiveProvider(appCtx, selected.id)
+                    PhantomPrefs.setPurposeProfileId(appCtx, com.phantom.checker.util.AiPurpose.CHAT.id, selected.id)
                     activeProfile = selected
                     hasApiKey = true
-                    onShowMessage("已切換模型：${selected.name}・${selected.model}")
+                    onShowMessage("已切換對話模型：${selected.name}・${selected.model}")
                 },
                 modifier = Modifier.weight(1f)
             )
@@ -3443,7 +3443,7 @@ private suspend fun buildRagSystemPrompt(
         if (msgs.isEmpty()) {
             appendLine("【符合條件的訊息節錄】無符合訊息。")
         } else {
-            val contentCap = if (AiClient.isGroqActive(ctx)) 100 else 150
+            val contentCap = if (AiClient.isGroqActive(ctx, com.phantom.checker.util.AiPurpose.CHAT)) 100 else 150
             // 同寄件者相近內容（前 40 字相同）去重合併，保留最新一筆與重複次數
             data class DedupRagEntry(val msg: MessageEntity, var count: Int = 1)
             val dedupMap = LinkedHashMap<String, DedupRagEntry>()
@@ -4406,7 +4406,7 @@ fun AiProviderSwitcherChip(
                 onClick = { expanded = true },
                 label = {
                     Text(
-                        text = "模型：${current.name}・${current.model} ▾",
+                        text = "對話模型：${current.name}・${current.model} ▾",
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

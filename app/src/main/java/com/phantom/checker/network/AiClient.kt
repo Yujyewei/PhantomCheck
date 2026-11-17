@@ -14,6 +14,8 @@ import com.google.gson.reflect.TypeToken
 import com.phantom.checker.BuildConfig
 import com.phantom.checker.data.AiRuleEntity
 import com.phantom.checker.data.TagEntity
+import com.phantom.checker.util.AiPurpose
+import com.phantom.checker.util.PhantomPrefs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -360,6 +362,33 @@ object AiClient {
         )
     }
 
+    fun getProfileForPurpose(context: Context? = null, purpose: AiPurpose): AiProviderProfile? {
+        val ctx = resolveContext(context)
+        if (ctx != null) {
+            val mappedId = PhantomPrefs.getPurposeProfileId(ctx, purpose.id)
+            if (!mappedId.isNullOrBlank()) {
+                val matched = getProfiles(ctx).firstOrNull { it.id == mappedId && it.apiKey.isNotBlank() }
+                if (matched != null) {
+                    runCatching {
+                        android.util.Log.d(
+                            "PhantomAiPurpose",
+                            "purpose=${purpose.id} -> profile=${matched.name} (${matched.model})"
+                        )
+                    }
+                    return matched
+                }
+            }
+        }
+        return getActiveProfile(ctx).also { fallback ->
+            runCatching {
+                android.util.Log.d(
+                    "PhantomAiPurpose",
+                    "purpose=${purpose.id} -> default(${fallback?.name ?: "none"} / ${fallback?.model ?: "none"})"
+                )
+            }
+        }
+    }
+
     fun getKeySource(context: Context): ApiKeySource {
         val profiles = getProfiles(context)
         if (profiles.any { it.apiKey.isNotBlank() }) return ApiKeySource.ENCRYPTED_PREFS
@@ -589,7 +618,7 @@ object AiClient {
         }
 
         try {
-            val profile = getActiveProfile(context) ?: return@withContext null
+            val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS) ?: return@withContext null
             val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
             val systemPrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
             val safeSender = sanitizeForPrompt(sender)
@@ -656,7 +685,7 @@ object AiClient {
         tags: List<TagEntity>,
         context: Context
     ): Result<AiAnalysisResult> = withContext(Dispatchers.IO) {
-        val profile = getActiveProfile(context)
+        val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS)
             ?: return@withContext Result.failure(IllegalStateException("尚未設定 AI Provider API Key，請先至「多 Provider AI 與 API Key 設定」新增金鑰。"))
         val activeTags = tags.filter { it.isAiManaged }
         if (activeTags.isEmpty()) {
@@ -727,7 +756,7 @@ object AiClient {
         val activeRules = rules.filter { it.isEnabled }.take(20)
         val batchItems = items.take(5)
         try {
-            val profile = getActiveProfile(context) ?: return@withContext emptyMap()
+            val profile = getProfileForPurpose(context, AiPurpose.MESSAGE_ANALYSIS) ?: return@withContext emptyMap()
             val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
             val singlePrompt = buildSystemPrompt(activeTags, activeRules, enableAutoTag)
             val batchSystemPrompt = buildString {
@@ -981,8 +1010,10 @@ object AiClient {
             profile.id.contains("groq", ignoreCase = true) ||
             profile.name.contains("groq", ignoreCase = true)
 
-    fun isGroqActive(context: Context?): Boolean =
-        getActiveProfile(context)?.let { isGroqProvider(it) } == true
+    fun isGroqActive(context: Context?, purpose: AiPurpose? = null): Boolean {
+        val profile = if (purpose != null) getProfileForPurpose(context, purpose) else getActiveProfile(context)
+        return profile?.let { isGroqProvider(it) } == true
+    }
 
     private fun logTokenEstimate(
         tag: String,
@@ -1091,7 +1122,7 @@ object AiClient {
         imageDataUri: String? = null,
         onRebuildSystemPromptForRetry: (suspend (newRagLimit: Int) -> String)? = null
     ): Result<String> = withContext(Dispatchers.IO) {
-        val profile = getActiveProfile(context)
+        val profile = getProfileForPurpose(context, AiPurpose.CHAT)
             ?: return@withContext Result.failure(IllegalStateException("尚未設定 AI Provider API Key"))
         if (!imageDataUri.isNullOrBlank() && !isVisionModelSupported(profile)) {
             return@withContext Result.failure(
@@ -1298,7 +1329,7 @@ object AiClient {
     ): String? = withContext(Dispatchers.IO) {
         var result: String? = null
         try {
-            val profile = getActiveProfile(context) ?: return@withContext null
+            val profile = getProfileForPurpose(context, AiPurpose.DAILY_SUMMARY) ?: return@withContext null
             val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
             val auth = "Bearer ${profile.apiKey.trim()}"
             var currentPrompt = prompt
@@ -1356,7 +1387,7 @@ object AiClient {
         prompt: String,
         context: Context? = null
     ): Result<String> = withContext(Dispatchers.IO) {
-        val profile = getActiveProfile(context)
+        val profile = getProfileForPurpose(context, AiPurpose.WEEKLY_SUMMARY)
             ?: return@withContext Result.failure(IllegalStateException("尚未設定 AI Provider API Key"))
         val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
         val auth = "Bearer ${profile.apiKey.trim()}"
@@ -1418,7 +1449,7 @@ object AiClient {
         intelSummary: String? = null,
         context: Context? = null
     ): Result<String> = withContext(Dispatchers.IO) {
-        val profile = getActiveProfile(context)
+        val profile = getProfileForPurpose(context, AiPurpose.DEEP_ANALYSIS)
             ?: return@withContext Result.failure(IllegalStateException("尚未設定 AI Provider API Key"))
         val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
         val auth = "Bearer ${profile.apiKey.trim()}"
@@ -1510,7 +1541,7 @@ object AiClient {
         if (cleanQuery.isEmpty()) {
             return@withContext Result.failure(IllegalArgumentException("請輸入搜尋內容"))
         }
-        val profile = getActiveProfile(context)
+        val profile = getProfileForPurpose(context, AiPurpose.SETTINGS_SEARCH)
             ?: return@withContext Result.failure(IllegalStateException("尚未設定 AI Provider API Key，請改用本地關鍵字搜尋"))
         val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
         val auth = "Bearer ${profile.apiKey.trim()}"

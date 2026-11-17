@@ -31,9 +31,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +69,8 @@ import com.phantom.checker.network.AiProviderPreset
 import com.phantom.checker.network.AiProviderProfile
 import com.phantom.checker.network.ApiKeySource
 import com.phantom.checker.ui.components.pressableScale
+import com.phantom.checker.util.AiPurpose
+import com.phantom.checker.util.PhantomPrefs
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -95,9 +100,12 @@ fun ApiKeySettingsScreen(onBack: () -> Unit) {
     val activeId = remember(version) { AiClient.getActiveProviderId(appCtx) }
     val keySource = remember(version) { AiClient.getKeySource(appCtx) }
     val activeProfile = remember(version) { AiClient.getActiveProfile(appCtx) }
+    val purposeMap = remember(version) { PhantomPrefs.getPurposeModelMap(appCtx) }
 
     var testingProfileId by remember { mutableStateOf<String?>(null) }
     var testResults by remember { mutableStateOf<Map<String, Pair<Boolean, String>>>(emptyMap()) }
+    var testingPurposeId by remember { mutableStateOf<String?>(null) }
+    var purposeTestResults by remember { mutableStateOf<Map<String, Pair<Boolean, String>>>(emptyMap()) }
 
     var showEditorDialog by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<AiProviderProfile?>(null) }
@@ -297,6 +305,48 @@ fun ApiKeySettingsScreen(onBack: () -> Unit) {
                                 version++
                                 scope.launch {
                                     snackbarHostState.showSnackbar("已刪除 ${profile.name}")
+                                }
+                            }
+                        )
+                    }
+
+                    item(key = "purpose_models_card") {
+                        PurposeModelsCard(
+                            profiles = profiles,
+                            activeProfile = activeProfile,
+                            purposeMap = purposeMap,
+                            testingPurposeId = testingPurposeId,
+                            purposeTestResults = purposeTestResults,
+                            glassState = glassState,
+                            onSelectPurposeProfile = { purpose, profileId ->
+                                PhantomPrefs.setPurposeProfileId(appCtx, purpose.id, profileId)
+                                purposeTestResults = purposeTestResults - purpose.id
+                                version++
+                                val label = if (profileId == null) {
+                                    "跟隨預設"
+                                } else {
+                                    profiles.firstOrNull { it.id == profileId }?.name ?: "已選取"
+                                }
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("${purpose.label} 已設為：$label")
+                                }
+                            },
+                            onTestPurpose = { purpose ->
+                                if (testingPurposeId != null) return@PurposeModelsCard
+                                val target = AiClient.getProfileForPurpose(appCtx, purpose)
+                                if (target == null) {
+                                    purposeTestResults = purposeTestResults + (purpose.id to (false to "尚未設定可用 Provider"))
+                                    return@PurposeModelsCard
+                                }
+                                scope.launch {
+                                    testingPurposeId = purpose.id
+                                    val res = AiClient.testConnection(target)
+                                    testingPurposeId = null
+                                    val mapped = res.fold(
+                                        onSuccess = { msg -> true to msg },
+                                        onFailure = { err -> false to (err.message ?: "連線失敗") }
+                                    )
+                                    purposeTestResults = purposeTestResults + (purpose.id to mapped)
                                 }
                             }
                         )
@@ -619,4 +669,133 @@ private fun ProviderEditorDialog(
             }
         }
     )
+}
+
+@Composable
+private fun PurposeModelsCard(
+    profiles: List<AiProviderProfile>,
+    activeProfile: AiProviderProfile?,
+    purposeMap: Map<String, String>,
+    testingPurposeId: String?,
+    purposeTestResults: Map<String, Pair<Boolean, String>>,
+    glassState: HazeState,
+    onSelectPurposeProfile: (AiPurpose, String?) -> Unit,
+    onTestPurpose: (AiPurpose) -> Unit
+) {
+    PhantomGlassCard(
+        glassState = glassState,
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = 20.dp,
+        contentPadding = 14.dp
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "用途模型（7 類分流）",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "可為各功能獨立指派模型；未設定時自動跟隨上方預設 Provider。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            AiPurpose.entries.forEachIndexed { idx, purpose ->
+                if (idx > 0) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                }
+                val mappedId = purposeMap[purpose.id]
+                val mappedProfile = mappedId?.let { id -> profiles.firstOrNull { it.id == id } }
+                val effectiveProfile = mappedProfile ?: activeProfile
+                val displayModel = if (mappedProfile != null) {
+                    "${mappedProfile.name}（${mappedProfile.model}）"
+                } else {
+                    "跟隨預設（${activeProfile?.model ?: "未設定"}）"
+                }
+                var dropdownExpanded by remember(purpose.id) { mutableStateOf(false) }
+                val isTesting = testingPurposeId == purpose.id
+                val testResult = purposeTestResults[purpose.id]
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = purpose.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            OutlinedButton(
+                                onClick = { dropdownExpanded = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "$displayModel ▾",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = dropdownExpanded,
+                                onDismissRequest = { dropdownExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = (if (mappedProfile == null) "✓ " else "   ") + "跟隨預設",
+                                            fontWeight = if (mappedProfile == null) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        dropdownExpanded = false
+                                        onSelectPurposeProfile(purpose, null)
+                                    }
+                                )
+                                profiles.forEach { profile ->
+                                    val isSelected = mappedProfile?.id == profile.id
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = (if (isSelected) "✓ " else "   ") + "${profile.name}（${profile.model}）",
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            dropdownExpanded = false
+                                            onSelectPurposeProfile(purpose, profile.id)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        TextButton(
+                            onClick = { onTestPurpose(purpose) },
+                            enabled = !isTesting && effectiveProfile != null
+                        ) {
+                            if (isTesting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text("測試連線", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+
+                    if (testResult != null) {
+                        val (ok, msg) = testResult
+                        Text(
+                            text = if (ok) "✓ $msg" else "✕ $msg",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
