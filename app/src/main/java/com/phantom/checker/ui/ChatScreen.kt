@@ -56,6 +56,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -106,6 +107,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /** 自製 Sparkle 圖示（無需額外 material-icons-extended 依賴） */
 val AutoAwesomeIcon: ImageVector by lazy {
@@ -180,6 +182,7 @@ fun ChatAssistantTab(
     var pendingWhitelist by remember { mutableStateOf<PendingWhitelistAction?>(null) }
     var appliedSettingCards by remember { mutableStateOf<List<AppliedSettingCardState>>(emptyList()) }
     var pendingSettingCandidates by remember { mutableStateOf<PendingSettingCandidatesState?>(null) }
+    var pendingSettingAdjustQueue by remember { mutableStateOf<List<PendingSettingAdjustState>>(emptyList()) }
     var pendingMsgActionQueue by remember { mutableStateOf<List<PendingMessageActionState>>(emptyList()) }
 
     suspend fun loadSessionsAndSuggestions() {
@@ -457,11 +460,44 @@ fun ChatAssistantTab(
                     .take(6)
                     .takeIf { it.isNotEmpty() }
 
+                // 解析數值調整提案（setting_adjust）
+                val resolvedAdjustStates = mutableListOf<PendingSettingAdjustState>()
+                parsed.adjustProposals.forEach { ap ->
+                    val spec = SettingsCatalog.findNumericSpec(ap.settingId)
+                    val item = SettingsCatalog.findById(ap.settingId)
+                    if (spec != null && item != null) {
+                        val currentVal = SettingsCatalog.getNumericValue(appCtx, spec.id) ?: spec.min
+                        val (snappedVal, wasClamped) = spec.clampAndSnap(ap.value)
+                        resolvedAdjustStates.add(
+                            PendingSettingAdjustState(
+                                sessionId = sessionId,
+                                item = item,
+                                spec = spec,
+                                currentValue = currentVal,
+                                proposedValue = snappedVal,
+                                wasClamped = wasClamped
+                            )
+                        )
+                    } else if (item != null) {
+                        newAppliedSettings.add(
+                            AppliedSettingCardState(
+                                sessionId = sessionId,
+                                item = item,
+                                beforeEnabled = null,
+                                afterEnabled = null
+                            )
+                        )
+                    } else {
+                        resolutionErrors.add("找不到名為「${ap.settingId}」的可調整數值設定。")
+                    }
+                }
+
                 val allActionErrors = (parsed.invalidActionErrors + resolutionErrors).distinct()
                 val hasValidAction = parsed.ruleProposals.isNotEmpty() ||
                     dedupedWhitelistItems.isNotEmpty() ||
                     newAppliedSettings.isNotEmpty() ||
                     !resolvedCandidates.isNullOrEmpty() ||
+                    resolvedAdjustStates.isNotEmpty() ||
                     resolvedMsgActions.isNotEmpty()
 
                 val storedReply = parsed.cleanReply.ifBlank {
@@ -501,6 +537,9 @@ fun ChatAssistantTab(
                         sessionId = sessionId,
                         items = dedupedWhitelistItems
                     )
+                }
+                if (resolvedAdjustStates.isNotEmpty()) {
+                    pendingSettingAdjustQueue = resolvedAdjustStates
                 }
                 if (resolvedMsgActions.isNotEmpty()) {
                     pendingMsgActionQueue = resolvedMsgActions
@@ -1061,8 +1100,9 @@ fun ChatAssistantTab(
                     val sessionAppliedCards = appliedSettingCards.filter { it.sessionId == currentSessionId }
                     items(
                         items = sessionAppliedCards,
-                        key = { "applied_setting_${it.item.id}_${it.beforeEnabled}_${it.afterEnabled}" }
+                        key = { "applied_setting_${it.item.id}_${it.beforeEnabled}_${it.afterEnabled}_${it.beforeText}_${it.afterText}" }
                     ) { card ->
+                        val isApplied = card.afterEnabled != null || card.afterText != null
                         PhantomGlassCard(
                             glassState = glassState,
                             modifier = Modifier.fillMaxWidth(),
@@ -1070,7 +1110,7 @@ fun ChatAssistantTab(
                             contentPadding = 12.dp
                         ) {
                             Text(
-                                text = if (card.afterEnabled != null) "設定已更新" else "需至設定頁調整",
+                                text = if (isApplied) "設定已更新" else "需至設定頁調整",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -1092,6 +1132,14 @@ fun ChatAssistantTab(
                                 val afterStr = if (card.afterEnabled) "開啟" else "關閉"
                                 Text(
                                     text = "狀態變更：$beforeStr → $afterStr",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else if (card.beforeText != null && card.afterText != null) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "數值變更：${card.beforeText} → ${card.afterText}",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.primary
@@ -1118,6 +1166,145 @@ fun ChatAssistantTab(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text("前往設定頁")
+                                }
+                            }
+                        }
+                    }
+
+                    pendingSettingAdjustQueue.firstOrNull { it.sessionId == currentSessionId }?.let { adjState ->
+                        item(key = "pending_setting_adjust_card") {
+                            val spec = adjState.spec
+                            var draftValue by remember(adjState) { mutableStateOf(adjState.proposedValue) }
+                            val stepsCount = ((spec.max - spec.min) / spec.step - 1).coerceAtLeast(0)
+                            PhantomGlassCard(
+                                glassState = glassState,
+                                modifier = Modifier.fillMaxWidth(),
+                                cornerRadius = 18.dp,
+                                contentPadding = 12.dp
+                            ) {
+                                Text(
+                                    text = "調整數值設定：${adjState.item.title}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "目前值：${spec.formatValue(adjState.currentValue)}　→　目標值：${spec.formatValue(draftValue)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (adjState.wasClamped) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = "⚠ 原建議值超出範圍（${spec.min}–${spec.max}），已自動調整為 ${spec.formatValue(adjState.proposedValue)}。",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                Slider(
+                                    value = draftValue.toFloat(),
+                                    onValueChange = { raw ->
+                                        val (snapped, _) = spec.clampAndSnap(raw.roundToInt())
+                                        draftValue = snapped
+                                    },
+                                    valueRange = spec.min.toFloat()..spec.max.toFloat(),
+                                    steps = stepsCount
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedButton(
+                                        enabled = draftValue > spec.min,
+                                        onClick = {
+                                            val (snapped, _) = spec.clampAndSnap(draftValue - spec.step)
+                                            draftValue = snapped
+                                        }
+                                    ) {
+                                        Text("-${spec.step}")
+                                    }
+                                    Text(
+                                        text = "範圍 ${spec.min}–${spec.max}（步進 ${spec.step}）",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    OutlinedButton(
+                                        enabled = draftValue < spec.max,
+                                        onClick = {
+                                            val (snapped, _) = spec.clampAndSnap(draftValue + spec.step)
+                                            draftValue = snapped
+                                        }
+                                    ) {
+                                        Text("+${spec.step}")
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val sid = adjState.sessionId
+                                            pendingSettingAdjustQueue = pendingSettingAdjustQueue.drop(1)
+                                            scope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    AppDatabaseHolder.db(appCtx).chatDao().insertMessage(
+                                                        ChatMessageEntity(
+                                                            sessionId = sid,
+                                                            role = ChatMessageEntity.ROLE_ASSISTANT,
+                                                            content = "已取消調整「${adjState.item.title}」。",
+                                                            createdAt = System.currentTimeMillis()
+                                                        )
+                                                    )
+                                                }
+                                                loadMessages(sid)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("取消")
+                                    }
+                                    Button(
+                                        onClick = {
+                                            val sid = adjState.sessionId
+                                            val targetVal = draftValue
+                                            pendingSettingAdjustQueue = pendingSettingAdjustQueue.drop(1)
+                                            val applied = SettingsCatalog.applyNumericSetting(appCtx, spec.id, targetVal)
+                                            if (applied != null) {
+                                                val (beforeVal, afterVal, clamped) = applied
+                                                appliedSettingCards = appliedSettingCards + AppliedSettingCardState(
+                                                    sessionId = sid,
+                                                    item = adjState.item,
+                                                    beforeEnabled = null,
+                                                    afterEnabled = null,
+                                                    beforeText = spec.formatValue(beforeVal),
+                                                    afterText = spec.formatValue(afterVal)
+                                                )
+                                                val note = if (clamped || adjState.wasClamped) "（已自動對齊至允許範圍）" else ""
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        AppDatabaseHolder.db(appCtx).chatDao().insertMessage(
+                                                            ChatMessageEntity(
+                                                                sessionId = sid,
+                                                                role = ChatMessageEntity.ROLE_ASSISTANT,
+                                                                content = "已將「${adjState.item.title}」調整為 ${spec.formatValue(afterVal)}$note。",
+                                                                createdAt = System.currentTimeMillis()
+                                                            )
+                                                        )
+                                                    }
+                                                    loadMessages(sid)
+                                                }
+                                                onShowMessage("${adjState.item.title}已調整為 ${spec.formatValue(afterVal)}")
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("確認調整")
+                                    }
                                 }
                             }
                         }
@@ -1683,9 +1870,14 @@ private suspend fun buildRagSystemPrompt(
         appendLine("```json")
         appendLine("{\"action\":\"setting_candidates\",\"candidates\":[\"id1\",\"id2\"]}")
         appendLine("```")
-        appendLine("注意：非 boolean 設定（如每日 AI 額度、單次閱讀訊息數、保留天數、API Key、自動回覆設定頁等）不可使用 setting_toggle，請直接請使用者至設定頁調整。")
+        appendLine("注意：僅【可開關設定清單】內的項目可使用 setting_toggle；若要調整【可調整數值設定清單】內的數值（如單次閱讀訊息數、每日 AI 額度、同 key 節流秒數），請輸出：")
+        appendLine("```json")
+        appendLine("{\"action\":\"setting_adjust\",\"settingId\":\"<可調整數值設定id>\",\"value\":350}")
+        appendLine("```")
         appendLine("【可開關設定清單】")
         appendLine(SettingsCatalog.buildToggleablePromptList(ctx))
+        appendLine("【可調整數值設定清單】")
+        appendLine(SettingsCatalog.buildNumericPromptList(ctx))
         appendLine()
         appendLine("僅當「使用者本人」明確要求對訊息執行操作時，才在回覆末尾附上一行 JSON 指令區塊（系統會先顯示確認卡讓使用者確認後才執行）：")
         appendLine("1. 回覆訊息（透過通知快速回覆）：")
@@ -1768,11 +1960,27 @@ private data class SettingCandidatesProposal(
     val candidateIds: List<String>
 )
 
+private data class SettingAdjustProposal(
+    val settingId: String,
+    val value: Int
+)
+
+private data class PendingSettingAdjustState(
+    val sessionId: Long,
+    val item: SettingSearchItem,
+    val spec: SettingsCatalog.NumericSettingSpec,
+    val currentValue: Int,
+    val proposedValue: Int,
+    val wasClamped: Boolean
+)
+
 private data class AppliedSettingCardState(
     val sessionId: Long,
     val item: SettingSearchItem,
     val beforeEnabled: Boolean?,
-    val afterEnabled: Boolean?
+    val afterEnabled: Boolean?,
+    val beforeText: String? = null,
+    val afterText: String? = null
 )
 
 private data class PendingSettingCandidatesState(
@@ -1812,6 +2020,7 @@ private data class ParsedChatActions(
     val whitelistProposals: List<WhitelistActionProposal> = emptyList(),
     val toggleProposals: List<SettingToggleProposal> = emptyList(),
     val candidatesProposals: List<SettingCandidatesProposal> = emptyList(),
+    val adjustProposals: List<SettingAdjustProposal> = emptyList(),
     val messageActions: List<MessageActionProposal> = emptyList(),
     val invalidActionErrors: List<String> = emptyList()
 )
@@ -1826,6 +2035,7 @@ private val KNOWN_CHAT_ACTIONS = setOf(
     "whitelist",
     "setting_toggle",
     "setting_candidates",
+    "setting_adjust",
     "reply_message",
     "open_app",
     "delete_message",
@@ -1879,6 +2089,7 @@ private fun parseSingleActionJson(
     whitelistOut: MutableList<WhitelistActionProposal>,
     toggleOut: MutableList<SettingToggleProposal>,
     candidatesOut: MutableList<SettingCandidatesProposal>,
+    adjustOut: MutableList<SettingAdjustProposal>,
     messageOut: MutableList<MessageActionProposal>,
     errorsOut: MutableList<String>
 ): Boolean {
@@ -1940,6 +2151,17 @@ private fun parseSingleActionJson(
                 candidatesOut.add(SettingCandidatesProposal(ids))
             }
         }
+        "setting_adjust" -> {
+            val id = obj.get("settingId")?.takeIf { !it.isJsonNull }?.asString?.trim().orEmpty()
+            val valueInt = obj.get("value")?.takeIf { !it.isJsonNull }?.let { el ->
+                runCatching { el.asDouble.roundToInt() }.getOrNull()
+            }
+            if (id.isBlank() || valueInt == null) {
+                errorsOut.add("調整數值設定動作缺少有效的 settingId 或整數 value。")
+            } else {
+                adjustOut.add(SettingAdjustProposal(id, valueInt))
+            }
+        }
         "reply_message", "open_app", "delete_message", "tag_message" -> {
             val ids = mutableListOf<Long>()
             obj.get("messageId")?.takeIf { !it.isJsonNull }?.let { el ->
@@ -1987,6 +2209,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
     val whitelists = mutableListOf<WhitelistActionProposal>()
     val toggles = mutableListOf<SettingToggleProposal>()
     val candidates = mutableListOf<SettingCandidatesProposal>()
+    val adjusts = mutableListOf<SettingAdjustProposal>()
     val msgActions = mutableListOf<MessageActionProposal>()
     val errors = mutableListOf<String>()
 
@@ -2002,7 +2225,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
             errors.add("動作指令格式無法解析，請重新嘗試。")
         } else {
             objs.forEach { (_, jsonStr) ->
-                parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, msgActions, errors)
+                parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, adjusts, msgActions, errors)
             }
         }
     }
@@ -2020,7 +2243,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
     val inlineRangesToRemove = mutableListOf<IntRange>()
     splitBalancedJsonObjects(withoutFenced).forEach { (range, jsonStr) ->
         if (jsonStr.contains("\"action\"", ignoreCase = true)) {
-            val handled = parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, msgActions, errors)
+            val handled = parseSingleActionJson(jsonStr, rules, whitelists, toggles, candidates, adjusts, msgActions, errors)
             if (handled) {
                 inlineRangesToRemove.add(range)
             }
@@ -2042,6 +2265,7 @@ private fun parseAllChatActions(rawReply: String): ParsedChatActions {
         whitelistProposals = whitelists,
         toggleProposals = toggles,
         candidatesProposals = candidates,
+        adjustProposals = adjusts,
         messageActions = msgActions,
         invalidActionErrors = errors.distinct()
     )
