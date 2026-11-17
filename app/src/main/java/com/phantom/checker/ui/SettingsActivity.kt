@@ -1,17 +1,33 @@
 package com.phantom.checker.ui
 
+import android.app.DownloadManager
 import android.app.NotificationManager
 import android.app.TimePickerDialog
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.core.content.ContextCompat
+import com.phantom.checker.util.AppUpdateHelper
+import com.phantom.checker.util.BackgroundImageHelper
+import com.phantom.checker.util.BackgroundLayer
+import com.phantom.checker.util.UpdateCheckResult
+import java.io.File
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -1121,6 +1137,175 @@ fun FilterSettingsScreen(
                                 label = { Text("12 小時制（下午 02:30）") }
                             )
                         }
+
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                        Text("背景圖片", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "未設定專屬背景時會自動沿用全域背景，選圖後將降採樣並儲存至本機私有空間。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        var pickingLayer by remember { mutableStateOf<BackgroundLayer?>(null) }
+                        var bgUiVersion by remember { mutableIntStateOf(ThemePreferences.getBackgroundVersion()) }
+                        var bgStatusMsg by remember { mutableStateOf<String?>(null) }
+                        val bgPickerLauncher = rememberLauncherForActivityResult(
+                            contract = ActivityResultContracts.PickVisualMedia()
+                        ) { uri ->
+                            val targetLayer = pickingLayer
+                            pickingLayer = null
+                            if (uri != null && targetLayer != null) {
+                                scope.launch {
+                                    val res = BackgroundImageHelper.saveBackgroundFromUri(appCtx, targetLayer, uri)
+                                    res.onSuccess {
+                                        ThemePreferences.bumpBackgroundVersion()
+                                        bgUiVersion = ThemePreferences.getBackgroundVersion()
+                                        bgStatusMsg = "已設定「${targetLayer.label}」"
+                                    }.onFailure { err ->
+                                        bgStatusMsg = err.message ?: "圖片處理失敗"
+                                    }
+                                }
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            BackgroundLayer.entries.forEach { layer ->
+                                val hasBg = remember(bgUiVersion, layer) {
+                                    PhantomPrefs.hasBackgroundImage(appCtx, layer) &&
+                                        BackgroundImageHelper.backgroundFile(appCtx, layer).exists()
+                                }
+                                var thumb by remember(bgUiVersion, layer, hasBg) {
+                                    mutableStateOf<ImageBitmap?>(null)
+                                }
+                                LaunchedEffect(bgUiVersion, layer, hasBg) {
+                                    thumb = if (hasBg) {
+                                        BackgroundImageHelper.loadPreviewThumbnail(
+                                            BackgroundImageHelper.backgroundFile(appCtx, layer)
+                                        )
+                                    } else {
+                                        null
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    if (thumb != null) {
+                                        Image(
+                                            bitmap = thumb!!,
+                                            contentDescription = layer.label,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = layer.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = if (hasBg) "已自訂" else if (layer == BackgroundLayer.GLOBAL) "預設純色" else "沿用全域背景",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            pickingLayer = layer
+                                            bgPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }
+                                    ) {
+                                        Text("選擇圖片")
+                                    }
+                                    if (hasBg) {
+                                        TextButton(
+                                            onClick = {
+                                                BackgroundImageHelper.removeBackground(appCtx, layer)
+                                                ThemePreferences.bumpBackgroundVersion()
+                                                bgUiVersion = ThemePreferences.getBackgroundVersion()
+                                                bgStatusMsg = "已移除「${layer.label}」"
+                                            }
+                                        ) {
+                                            Text("移除")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        bgStatusMsg?.let { msg ->
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        val anyBgSet = remember(bgUiVersion) {
+                            BackgroundImageHelper.hasAnyBackground(appCtx)
+                        }
+                        if (anyBgSet) {
+                            Spacer(Modifier.height(12.dp))
+                            var scrimPref by remember { mutableIntStateOf(ThemePreferences.getBackgroundScrimPercent(appCtx)) }
+                            val isDarkNow = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                            val effectiveScrim = if (scrimPref < 0) (if (isDarkNow) 60 else 35) else scrimPref
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (scrimPref < 0) "背景暗色遮罩強度（預設 $effectiveScrim%）" else "背景暗色遮罩強度（$effectiveScrim%）",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                if (scrimPref >= 0) {
+                                    TextButton(
+                                        onClick = {
+                                            scrimPref = -1
+                                            ThemePreferences.setBackgroundScrimPercent(appCtx, -1)
+                                        }
+                                    ) {
+                                        Text("重設預設")
+                                    }
+                                }
+                            }
+                            Slider(
+                                value = effectiveScrim.toFloat(),
+                                onValueChange = { v ->
+                                    val pct = v.roundToInt().coerceIn(0, 100)
+                                    scrimPref = pct
+                                    ThemePreferences.setBackgroundScrimPercent(appCtx, pct)
+                                },
+                                valueRange = 0f..100f
+                            )
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+                        var glassStrength by remember { mutableIntStateOf(ThemePreferences.getGlassStrengthPercent(appCtx)) }
+                        Text(
+                            text = if (glassStrength == 0) "玻璃卡片強度（預設）" else "玻璃卡片強度（+$glassStrength%）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Slider(
+                            value = glassStrength.toFloat(),
+                            onValueChange = { v ->
+                                val pct = v.roundToInt().coerceIn(0, 100)
+                                glassStrength = pct
+                                ThemePreferences.setGlassStrengthPercent(appCtx, pct)
+                            },
+                            valueRange = 0f..100f
+                        )
                     }
                 }
             }
@@ -2924,6 +3109,113 @@ private fun AboutSettingsCard(
         }
     }
 
+    val scope = rememberCoroutineScope()
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var updateResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    var activeDownloadId by remember { mutableStateOf<Long?>(null) }
+    var downloadedApkFile by remember { mutableStateOf<File?>(null) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadStatusText by remember { mutableStateOf<String?>(null) }
+    var showUnknownSourceDialog by remember { mutableStateOf(false) }
+
+    fun attemptInstall(file: File) {
+        if (!file.exists() || file.length() <= 0L) {
+            downloadedApkFile = null
+            downloadStatusText = "更新檔已被移除，請重新下載。"
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ctx.packageManager.canRequestPackageInstalls()) {
+            showUnknownSourceDialog = true
+            downloadStatusText = "已下載完成，授權「安裝未知應用程式」後即可安裝。"
+            return
+        }
+        AppUpdateHelper.launchApkInstaller(ctx, file).onFailure { err ->
+            downloadStatusText = err.message ?: "無法開啟系統安裝器，請前往檔案管理員手動安裝。"
+        }
+    }
+
+    DisposableEffect(activeDownloadId) {
+        val dlId = activeDownloadId
+        if (dlId == null) {
+            onDispose { }
+        } else {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+                    val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                    if (completedId != dlId) return
+                    val dm = ctx.getSystemService(DownloadManager::class.java) ?: return
+                    val query = DownloadManager.Query().setFilterById(dlId)
+                    dm.query(query)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                            val reasonIdx = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
+                            val status = if (statusIdx >= 0) cursor.getInt(statusIdx) else -1
+                            val reason = if (reasonIdx >= 0) cursor.getInt(reasonIdx) else -1
+                            isDownloading = false
+                            activeDownloadId = null
+                            when (status) {
+                                DownloadManager.STATUS_SUCCESSFUL -> {
+                                    val file = downloadedApkFile
+                                    if (file != null && file.exists()) {
+                                        downloadStatusText = "下載完成：${file.name}"
+                                        attemptInstall(file)
+                                    } else {
+                                        downloadedApkFile = null
+                                        downloadStatusText = "下載完成但找不到更新檔，請重新下載。"
+                                    }
+                                }
+                                DownloadManager.STATUS_FAILED -> {
+                                    downloadedApkFile = null
+                                    downloadStatusText = "下載失敗（錯誤碼 $reason），請重試或前往 GitHub 下載。"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            ContextCompat.registerReceiver(ctx, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
+            onDispose {
+                try {
+                    ctx.unregisterReceiver(receiver)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    if (showUnknownSourceDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnknownSourceDialog = false },
+            title = { Text("需要授權安裝權限") },
+            text = { Text("Android 需要您允許「幻訊」安裝未知來源應用程式，才能啟動系統 APK 安裝器。前往設定授權後，返回此頁面點擊「安裝更新」即可繼續。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnknownSourceDialog = false
+                        try {
+                            ctx.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:${ctx.packageName}")
+                                )
+                            )
+                        } catch (_: Exception) {
+                        }
+                    }
+                ) {
+                    Text("前往設定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnknownSourceDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     CollapsibleSettingsCard(
         title = "關於",
         expanded = expanded,
@@ -2944,7 +3236,7 @@ private fun AboutSettingsCard(
         )
         Spacer(Modifier.height(2.dp))
         Text(
-            text = "作者：邱柏鈞（eric11yothelast-Hwanshen）",
+            text = "作者：幻神（Hwanshen）",
             style = MaterialTheme.typography.bodyMedium
         )
         Spacer(Modifier.height(8.dp))
@@ -2953,6 +3245,144 @@ private fun AboutSettingsCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = {
+                if (!isCheckingUpdate) {
+                    isCheckingUpdate = true
+                    downloadStatusText = null
+                    scope.launch {
+                        updateResult = AppUpdateHelper.checkLatestRelease(ctx)
+                        isCheckingUpdate = false
+                    }
+                }
+            },
+            enabled = !isCheckingUpdate,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (isCheckingUpdate) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("檢查更新中…")
+            } else {
+                Text("檢查更新")
+            }
+        }
+        when (val res = updateResult) {
+            is UpdateCheckResult.UpToDate -> {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "已是最新版本（${res.currentVersion}）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            is UpdateCheckResult.UpdateAvailable -> {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "最新版本 ${res.latestVersion}（${res.publishedDate}）",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(6.dp))
+                if (res.apkDownloadUrl != null) {
+                    val readyFile = downloadedApkFile
+                    if (readyFile != null && readyFile.exists() && !isDownloading) {
+                        Button(
+                            onClick = { attemptInstall(readyFile) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("安裝更新（v${res.latestVersion}）")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                if (!isDownloading) {
+                                    val enqueued = AppUpdateHelper.enqueueApkDownload(
+                                        ctx = ctx,
+                                        version = res.latestVersion,
+                                        downloadUrl = res.apkDownloadUrl
+                                    )
+                                    if (enqueued != null) {
+                                        activeDownloadId = enqueued.first
+                                        downloadedApkFile = enqueued.second
+                                        isDownloading = true
+                                        downloadStatusText = "正在下載 app-release-${res.latestVersion}.apk…"
+                                    } else {
+                                        downloadStatusText = "無法啟動系統下載管理員，請前往 GitHub 下載。"
+                                    }
+                                }
+                            },
+                            enabled = !isDownloading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isDownloading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("下載中…")
+                            } else {
+                                Text("下載更新")
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "此發佈版本未附帶 APK 資產，請前往 GitHub 下載。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = {
+                            try {
+                                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(res.htmlUrl)))
+                            } catch (_: Exception) {
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("前往 GitHub")
+                    }
+                }
+            }
+            is UpdateCheckResult.Error -> {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = res.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(AppUpdateHelper.REPO_RELEASES_URL)))
+                        } catch (_: Exception) {
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("前往 GitHub")
+                }
+            }
+            null -> Unit
+        }
+        downloadStatusText?.let { msg ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = msg,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = {
