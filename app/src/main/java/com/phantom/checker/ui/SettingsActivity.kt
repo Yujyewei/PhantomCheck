@@ -317,9 +317,11 @@ fun FilterSettingsScreen(
     var aiRiskEnabled by remember { mutableStateOf(PhantomPrefs.isAiRiskEnabled(appCtx)) }
     var aiAutoTagEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoTagEnabled(appCtx)) }
     var chatSuggestionsEnabled by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
+    var quickCommandDefaultMode by remember { mutableStateOf(PhantomPrefs.getQuickCommandDefaultMode(appCtx)) }
+    var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
     var dailyAiLimit by remember { mutableIntStateOf(PhantomPrefs.getDailyAiLimit(appCtx)) }
     var chatRagLimit by remember { mutableIntStateOf(PhantomPrefs.getChatRagMessageLimit(appCtx)) }
-    val todayAiUsage = remember { PhantomPrefs.getTodayAiUsage(appCtx) }
+    var todayAiUsage by remember { mutableIntStateOf(PhantomPrefs.getTodayAiUsage(appCtx)) }
     var dailySummaryEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryEnabled(appCtx)) }
     var dailySummaryNotifEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryNotifEnabled(appCtx)) }
     var summaryHour by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryHour(appCtx)) }
@@ -404,6 +406,7 @@ fun FilterSettingsScreen(
     val fontScaleMode = ThemePreferences.getFontScaleMode(appCtx)
     var hapticEnabled by remember { mutableStateOf(PhantomPrefs.isHapticFeedbackEnabled(appCtx)) }
     val glassEffectEnabled = ThemePreferences.isGlassEffectEnabled(appCtx)
+    var tabBarDisplayMode by remember { mutableStateOf(PhantomPrefs.getTabBarDisplayMode(appCtx)) }
 
     // 保持運作狀態
     var listenerEnabled by remember {
@@ -436,6 +439,8 @@ fun FilterSettingsScreen(
                 aiRiskEnabled = PhantomPrefs.isAiRiskEnabled(appCtx)
                 aiAutoTagEnabled = PhantomPrefs.isAiAutoTagEnabled(appCtx)
                 chatSuggestionsEnabled = PhantomPrefs.isChatSuggestionsEnabled(appCtx)
+                quickCommandDefaultMode = PhantomPrefs.getQuickCommandDefaultMode(appCtx)
+                quickChatCommands = PhantomPrefs.getQuickChatCommands(appCtx)
                 chatRagLimit = PhantomPrefs.getChatRagMessageLimit(appCtx)
                 dailySummaryEnabled = PhantomPrefs.isDailySummaryEnabled(appCtx)
                 dailySummaryNotifEnabled = PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
@@ -786,7 +791,7 @@ fun FilterSettingsScreen(
                     .phantomGlassSource(glassState)
                     .padding(padding)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -1139,17 +1144,262 @@ fun FilterSettingsScreen(
                     ) {
                         Text("多 Provider AI 與 API Key 設定")
                     }
+                    Spacer(Modifier.height(8.dp))
+
+                    var tagDispatchTesting by remember { mutableStateOf(false) }
+                    var tagDispatchResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+                    val remainingQuotaText = if (dailyAiLimit <= 0) {
+                        "不限"
+                    } else {
+                        "${(dailyAiLimit - todayAiUsage).coerceAtLeast(0)} / $dailyAiLimit 則"
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            enabled = !tagDispatchTesting,
+                            onClick = {
+                                if (!PhantomPrefs.canUseAiTodayAndIncrement(appCtx)) {
+                                    tagDispatchResult = false to "今日 AI 額度已達上限（$dailyAiLimit 則），無法執行測試。"
+                                    return@OutlinedButton
+                                }
+                                todayAiUsage = PhantomPrefs.getTodayAiUsage(appCtx)
+                                tagDispatchTesting = true
+                                tagDispatchResult = null
+                                scope.launch {
+                                    val allTags = withContext(Dispatchers.IO) {
+                                        AppDatabaseHolder.db(appCtx).tagDao().all()
+                                    }
+                                    val res = AiClient.testAutoTagDispatch(allTags, appCtx)
+                                    tagDispatchTesting = false
+                                    res.onSuccess { analysis ->
+                                        val tagMap = allTags.associateBy { it.id }
+                                        val tagNames = analysis.tagIds.mapNotNull { tagMap[it]?.name }
+                                        val tagStr = if (tagNames.isEmpty()) "（未指派標籤）" else tagNames.joinToString("、")
+                                        tagDispatchResult = true to "測試成功：風險=${analysis.riskLabel} (${analysis.riskScore})｜標籤=$tagStr\n理由：${analysis.riskReason}"
+                                    }.onFailure { err ->
+                                        PhantomPrefs.refundTodayAiUsage(appCtx)
+                                        todayAiUsage = PhantomPrefs.getTodayAiUsage(appCtx)
+                                        tagDispatchResult = false to (err.message ?: "測試失敗，請檢查網路或 API Key 設定。")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.pressableScale()
+                        ) {
+                            Text(if (tagDispatchTesting) "測試中..." else "AI 標籤分發測試")
+                        }
+                        Text(
+                            text = "計入每日額度（剩餘：$remainingQuotaText）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    tagDispatchResult?.let { (ok, msg) ->
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (ok) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            } else {
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (ok) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(10.dp))
 
                     SettingSwitchRow(
-                        title = "AI 助手建議問題",
-                        subtitle = "在 AI 助手分頁顯示快速提問與昨日簡報建議",
+                        title = "AI 助手常用指令選單",
+                        subtitle = "在 AI 助手輸入列 + 選單顯示常用指令（關閉後僅保留圖片上傳）",
                         checked = chatSuggestionsEnabled,
                         onCheckedChange = { checked ->
                             chatSuggestionsEnabled = checked
                             PhantomPrefs.setChatSuggestionsEnabled(appCtx, checked)
                         }
                     )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    var showAddQuickCommandDialog by remember { mutableStateOf(false) }
+                    Text(
+                        text = "AI 助手常用指令預設模式",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "設定點擊常用指令時的預設行為（每則指令亦可個別調整）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = quickCommandDefaultMode == "direct",
+                            onClick = {
+                                quickCommandDefaultMode = "direct"
+                                PhantomPrefs.setQuickCommandDefaultMode(appCtx, "direct")
+                            },
+                            label = { Text("直接執行") }
+                        )
+                        FilterChip(
+                            selected = quickCommandDefaultMode == "prefill",
+                            onClick = {
+                                quickCommandDefaultMode = "prefill"
+                                PhantomPrefs.setQuickCommandDefaultMode(appCtx, "prefill")
+                            },
+                            label = { Text("預輸入") }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "自訂常用指令（${quickChatCommands.size} 則）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        TextButton(onClick = { showAddQuickCommandDialog = true }) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("新增指令")
+                        }
+                    }
+                    if (quickChatCommands.isEmpty()) {
+                        Text(
+                            text = "尚未自訂指令，可在這裡新增或在 AI 助手輸入「加入常用指令：…」",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            quickChatCommands.forEach { cmd ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = cmd.label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = cmd.prompt,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        FilterChip(
+                                            selected = cmd.mode == "direct",
+                                            onClick = {
+                                                val nextMode = if (cmd.mode == "direct") "prefill" else "direct"
+                                                val updated = quickChatCommands.map {
+                                                    if (it.id == cmd.id) it.copy(mode = nextMode) else it
+                                                }
+                                                PhantomPrefs.saveQuickChatCommands(appCtx, updated)
+                                                quickChatCommands = PhantomPrefs.getQuickChatCommands(appCtx)
+                                            },
+                                            label = { Text(if (cmd.mode == "direct") "直接執行" else "預輸入") }
+                                        )
+                                        IconButton(
+                                            onClick = {
+                                                PhantomPrefs.deleteQuickChatCommand(appCtx, cmd.id)
+                                                quickChatCommands = PhantomPrefs.getQuickChatCommands(appCtx)
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "刪除指令",
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (showAddQuickCommandDialog) {
+                        var draftLabel by remember { mutableStateOf("") }
+                        var draftPrompt by remember { mutableStateOf("") }
+                        var draftMode by remember { mutableStateOf(quickCommandDefaultMode) }
+                        AlertDialog(
+                            onDismissRequest = { showAddQuickCommandDialog = false },
+                            title = { Text("新增常用指令") },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = draftLabel,
+                                        onValueChange = { draftLabel = it },
+                                        label = { Text("指令名稱") },
+                                        placeholder = { Text("例如：開啟昨日簡報") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = draftPrompt,
+                                        onValueChange = { draftPrompt = it },
+                                        label = { Text("指令內容") },
+                                        placeholder = { Text("例如：請幫我整理昨日簡報") },
+                                        maxLines = 3,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(
+                                            selected = draftMode == "direct",
+                                            onClick = { draftMode = "direct" },
+                                            label = { Text("直接執行") }
+                                        )
+                                        FilterChip(
+                                            selected = draftMode == "prefill",
+                                            onClick = { draftMode = "prefill" },
+                                            label = { Text("預輸入") }
+                                        )
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    enabled = draftLabel.isNotBlank() || draftPrompt.isNotBlank(),
+                                    onClick = {
+                                        val finalLabel = draftLabel.trim().ifBlank { draftPrompt.trim().take(16) }
+                                        val finalPrompt = draftPrompt.trim().ifBlank { finalLabel }
+                                        PhantomPrefs.addQuickChatCommand(appCtx, finalLabel, finalPrompt, draftMode)
+                                        quickChatCommands = PhantomPrefs.getQuickChatCommands(appCtx)
+                                        showAddQuickCommandDialog = false
+                                    }
+                                ) {
+                                    Text("新增")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showAddQuickCommandDialog = false }) {
+                                    Text("取消")
+                                }
+                            }
+                        )
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     Text(
@@ -1936,6 +2186,26 @@ fun FilterSettingsScreen(
                             ThemePreferences.setGlassEffectEnabled(appCtx, checked)
                         }
                     )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text("底部分頁欄顯示模式", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        text = "標準（預設）／縮小（80% 高度與圖示）／自動隱藏（向下捲動隱藏、向上捲動或點底部浮現）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.phantom.checker.util.TabBarDisplayMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = tabBarDisplayMode == mode,
+                                onClick = {
+                                    tabBarDisplayMode = mode
+                                    PhantomPrefs.setTabBarDisplayMode(appCtx, mode)
+                                },
+                                label = { Text(mode.label) }
+                            )
+                        }
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
                     Text(
@@ -2598,11 +2868,12 @@ private fun CollapsibleSettingsCard(
                 }
             ),
         cornerRadius = 20.dp,
-        contentPadding = 14.dp
+        contentPadding = 16.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .clickable(onClick = onToggle),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -2633,11 +2904,12 @@ private fun CollapsibleSettingsCard(
             }
             Icon(
                 imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                contentDescription = if (expanded) "收合" else "展開"
+                contentDescription = if (expanded) "收合" else "展開",
+                modifier = Modifier.size(24.dp)
             )
         }
         AnimatedVisibility(visible = expanded) {
-            Column(modifier = Modifier.padding(top = 10.dp)) {
+            Column(modifier = Modifier.padding(top = 12.dp)) {
                 content()
             }
         }
@@ -2652,7 +2924,10 @@ private fun SettingSwitchRow(
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2679,6 +2954,7 @@ private fun FilterRuleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically

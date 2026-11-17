@@ -13,11 +13,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -98,6 +106,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -135,6 +147,7 @@ import com.phantom.checker.util.MuteMode
 import com.phantom.checker.util.PhantomPrefs
 import com.phantom.checker.util.ShareCardReportData
 import com.phantom.checker.util.StatsShareCardGenerator
+import com.phantom.checker.util.TabBarDisplayMode
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -379,6 +392,26 @@ private fun PhantomCheckApp(
         }
     }
 
+    var tabBarDisplayMode by remember { mutableStateOf(PhantomPrefs.getTabBarDisplayMode(appCtx)) }
+    var tabBarVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(selectedTab, tabBarDisplayMode) {
+        tabBarVisible = true
+    }
+    val tabBarScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (tabBarDisplayMode == TabBarDisplayMode.AUTO_HIDE) {
+                    if (available.y < -12f) {
+                        tabBarVisible = false
+                    } else if (available.y > 12f) {
+                        tabBarVisible = true
+                    }
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     // 回到前景時重新檢查權限與偏好，不再自動把全部訊息標已讀
     val lifecycleOwner = ctx as? LifecycleOwner
     DisposableEffect(lifecycleOwner) {
@@ -390,6 +423,7 @@ private fun PhantomCheckApp(
                 oemAutostartConfirmed = PhantomPrefs.isOemAutostartConfirmed(appCtx)
                 favoritePackages = PhantomPrefs.getFavoriteApps(appCtx)
                 mutedPackages = PhantomPrefs.getMutedApps(appCtx)
+                tabBarDisplayMode = PhantomPrefs.getTabBarDisplayMode(appCtx)
                 val completedNow = PhantomPrefs.isOnboardingCompleted(appCtx)
                 if (onboardingCompleted && !completedNow) {
                     onboardingCompleted = false
@@ -1147,6 +1181,7 @@ private fun PhantomCheckApp(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
+            modifier = Modifier.nestedScroll(tabBarScrollConnection),
             bottomBar = {
                 if (isMultiSelectMode) {
                     Surface(
@@ -1205,44 +1240,53 @@ private fun PhantomCheckApp(
                         }
                     }
                 } else {
-                    LiquidGlassTabBar(
-                        tabCount = MainTab.entries.size,
-                        selectedTabIndex = selectedTab.ordinal,
-                        glassState = glassState,
-                        onSelect = { index ->
-                            haptic(HapticFeedbackType.TextHandleMove)
-                            selectedTab = MainTab.entries[index]
-                        },
-                        tabs = {
-                            MainTab.entries.forEach { tab ->
-                                val icon = when (tab) {
-                                    MainTab.MESSAGES -> Icons.Default.Email
-                                    MainTab.ASSISTANT -> AutoAwesomeIcon
-                                    MainTab.SCAMS -> Icons.Default.Warning
-                                    MainTab.STATS -> Icons.Default.Info
+                    val isCompactTabBar = tabBarDisplayMode == TabBarDisplayMode.COMPACT
+                    AnimatedVisibility(
+                        visible = tabBarDisplayMode != TabBarDisplayMode.AUTO_HIDE || tabBarVisible,
+                        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                    ) {
+                        LiquidGlassTabBar(
+                            tabCount = MainTab.entries.size,
+                            selectedTabIndex = selectedTab.ordinal,
+                            glassState = glassState,
+                            compact = isCompactTabBar,
+                            onSelect = { index ->
+                                haptic(HapticFeedbackType.TextHandleMove)
+                                selectedTab = MainTab.entries[index]
+                            },
+                            tabs = {
+                                MainTab.entries.forEach { tab ->
+                                    val icon = when (tab) {
+                                        MainTab.MESSAGES -> Icons.Default.Email
+                                        MainTab.ASSISTANT -> AutoAwesomeIcon
+                                        MainTab.SCAMS -> Icons.Default.Warning
+                                        MainTab.STATS -> Icons.Default.Info
+                                    }
+                                    val itemModifier = if (tab == MainTab.ASSISTANT) {
+                                        Modifier
+                                            .weight(1f)
+                                            .onGloballyPositioned { coords ->
+                                                targetBounds = targetBounds + (OnboardingTargets.AI_ASSISTANT_TAB to coords.boundsInRoot())
+                                            }
+                                    } else {
+                                        Modifier.weight(1f)
+                                    }
+                                    LiquidGlassTabBarItem(
+                                        selected = selectedTab == tab,
+                                        onClick = {
+                                            haptic(HapticFeedbackType.TextHandleMove)
+                                            selectedTab = tab
+                                        },
+                                        icon = icon,
+                                        label = tab.title,
+                                        modifier = itemModifier,
+                                        compact = isCompactTabBar
+                                    )
                                 }
-                                val itemModifier = if (tab == MainTab.ASSISTANT) {
-                                    Modifier
-                                        .weight(1f)
-                                        .onGloballyPositioned { coords ->
-                                            targetBounds = targetBounds + (OnboardingTargets.AI_ASSISTANT_TAB to coords.boundsInRoot())
-                                        }
-                                } else {
-                                    Modifier.weight(1f)
-                                }
-                                LiquidGlassTabBarItem(
-                                    selected = selectedTab == tab,
-                                    onClick = {
-                                        haptic(HapticFeedbackType.TextHandleMove)
-                                        selectedTab = tab
-                                    },
-                                    icon = icon,
-                                    label = tab.title,
-                                    modifier = itemModifier
-                                )
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
@@ -1254,48 +1298,54 @@ private fun PhantomCheckApp(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 頂部標題列：搜尋＋重新整理＋設定齒輪
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // 頂部標題列：搜尋＋重新整理＋設定齒輪（切到 AI 助手分頁時平滑隱藏，改由分頁內提供入口）
+            AnimatedVisibility(
+                visible = selectedTab != MainTab.ASSISTANT,
+                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
             ) {
-                Text(
-                    text = "幻訊 PhantomCheck",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = {
-                        showSearchBar = !showSearchBar
-                        if (!showSearchBar) {
-                            searchQuery = ""
-                            searchRiskFilter = SearchRiskFilter.ALL
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "幻訊 PhantomCheck",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = {
+                            showSearchBar = !showSearchBar
+                            if (!showSearchBar) {
+                                searchQuery = ""
+                                searchRiskFilter = SearchRiskFilter.ALL
+                            }
+                        }) {
+                            Icon(
+                                imageVector = if (showSearchBar) Icons.Default.Clear else Icons.Default.Search,
+                                contentDescription = "搜尋"
+                            )
                         }
-                    }) {
-                        Icon(
-                            imageVector = if (showSearchBar) Icons.Default.Clear else Icons.Default.Search,
-                            contentDescription = "搜尋"
-                        )
-                    }
-                    IconButton(onClick = { refreshTrigger++ }) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "重新整理"
-                        )
-                    }
-                    IconButton(onClick = {
-                        ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "設定"
-                        )
+                        IconButton(onClick = { refreshTrigger++ }) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "重新整理"
+                            )
+                        }
+                        IconButton(onClick = {
+                            ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "設定"
+                            )
+                        }
                     }
                 }
             }
@@ -1501,6 +1551,18 @@ private fun PhantomCheckApp(
                         glassState = glassState,
                         onShowMessage = { msg ->
                             scope.launch { snackbarHostState.showSnackbar(msg) }
+                        },
+                        isSearchActive = showSearchBar,
+                        onToggleSearch = {
+                            showSearchBar = !showSearchBar
+                            if (!showSearchBar) {
+                                searchQuery = ""
+                                searchRiskFilter = SearchRiskFilter.ALL
+                            }
+                        },
+                        onRefresh = { refreshTrigger++ },
+                        onOpenSettings = {
+                            ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
                         }
                     )
                     MainTab.SCAMS -> ScamsTab(
@@ -1526,6 +1588,18 @@ private fun PhantomCheckApp(
             }
         }
     }
+
+        if (tabBarDisplayMode == TabBarDisplayMode.AUTO_HIDE && !tabBarVisible && !isMultiSelectMode) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures { tabBarVisible = true }
+                    }
+            )
+        }
 
         if (!onboardingCompleted) {
             OnboardingOverlay(
@@ -1630,7 +1704,10 @@ private fun SearchResultsSection(
                         Text(if (isMultiSelectMode) "完成" else "選取")
                     }
                 }
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     items(results, key = { it.id }) { m ->
                         val matchedKeywords = if (m.isFiltered) {
                             activeFilterKeywords.filter { kw ->
@@ -2204,7 +2281,7 @@ private fun MessagesHomeTab(
                             }
                         }
                     }
-                    items(filteredMessages, key = { it.id }) { m ->
+                    items(filteredMessages, key = { it.id }, contentType = { "message_card" }) { m ->
                         val checked = m.id in selectedIds
                         val msgTags = messageTagsMap[m.id].orEmpty()
                         Row(
@@ -2292,7 +2369,10 @@ private fun ScamsTab(
                 )
             }
             else -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     items(scamMessages, key = { it.id }) { m ->
                         MessageCard(
                             message = m,
@@ -2393,7 +2473,7 @@ private fun StatsTab(
         )
     }
 
-    val tokenSaverOn = PhantomPrefs.isTokenSaverEnabled(appCtx)
+    val tokenSaverOn = remember { PhantomPrefs.isTokenSaverEnabled(appCtx) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

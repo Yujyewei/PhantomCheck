@@ -243,6 +243,8 @@ class StatsForegroundService : Service() {
                     snap.scam,
                     snap.recentPackages()
                 )
+                com.phantom.checker.widget.RiskActionWidgetProvider.updateAllIfChanged(applicationContext)
+                com.phantom.checker.widget.ReminderWidgetProvider.updateAllIfChanged(applicationContext)
 
                 val newSig = RefreshSignature(
                     today = snap.today,
@@ -275,6 +277,7 @@ class StatsForegroundService : Service() {
                 } else {
                     cachedStripPackages = emptyList()
                     cachedStripBitmap = null
+                    lastStripBitmap = null
                 }
 
                 lastToday = snap.today
@@ -317,6 +320,7 @@ class StatsForegroundService : Service() {
     private fun stopForegroundCompat() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         isForegroundStarted = false
+        lastStripBitmap = null
     }
 
     companion object {

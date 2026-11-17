@@ -12,6 +12,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.LruCache
 import com.phantom.checker.R
+import com.phantom.checker.data.AiRuleEntity
 import com.phantom.checker.data.AppCategoryRuleEntity
 import com.phantom.checker.data.AppDatabase
 import com.phantom.checker.data.FilterRule
@@ -22,6 +23,7 @@ import com.phantom.checker.data.TagEntity
 import com.phantom.checker.network.AiClient
 import com.phantom.checker.network.IndicatorExtractor
 import com.phantom.checker.network.IntelClient
+import com.phantom.checker.ui.MainActivity
 import com.phantom.checker.ui.MessageDetailActivity
 import com.phantom.checker.ui.ScamCenterActivity
 import com.phantom.checker.util.MuteMode
@@ -254,17 +256,41 @@ class NotificationCollectorService : NotificationListenerService() {
                 )
             )
 
-            // App 分類標籤（零 token 規則式，insert 後直接打標籤）
-            val appCatRules = cachedAppCategoryRules(db, pkg)
-            if (appCatRules.isNotEmpty()) {
-                val catRefs = appCatRules.map { rule ->
+            // 使用者標籤記憶規則（確定性、零 LLM token，優先序高於 App 分類與 AI 標籤）
+            val userTagRules = try {
+                db.userTagRuleDao().active()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val matchedUserTagRules = com.phantom.checker.util.TagRuleEngine.evaluateTagRules(
+                rules = userTagRules,
+                packageName = pkg,
+                appLabel = cachedAppLabel(pkg),
+                sender = title,
+                content = text
+            )
+            if (matchedUserTagRules.isNotEmpty()) {
+                val userRefs = matchedUserTagRules.map { it.targetTagId }.distinct().map { tagId ->
                     MessageTagCrossRef(
                         messageId = id,
-                        tagId = rule.tagId,
-                        source = MessageTagCrossRef.SOURCE_AUTO
+                        tagId = tagId,
+                        source = MessageTagCrossRef.SOURCE_USER_RULE
                     )
                 }
-                db.tagDao().addTagsToMessageBatch(catRefs)
+                db.tagDao().addTagsToMessageBatch(userRefs)
+            } else {
+                // App 分類標籤（零 token 規則式，僅在未命中使用者標籤規則時套用）
+                val appCatRules = cachedAppCategoryRules(db, pkg)
+                if (appCatRules.isNotEmpty()) {
+                    val catRefs = appCatRules.map { rule ->
+                        MessageTagCrossRef(
+                            messageId = id,
+                            tagId = rule.tagId,
+                            source = MessageTagCrossRef.SOURCE_AUTO
+                        )
+                    }
+                    db.tagDao().addTagsToMessageBatch(catRefs)
+                }
             }
 
             if (!silentMuted) {
@@ -294,7 +320,7 @@ class NotificationCollectorService : NotificationListenerService() {
             }
 
             val activeAiRules = try {
-                db.aiRuleDao().active()
+                cachedActiveAiRules(db)
             } catch (_: Exception) {
                 emptyList()
             }
@@ -427,7 +453,7 @@ class NotificationCollectorService : NotificationListenerService() {
         val db = AppDatabaseHolder.db(applicationContext)
         val enableAutoTag = PhantomPrefs.isEffectiveAiAutoTagEnabled(applicationContext)
         val aiTags = if (enableAutoTag) db.tagDao().aiManagedTags() else emptyList()
-        val aiRules = db.aiRuleDao().active()
+        val aiRules = cachedActiveAiRules(db)
 
         val results = AiClient.analyzeMessageBatch(
             items = items,
@@ -436,7 +462,33 @@ class NotificationCollectorService : NotificationListenerService() {
             context = applicationContext,
             rules = aiRules
         )
-        if (results.isEmpty()) return
+        if (results.isEmpty()) {
+            PhantomPrefs.refundTodayAiUsage(applicationContext)
+            if (enableAutoTag) {
+                // 自動降回 App 分類標籤（不中斷訊息入庫與風險流程）
+                val appCatRules = cachedAppCategoryRules(db, pkg)
+                if (appCatRules.isNotEmpty()) {
+                    items.forEach { item ->
+                        val existing = db.tagDao().crossRefsForMessage(item.messageId)
+                        if (existing.isEmpty()) {
+                            val refs = appCatRules.map { rule ->
+                                MessageTagCrossRef(
+                                    messageId = item.messageId,
+                                    tagId = rule.tagId,
+                                    source = MessageTagCrossRef.SOURCE_AUTO
+                                )
+                            }
+                            db.tagDao().addTagsToMessageBatch(refs)
+                        }
+                    }
+                }
+                if (AiClient.getActiveProfile(applicationContext) != null) {
+                    recordAndMaybeNotifyAiTagFailure(applicationContext)
+                }
+            }
+            return
+        }
+        resetAiTagFailureCount(applicationContext)
 
         var hasNewScam = false
         results.forEach { (msgId, result) ->
@@ -449,14 +501,21 @@ class NotificationCollectorService : NotificationListenerService() {
                 )
             )
             if (enableAutoTag && result.tagIds.isNotEmpty()) {
-                val refs = result.tagIds.map { tagId ->
-                    MessageTagCrossRef(
-                        messageId = msgId,
-                        tagId = tagId,
-                        source = MessageTagCrossRef.SOURCE_AUTO
-                    )
+                val existingRefs = db.tagDao().crossRefsForMessage(msgId)
+                val hasHigherPriorityTag = existingRefs.any {
+                    it.source == MessageTagCrossRef.SOURCE_MANUAL ||
+                        it.source == MessageTagCrossRef.SOURCE_USER_RULE
                 }
-                db.tagDao().addTagsToMessageBatch(refs)
+                if (!hasHigherPriorityTag) {
+                    val refs = result.tagIds.map { tagId ->
+                        MessageTagCrossRef(
+                            messageId = msgId,
+                            tagId = tagId,
+                            source = MessageTagCrossRef.SOURCE_AUTO
+                        )
+                    }
+                    db.tagDao().addTagsToMessageBatch(refs)
+                }
             }
             if (result.riskLabel == "scam") {
                 hasNewScam = true
@@ -594,6 +653,58 @@ class NotificationCollectorService : NotificationListenerService() {
         }
     }
 
+    private fun aiTagFailurePrefs(ctx: Context) =
+        ctx.getSharedPreferences("phantom_ai_tag_status", Context.MODE_PRIVATE)
+
+    private fun resetAiTagFailureCount(ctx: Context) {
+        val prefs = aiTagFailurePrefs(ctx)
+        if (prefs.getInt("consecutive_failures", 0) != 0) {
+            prefs.edit().putInt("consecutive_failures", 0).apply()
+        }
+    }
+
+    private fun recordAndMaybeNotifyAiTagFailure(ctx: Context) {
+        val prefs = aiTagFailurePrefs(ctx)
+        val count = prefs.getInt("consecutive_failures", 0) + 1
+        val now = System.currentTimeMillis()
+        val lastNotifAt = prefs.getLong("last_failure_notif_at", 0L)
+        val cooldownMs = 6L * 3600_000L
+        // 三重防噪音：同批合併＋首次失敗靜默（連續第 2 次起才發）＋6 小時冷卻期
+        if (count >= 2 && (now - lastNotifAt) >= cooldownMs) {
+            prefs.edit()
+                .putInt("consecutive_failures", count)
+                .putLong("last_failure_notif_at", now)
+                .apply()
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val chId = "ai_tag_status"
+            nm.createNotificationChannel(
+                NotificationChannel(chId, "AI 標籤狀態通知", NotificationManager.IMPORTANCE_LOW)
+            )
+            val openAppIntent = PendingIntent.getActivity(
+                ctx,
+                NotifIds.AI_TAG_FAILURE,
+                Intent(ctx, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notif = Notification.Builder(ctx, chId)
+                .setSmallIcon(R.drawable.ic_stat_phantom)
+                .setContentTitle("AI 標籤暫時無法套用")
+                .setContentText("已先以 App 分類處理；請檢查網路或 AI Provider 設定。")
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(openAppIntent)
+                .build()
+            try {
+                nm.notify(NotifIds.AI_TAG_FAILURE, notif)
+            } catch (_: SecurityException) {
+            }
+        } else {
+            prefs.edit().putInt("consecutive_failures", count).apply()
+        }
+    }
+
     companion object {
         @Volatile
         var isConnected: Boolean = false
@@ -701,12 +812,14 @@ class NotificationCollectorService : NotificationListenerService() {
 
         private val ruleCacheLock = Any()
         private var cachedFilterRules: Pair<Long, List<FilterRule>>? = null
+        private var cachedAiRules: Pair<Long, List<AiRuleEntity>>? = null
         private val cachedAppCatRules = object : LruCache<String, Pair<Long, List<AppCategoryRuleEntity>>>(64) {}
         private var cachedAlertKeywordsPair: Pair<Long, List<String>>? = null
 
         fun invalidateRuleCaches() {
             synchronized(ruleCacheLock) {
                 cachedFilterRules = null
+                cachedAiRules = null
                 cachedAppCatRules.evictAll()
                 cachedAlertKeywordsPair = null
             }
@@ -723,6 +836,21 @@ class NotificationCollectorService : NotificationListenerService() {
             val fresh = db.filterDao().active()
             synchronized(ruleCacheLock) {
                 cachedFilterRules = System.currentTimeMillis() to fresh
+            }
+            return fresh
+        }
+
+        private suspend fun cachedActiveAiRules(db: AppDatabase): List<AiRuleEntity> {
+            val now = System.currentTimeMillis()
+            synchronized(ruleCacheLock) {
+                val entry = cachedAiRules
+                if (entry != null && (now - entry.first) < RULE_CACHE_TTL_MS) {
+                    return entry.second
+                }
+            }
+            val fresh = db.aiRuleDao().active()
+            synchronized(ruleCacheLock) {
+                cachedAiRules = System.currentTimeMillis() to fresh
             }
             return fresh
         }
@@ -896,7 +1024,8 @@ object AppDatabaseHolder {
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
-                AppDatabase.MIGRATION_8_9
+                AppDatabase.MIGRATION_8_9,
+                AppDatabase.MIGRATION_9_10
             ).addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)

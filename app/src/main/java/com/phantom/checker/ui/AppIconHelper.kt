@@ -56,17 +56,36 @@ private fun drawableToBitmap(drawable: Drawable, sizePx: Int = 96): Bitmap {
     return bitmap
 }
 
-private val appIconBitmapCache = object : android.util.LruCache<String, ImageBitmap>(64) {}
+private const val MAX_ICON_CACHE_KB = 4 * 1024 // 4 MB
 
-fun loadAppIconBitmap(context: Context, packageName: String): ImageBitmap? {
-    synchronized(appIconBitmapCache) {
-        appIconBitmapCache.get(packageName)?.let { return it }
+private val unifiedBitmapCache = object : android.util.LruCache<String, Bitmap>(MAX_ICON_CACHE_KB) {
+    override fun sizeOf(key: String, value: Bitmap): Int =
+        (value.byteCount / 1024).coerceAtLeast(1)
+}
+
+private val appIconImageCache = object : android.util.LruCache<String, ImageBitmap>(64) {}
+
+private fun loadCachedIconBitmap(context: Context, packageName: String, sizePx: Int = 96): Bitmap? {
+    val target = sizePx.coerceAtLeast(1)
+    val sizedKey = "$packageName:$target"
+    synchronized(unifiedBitmapCache) {
+        unifiedBitmapCache.get(sizedKey)?.let { if (!it.isRecycled) return it }
+        if (target != 96) {
+            unifiedBitmapCache.get("$packageName:96")?.let { base ->
+                if (!base.isRecycled) {
+                    val scaled = Bitmap.createScaledBitmap(base, target, target, true)
+                    unifiedBitmapCache.put(sizedKey, scaled)
+                    return scaled
+                }
+            }
+        }
     }
     return try {
-        val drawable = context.packageManager.getApplicationIcon(packageName)
-        val bmp = drawableToBitmap(drawable).asImageBitmap()
-        synchronized(appIconBitmapCache) {
-            appIconBitmapCache.put(packageName, bmp)
+        val appCtx = context.applicationContext ?: context
+        val drawable = appCtx.packageManager.getApplicationIcon(packageName)
+        val bmp = drawableToBitmap(drawable, target)
+        synchronized(unifiedBitmapCache) {
+            unifiedBitmapCache.put(sizedKey, bmp)
         }
         bmp
     } catch (_: Exception) {
@@ -74,16 +93,20 @@ fun loadAppIconBitmap(context: Context, packageName: String): ImageBitmap? {
     }
 }
 
-fun loadAppIconAndroidBitmap(context: Context, packageName: String, sizePx: Int): Bitmap? {
-    val cached = loadAppIconBitmap(context, packageName) ?: return null
-    val target = sizePx.coerceAtLeast(1)
-    val src = cached.asAndroidBitmap()
-    return if (src.width == target && src.height == target) {
-        src
-    } else {
-        Bitmap.createScaledBitmap(src, target, target, true)
+fun loadAppIconBitmap(context: Context, packageName: String): ImageBitmap? {
+    synchronized(appIconImageCache) {
+        appIconImageCache.get(packageName)?.let { return it }
     }
+    val bmp = loadCachedIconBitmap(context, packageName, 96) ?: return null
+    val img = bmp.asImageBitmap()
+    synchronized(appIconImageCache) {
+        appIconImageCache.put(packageName, img)
+    }
+    return img
 }
+
+fun loadAppIconAndroidBitmap(context: Context, packageName: String, sizePx: Int): Bitmap? =
+    loadCachedIconBitmap(context, packageName, sizePx)
 
 /**
  * 將最多 4 個最近通知 App 的圖示繪入高解析正方形 ARGB_8888 Bitmap（1×1 / 1×2 / 2×2 方格，
@@ -100,17 +123,13 @@ fun buildRecentAppsStripBitmap(
     val density = context.resources.displayMetrics.density
     val baseCellPx = maxOf((48f * density).roundToInt(), (iconSizeDp * density).roundToInt(), 96)
     val gapPx = (spacingDp * density).roundToInt().coerceAtLeast(4)
-    val drawables = pkgs.mapNotNull { pkg ->
-        try {
-            context.packageManager.getApplicationIcon(pkg)
-        } catch (_: Exception) {
-            null
-        }
+    val iconBitmaps = pkgs.mapNotNull { pkg ->
+        loadAppIconBitmap(context, pkg)?.asAndroidBitmap()
     }
-    if (drawables.isEmpty()) return null
+    if (iconBitmaps.isEmpty()) return null
 
-    val cols = if (drawables.size == 1) 1 else 2
-    val rows = if (drawables.size <= 2) 1 else 2
+    val cols = if (iconBitmaps.size == 1) 1 else 2
+    val rows = if (iconBitmaps.size <= 2) 1 else 2
     val contentMax = maxOf(
         cols * baseCellPx + (cols - 1) * gapPx,
         rows * baseCellPx + (rows - 1) * gapPx
@@ -130,35 +149,18 @@ fun buildRecentAppsStripBitmap(
     val canvas = Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
-    drawables.forEachIndexed { idx, drawable ->
+    iconBitmaps.forEachIndexed { idx, iconBmp ->
         val col = idx % cols
         val row = idx / cols
         val left = startX + col * (cellPx + gapPx)
         val top = startY + row * (cellPx + gapPx)
-        val iconBmp = drawableToBitmap(drawable, cellPx)
         canvas.drawBitmap(iconBmp, null, Rect(left, top, left + cellPx, top + cellPx), paint)
     }
     return bitmap
 }
 
-private val stripIconBitmapCache = object : android.util.LruCache<String, Bitmap>(32) {}
-
-private fun loadStripIconBitmap(context: Context, packageName: String, iconPx: Int): Bitmap? {
-    val key = "$packageName:$iconPx"
-    synchronized(stripIconBitmapCache) {
-        stripIconBitmapCache.get(key)?.let { if (!it.isRecycled) return it }
-    }
-    return try {
-        val drawable = context.packageManager.getApplicationIcon(packageName)
-        val bmp = drawableToBitmap(drawable, iconPx)
-        synchronized(stripIconBitmapCache) {
-            stripIconBitmapCache.put(key, bmp)
-        }
-        bmp
-    } catch (_: Exception) {
-        null
-    }
-}
+private fun loadStripIconBitmap(context: Context, packageName: String, iconPx: Int): Bitmap? =
+    loadCachedIconBitmap(context, packageName, iconPx)
 
 /**
  * 水平條狀圖示列（左新右舊，最多 4 個 App 圖示），最左側最新 App 加上高亮邊框與角標，
