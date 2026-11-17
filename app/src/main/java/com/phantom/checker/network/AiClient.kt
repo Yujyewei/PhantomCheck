@@ -1066,7 +1066,7 @@ object AiClient {
         val m = profile.model.trim().lowercase()
         if (m.isEmpty()) return false
         val knownTextOnly = listOf(
-            "gpt-oss", "llama-3.1", "llama-3.3", "deepseek-chat", "deepseek-reasoner",
+            "gpt-oss", "llama-3.1", "llama-3.3", "deepseek",
             "mistral-small", "mixtral", "gemma", "qwen3-32b", "qwen-qwq"
         )
         if (knownTextOnly.any { m.contains(it) }) return false

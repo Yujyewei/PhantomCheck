@@ -268,11 +268,9 @@ fun ChatAssistantTab(
     ) { uri ->
         if (uri != null) {
             scope.launch {
-                val encoded = withContext(Dispatchers.IO) { encodeImageUriToDataUri(appCtx, uri) }
-                if (encoded != null) {
-                    pendingImageAttachment = encoded
-                } else {
-                    onShowMessage("無法讀取所選圖片，請改選其他圖片")
+                when (val result = withContext(Dispatchers.IO) { encodeImageUriToDataUri(appCtx, uri) }) {
+                    is ImageEncodeResult.Success -> pendingImageAttachment = result.attachment
+                    is ImageEncodeResult.Failure -> onShowMessage(result.reason)
                 }
             }
         }
@@ -4439,13 +4437,67 @@ fun AiProviderSwitcherChip(
     }
 }
 
-private fun encodeImageUriToDataUri(ctx: Context, uri: android.net.Uri): PendingImageAttachment? {
+private sealed class ImageEncodeResult {
+    data class Success(val attachment: PendingImageAttachment) : ImageEncodeResult()
+    data class Failure(val reason: String) : ImageEncodeResult()
+}
+
+private fun encodeImageUriToDataUri(ctx: Context, uri: android.net.Uri): ImageEncodeResult {
+    val tag = "PhantomImage"
     return try {
-        val rawBitmap = ctx.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream)
-        } ?: return null
+        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val openedBounds = ctx.contentResolver.openInputStream(uri)
+        if (openedBounds == null) {
+            android.util.Log.w(tag, "openInputStream returned null (bounds) for $uri")
+            return ImageEncodeResult.Failure("無法開啟圖片（可能是雲端圖未下載），請先將圖片下載至本機再選取")
+        }
+        openedBounds.use { stream ->
+            BitmapFactory.decodeStream(stream, null, boundsOpts)
+        }
+
+        val rawW = boundsOpts.outWidth
+        val rawH = boundsOpts.outHeight
+        if (rawW <= 0 || rawH <= 0) {
+            android.util.Log.w(tag, "Invalid bounds ${rawW}x${rawH} for $uri")
+            return ImageEncodeResult.Failure("圖片格式不支援或已損毀")
+        }
 
         val maxSide = 1024
+        var sampleSize = 1
+        while (rawW / sampleSize > maxSide || rawH / sampleSize > maxSide) {
+            sampleSize *= 2
+        }
+        android.util.Log.d(tag, "Decoding $uri raw=${rawW}x${rawH} initial inSampleSize=$sampleSize")
+
+        fun decodeWithSample(inSample: Int): Bitmap? {
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = inSample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val openedDecode = ctx.contentResolver.openInputStream(uri) ?: return null
+            return openedDecode.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOpts)
+            }
+        }
+
+        val rawBitmap = try {
+            decodeWithSample(sampleSize)
+        } catch (oom: OutOfMemoryError) {
+            android.util.Log.w(tag, "OOM at inSampleSize=$sampleSize for $uri, retrying with ${sampleSize * 2}", oom)
+            sampleSize *= 2
+            try {
+                decodeWithSample(sampleSize)
+            } catch (oom2: OutOfMemoryError) {
+                android.util.Log.e(tag, "OOM again at inSampleSize=$sampleSize for $uri", oom2)
+                return ImageEncodeResult.Failure("圖片過大，記憶體不足")
+            }
+        }
+
+        if (rawBitmap == null) {
+            android.util.Log.w(tag, "decodeStream returned null after valid bounds for $uri")
+            return ImageEncodeResult.Failure("圖片格式不支援或已損毀")
+        }
+
         val w = rawBitmap.width
         val h = rawBitmap.height
         val scaledBitmap = if (w > maxSide || h > maxSide) {
@@ -4460,7 +4512,12 @@ private fun encodeImageUriToDataUri(ctx: Context, uri: android.net.Uri): Pending
         }
 
         val baos = java.io.ByteArrayOutputStream()
-        scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 82, baos)
+        val ok = scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 82, baos)
+        if (!ok) {
+            scaledBitmap.recycle()
+            android.util.Log.e(tag, "JPEG compress failed for $uri")
+            return ImageEncodeResult.Failure("圖片格式不支援或已損毀")
+        }
         val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         val thumbScale = 128f / maxOf(scaledBitmap.width, scaledBitmap.height).toFloat()
         val thumb = if (thumbScale < 1f) {
@@ -4474,11 +4531,24 @@ private fun encodeImageUriToDataUri(ctx: Context, uri: android.net.Uri): Pending
             scaledBitmap
         }
         if (thumb !== scaledBitmap) scaledBitmap.recycle()
-        PendingImageAttachment(
-            thumbnail = thumb,
-            dataUri = "data:image/jpeg;base64,$b64"
+        android.util.Log.d(tag, "Encoded $uri successfully (inSampleSize=$sampleSize, b64Len=${b64.length})")
+        ImageEncodeResult.Success(
+            PendingImageAttachment(
+                thumbnail = thumb,
+                dataUri = "data:image/jpeg;base64,$b64"
+            )
         )
-    } catch (_: Exception) {
-        null
+    } catch (e: SecurityException) {
+        android.util.Log.e(tag, "SecurityException reading $uri", e)
+        ImageEncodeResult.Failure("無權限讀取此圖片，請改選本地圖片")
+    } catch (e: java.io.FileNotFoundException) {
+        android.util.Log.e(tag, "FileNotFoundException reading $uri", e)
+        ImageEncodeResult.Failure("無法開啟圖片（可能是雲端圖未下載），請先將圖片下載至本機再選取")
+    } catch (e: OutOfMemoryError) {
+        android.util.Log.e(tag, "OutOfMemoryError encoding $uri", e)
+        ImageEncodeResult.Failure("圖片過大，記憶體不足")
+    } catch (e: Exception) {
+        android.util.Log.e(tag, "Unexpected error encoding $uri", e)
+        ImageEncodeResult.Failure("讀取圖片失敗（${e.javaClass.simpleName}）：${e.message ?: "未知錯誤"}")
     }
 }
