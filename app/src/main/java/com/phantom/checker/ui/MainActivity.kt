@@ -325,7 +325,6 @@ private fun PhantomCheckApp(
     var isLoading by remember { mutableStateOf(true) }
     var actionTargetApp by remember { mutableStateOf<AppGroupUi?>(null) }
     var deleteAppConfirm by remember { mutableStateOf<AppGroupUi?>(null) }
-    var showClearReadConfirm by remember { mutableStateOf(false) }
 
     // 平面清單長按 Bottom Sheet & 單則刪除確認
     var messageSheetTarget by remember { mutableStateOf<MessageEntity?>(null) }
@@ -732,41 +731,6 @@ private fun PhantomCheckApp(
             },
             dismissButton = {
                 TextButton(onClick = { deleteAppConfirm = null }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
-
-    if (showClearReadConfirm) {
-        AlertDialog(
-            onDismissRequest = { showClearReadConfirm = false },
-            title = { Text("清除已讀訊息") },
-            text = { Text("確定要永久刪除所有已讀訊息嗎？未讀訊息將保留。") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                val db = AppDatabaseHolder.db(appCtx)
-                                db.withTransaction {
-                                    db.tagDao().deleteCrossRefsForReadMessages()
-                                    db.messageDao().deleteReadMessages()
-                                }
-                            }
-                            StatsForegroundService.startOrRefresh(appCtx)
-                            showClearReadConfirm = false
-                            refreshTrigger++
-                            snackbarHostState.showSnackbar("已清除所有已讀訊息")
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("確認清除")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearReadConfirm = false }) {
                     Text("取消")
                 }
             }
@@ -1506,7 +1470,6 @@ private fun PhantomCheckApp(
                                 snackbarHostState.showSnackbar("已將全部訊息標記為已讀")
                             }
                         },
-                        onClearRead = { showClearReadConfirm = true },
                         onLoadMore = {
                             if (!isLoadingMore && hasMoreFiltered) {
                                 scope.launch {
@@ -1807,7 +1770,6 @@ private fun MessagesHomeTab(
     onSelectFilter: (MessageFilter) -> Unit,
     onOpenTagPicker: () -> Unit,
     onMarkAllRead: () -> Unit,
-    onClearRead: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenApp: (String, String) -> Unit,
     onLongPressApp: (AppGroupUi) -> Unit,
@@ -1877,9 +1839,6 @@ private fun MessagesHomeTab(
                             TextButton(onClick = onMarkAllRead) {
                                 Text("全部標已讀")
                             }
-                        }
-                        TextButton(onClick = onClearRead) {
-                            Text("清除已讀", color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }

@@ -2130,6 +2130,14 @@ fun FilterSettingsScreen(
                             }
                         }
                     }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    OutlinedButton(
+                        onClick = { showClearReadConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("清除已讀訊息")
+                    }
                 }
             }
             }
@@ -2276,15 +2284,6 @@ fun FilterSettingsScreen(
                         modifier = Modifier.fillMaxWidth().pressableScale()
                     ) {
                         Text(if (isExporting) "匯出中…" else "匯出訊息 CSV（可選範圍）")
-                    }
-                    Spacer(Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { showClearReadConfirm = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("清除已讀訊息")
                     }
                     Spacer(Modifier.height(8.dp))
 
