@@ -304,15 +304,22 @@ fun ChatAssistantTab(
                 .dropLast(if (!isRetry && messages.lastOrNull()?.role == ChatMessageEntity.ROLE_USER) 1 else 0)
                 .map { ChatMessage(it.role, it.content) }
 
+            val initialRagLimit = PhantomPrefs.getEffectiveChatRagMessageLimit(appCtx)
             val ragPrompt = withContext(Dispatchers.IO) {
-                buildRagSystemPrompt(appCtx, query)
+                buildRagSystemPrompt(appCtx, query, overrideLimit = initialRagLimit)
             }
 
             val result = AiClient.chatAssistant(
                 systemPrompt = ragPrompt,
                 history = history,
                 userMessage = query,
-                context = appCtx
+                context = appCtx,
+                ragLimit = initialRagLimit,
+                onRebuildSystemPromptForRetry = { reducedLimit ->
+                    withContext(Dispatchers.IO) {
+                        buildRagSystemPrompt(appCtx, query, overrideLimit = reducedLimit)
+                    }
+                }
             )
 
             isSending = false
@@ -1501,7 +1508,11 @@ private fun TypingDotsIndicator() {
     }
 }
 
-private suspend fun buildRagSystemPrompt(ctx: Context, query: String): String {
+private suspend fun buildRagSystemPrompt(
+    ctx: Context,
+    query: String,
+    overrideLimit: Int? = null
+): String {
     val db = AppDatabaseHolder.db(ctx)
     val dao = db.messageDao()
     val now = System.currentTimeMillis()
@@ -1554,7 +1565,7 @@ private suspend fun buildRagSystemPrompt(ctx: Context, query: String): String {
         .sortedByDescending { it.length }
         .firstOrNull { lowerQuery.contains(it.lowercase(Locale.getDefault())) }
 
-    val ragLimit = PhantomPrefs.getEffectiveChatRagMessageLimit(ctx)
+    val ragLimit = (overrideLimit ?: PhantomPrefs.getEffectiveChatRagMessageLimit(ctx)).coerceAtLeast(1)
     val baseMsgs = dao.queryRange(
         startTs = startTs,
         endTs = endTs,

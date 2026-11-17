@@ -460,7 +460,7 @@ object AiClient {
                 Result.failure(IllegalStateException("API 回應為空（$hostLabel / $resolvedModel）"))
             }
         } catch (e: HttpException) {
-            Result.failure(Exception("HTTP ${e.code()}（$hostLabel / $resolvedModel）：驗證失敗，請確認端點、Model 與 Key"))
+            Result.failure(Exception("${formatHttpErrorMessage(e)}（$hostLabel / $resolvedModel）"))
         } catch (e: Exception) {
             Result.failure(Exception("${e.localizedMessage ?: "連線失敗"}（$hostLabel / $resolvedModel）"))
         }
@@ -812,52 +812,119 @@ object AiClient {
             (e is IOException && e.message?.contains("timeout", ignoreCase = true) == true)
     }
 
-    /** AI 助手對話呼叫（沿用 active provider 與節流；逾時自動重試一次） */
+    private fun extractProviderErrorMessage(e: HttpException): String? {
+        val raw = try {
+            e.response()?.errorBody()?.string()?.trim()
+        } catch (_: Exception) {
+            null
+        }
+        if (raw.isNullOrBlank()) return null
+        val parsed = try {
+            val obj = JsonParser.parseString(raw).asJsonObject
+            val errObj = obj.get("error")
+            when {
+                errObj != null && errObj.isJsonObject ->
+                    errObj.asJsonObject.get("message")?.asString
+                errObj != null && errObj.isJsonPrimitive ->
+                    errObj.asString
+                else -> obj.get("message")?.asString ?: obj.get("detail")?.asString
+            }
+        } catch (_: Exception) {
+            null
+        }
+        val clean = (parsed ?: raw).replace(Regex("\\s+"), " ").trim()
+        return clean.takeIf { it.isNotEmpty() }?.take(220)
+    }
+
+    private fun formatHttpErrorMessage(e: HttpException, suffix: String = ""): String {
+        val code = e.code()
+        val rawErr = extractProviderErrorMessage(e)
+        val base = when (code) {
+            413 -> "HTTP 413：請求超過 provider 單次請求上限（常見於 Groq 免費方案的每分鐘 token 限制）。建議降低「AI 助手單次閱讀訊息數」或改用其他 provider$suffix"
+            401, 403 -> "HTTP $code：API Key 無效、過期或權限不足，請確認金鑰設定$suffix"
+            404 -> "HTTP 404：找不到指定的模型或 API 路徑，請確認模型名稱與 Base URL 設定$suffix"
+            422 -> "HTTP 422：請求參數或模型格式不被接受，請確認模型與參數設定$suffix"
+            429 -> "HTTP 429：已達 provider 速率或額度上限，請稍後再試或切換其他 provider$suffix"
+            in 500..599 -> "HTTP $code：provider 端發生暫時性錯誤，請稍後再試$suffix"
+            else -> "HTTP $code：請求失敗$suffix"
+        }
+        return if (rawErr != null) "$base\n原始錯誤：$rawErr" else base
+    }
+
+    /** AI 助手對話呼叫（沿用 active provider 與節流；逾時或 HTTP 413 自動降載重試一次） */
     suspend fun chatAssistant(
         systemPrompt: String,
         history: List<ChatMessage>,
         userMessage: String,
-        context: Context? = null
+        context: Context? = null,
+        ragLimit: Int = 0,
+        onRebuildSystemPromptForRetry: (suspend (newRagLimit: Int) -> String)? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         val profile = getActiveProfile(context)
             ?: return@withContext Result.failure(IllegalStateException("尚未設定 AI Provider API Key"))
         val fullUrl = buildFullUrl(profile.baseUrl, profile.resolvedApiPath())
-        val msgs = buildList {
-            add(ChatMessage("system", systemPrompt))
-            addAll(history.takeLast(30))
-            add(ChatMessage("user", userMessage))
+        val recentHistory = history.takeLast(30)
+        fun buildBody(sysPrompt: String): ChatRequest {
+            val msgs = buildList {
+                add(ChatMessage("system", sysPrompt))
+                addAll(recentHistory)
+                add(ChatMessage("user", userMessage))
+            }
+            return ChatRequest(
+                model = profile.model.trim().ifEmpty { FALLBACK_MODEL },
+                messages = msgs,
+                maxTokens = 4096,
+                temperature = 0.4
+            )
         }
-        val body = ChatRequest(
-            model = profile.model.trim().ifEmpty { FALLBACK_MODEL },
-            messages = msgs,
-            maxTokens = 4096,
-            temperature = 0.4
-        )
+        var currentBody = buildBody(systemPrompt)
         val auth = "Bearer ${profile.apiKey.trim()}"
 
         var retried = false
+        var downscaledLimit: Int? = null
         while (true) {
             try {
                 enforceRateLimit()
                 val res = getChatApi(profile.baseUrl).chat(
                     url = fullUrl,
                     auth = auth,
-                    body = body
+                    body = currentBody
                 )
                 val choice = res.choices.firstOrNull()
                 val reply = choice?.message?.content?.trim()
                 return@withContext if (reply.isNullOrEmpty()) {
                     Result.failure(IllegalStateException("AI 回應為空"))
-                } else if (choice.finishReason == "length") {
-                    Result.success("$reply\n\n⚠ 本回應因長度上限被截斷")
                 } else {
-                    Result.success(reply)
+                    val withTruncNote = if (choice.finishReason == "length") {
+                        "$reply\n\n⚠ 本回應因長度上限被截斷"
+                    } else {
+                        reply
+                    }
+                    val finalReply = if (downscaledLimit != null) {
+                        "$withTruncNote\n\n（因請求過大已自動縮減閱讀範圍至 $downscaledLimit 則）"
+                    } else {
+                        withTruncNote
+                    }
+                    Result.success(finalReply)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: HttpException) {
-                val suffix = if (retried) "（已自動重試一次）" else ""
-                return@withContext Result.failure(Exception("HTTP ${e.code()}：請確認 API Key 或模型設定$suffix"))
+                if (e.code() == 413 && downscaledLimit == null &&
+                    onRebuildSystemPromptForRetry != null && ragLimit > 25
+                ) {
+                    val reduced = (ragLimit / 2).coerceAtLeast(25)
+                    downscaledLimit = reduced
+                    val rebuiltPrompt = onRebuildSystemPromptForRetry(reduced)
+                    currentBody = buildBody(rebuiltPrompt)
+                    continue
+                }
+                val suffix = when {
+                    downscaledLimit != null -> "（已自動縮減閱讀範圍至 $downscaledLimit 則重試仍失敗）"
+                    retried -> "（已自動重試一次）"
+                    else -> ""
+                }
+                return@withContext Result.failure(Exception(formatHttpErrorMessage(e, suffix)))
             } catch (e: Exception) {
                 if (!retried && isTimeoutException(e)) {
                     retried = true
@@ -939,7 +1006,7 @@ object AiClient {
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpException) {
-            Result.failure(Exception("HTTP ${e.code()}：請確認 API Key 或模型設定"))
+            Result.failure(Exception(formatHttpErrorMessage(e)))
         } catch (e: Exception) {
             val msg = if (isTimeoutException(e)) "回應逾時，請稍後再試" else (e.localizedMessage ?: "連線失敗")
             Result.failure(Exception(msg))
@@ -1002,7 +1069,7 @@ object AiClient {
                 throw e
             } catch (e: HttpException) {
                 val suffix = if (retried) "（已自動重試一次）" else ""
-                return@withContext Result.failure(Exception("HTTP ${e.code()}：請確認 API Key 或模型設定$suffix"))
+                return@withContext Result.failure(Exception(formatHttpErrorMessage(e, suffix)))
             } catch (e: Exception) {
                 if (!retried && isTimeoutException(e)) {
                     retried = true
@@ -1078,7 +1145,7 @@ object AiClient {
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpException) {
-            Result.failure(Exception("HTTP ${e.code()}：AI 搜尋失敗，請改用關鍵字搜尋"))
+            Result.failure(Exception("${formatHttpErrorMessage(e)}（可改用本地關鍵字搜尋）"))
         } catch (e: Exception) {
             val msg = if (isTimeoutException(e)) "AI 搜尋逾時，請改用關鍵字搜尋" else "AI 搜尋連線失敗，請改用關鍵字搜尋"
             Result.failure(Exception(msg))

@@ -264,6 +264,19 @@ object PhantomPrefs {
         return true
     }
 
+    /** 若因 HTTP 413 等請求超限未實際完成分析，退還今日已扣減之 1 次額度 */
+    @Synchronized
+    fun refundTodayAiUsage(ctx: Context) {
+        val p = prefs(ctx)
+        val today = todayDateStr()
+        if (p.getString(KEY_AI_USAGE_DATE, "") == today) {
+            val currentCount = p.getInt(KEY_AI_USAGE_COUNT, 0)
+            if (currentCount > 0) {
+                p.edit().putInt(KEY_AI_USAGE_COUNT, currentCount - 1).apply()
+            }
+        }
+    }
+
     /** 每日 AI 摘要開關與排程時間（預設開、22:00） */
     fun isDailySummaryEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_DAILY_SUMMARY_ENABLED, true)
