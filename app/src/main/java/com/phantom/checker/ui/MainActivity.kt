@@ -2501,12 +2501,11 @@ private fun NotesTab(
                                             db.todoDao().setDone(todo.id, checked)
                                         }
                                         if (checked) {
-                                            ReminderScheduler.cancelTodoReminder(appCtx, todo.id)
+                                            ReminderScheduler.cancelTodo(appCtx, todo.id)
                                         } else if (todo.dueAt > System.currentTimeMillis()) {
-                                            ReminderScheduler.scheduleTodoReminder(
+                                            ReminderScheduler.scheduleTodo(
                                                 appCtx,
                                                 todo.id,
-                                                todo.title,
                                                 todo.dueAt
                                             )
                                         }
@@ -2538,7 +2537,7 @@ private fun NotesTab(
                             IconButton(
                                 onClick = {
                                     scope.launch {
-                                        ReminderScheduler.cancelTodoReminder(appCtx, todo.id)
+                                        ReminderScheduler.cancelTodo(appCtx, todo.id)
                                         withContext(Dispatchers.IO) {
                                             db.todoDao().deleteById(todo.id)
                                         }
@@ -2730,6 +2729,7 @@ private fun NotesTab(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NoteEditorDialog(
     initial: NoteEntity?,

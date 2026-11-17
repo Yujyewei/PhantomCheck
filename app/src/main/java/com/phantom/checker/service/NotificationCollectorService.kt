@@ -20,6 +20,8 @@ import com.phantom.checker.data.FilterRule
 import com.phantom.checker.data.IntelResultEntity
 import com.phantom.checker.data.MessageEntity
 import com.phantom.checker.data.MessageTagCrossRef
+import com.phantom.checker.data.NoteEntity
+import com.phantom.checker.data.PendingAiAnalysisEntity
 import com.phantom.checker.data.TagEntity
 import com.phantom.checker.data.UserTagRuleEntity
 import com.phantom.checker.network.AiClient
@@ -28,6 +30,7 @@ import com.phantom.checker.network.IntelClient
 import com.phantom.checker.ui.MainActivity
 import com.phantom.checker.ui.MessageDetailActivity
 import com.phantom.checker.ui.ScamCenterActivity
+import com.phantom.checker.util.AiPurpose
 import com.phantom.checker.util.MuteMode
 import com.phantom.checker.util.NotifClickBehavior
 import com.phantom.checker.util.PhantomPrefs
