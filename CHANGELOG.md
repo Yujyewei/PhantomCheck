@@ -2,6 +2,36 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 格式，並採用語意化版本控制。
 
+## [2.7.0] - 2026-11-18
+
+### 新增
+- **自動記事／待辦規則引擎與管理介面（#203）**：
+  - Room 升版至 v15（單一非破壞性 `MIGRATION_14_15`），新增 `memo_rules` 資料表與 `MemoRuleDao`，支援「永遠記事（`note`）」、「永遠待辦（`todo`）」與「永遠不要自動加入（`never`）」三種動作（優先序 `never > todo > note`）。
+  - 新增純函式 `MemoRuleEngine`，於 `NotificationCollectorService.saveAutoMemoIfPresent`（涵蓋即時通知與 `PendingAiAnalysisWorker` 離線補分析）執行前置規則檢查（30 秒 TTL 快取，寫入/切換/刪除即時失效），並於 `AiClient.buildSystemPrompt` 注入規則與將 `memoRuleSig` 納入 `riskCache` key。
+  - `ChatScreen` `add_rule` 擴充支援 `kind="memo"`（彈出確認卡寫入 DB）；「記事」分頁新增「自動記事規則」管理卡（列表、開關、刪除、手動新增對話框與自然語言 `AiClient.parseMemoRule` 解析＋確認卡）。
+- **已記事／已待辦首頁篩選、待辦來源回溯與三範圍排除（#204）**：
+  - `MessageFilter` 新增 `Noted`（已記事）與 `Todoed`（已待辦）篩選按鈕，並加入 `ALL_OPTIONAL_HOME_FILTERS` 與設定頁自訂篩選清單；`MessageCard` 新增 12dp 已記事／已待辦小圖示。
+  - 「記事」分頁待辦列與搜尋結果待辦卡新增「查看來源訊息」按鈕（跳轉 `MessageDetailActivity`）；`MessageDetailActivity` 與自動記事長按新增「不再自動記事／待辦」入口，提供三範圍確認對話框（寄件者／App／關鍵字，寫入 `memo_rules` `never` 規則）。
+- **自己回覆右側氣泡與持久化（#207）**：
+  - `messages` 新增 `isOwn` 欄位（隨 `MIGRATION_14_15` 建立，預設 `0`），於 `ConversationScreen`（通知快速回覆與 SMS fallback）、`ChatScreen` `reply_message` 與 `ReplyProxyReceiver` 三處回覆成功後寫入 `isOwn = true`、`sender = "我"` 之對話紀錄。
+  - `ChatBubbleItem` 針對 `isOwn` 渲染靠右對齊、78% 寬度、疊加 `primary` 0.16 alpha 淡色氣泡（隱藏風險點、AI 標籤與 OTP 擷取）；所有統計計數、未讀數、風險分布、ScamCenter、每日／每週摘要節錄與去重查詢全面加入 `isOwn = 0` 排除。
+- **新手教學擴充至 18 步（#209）**：
+  - 主頁教學由 15 步擴充為 18 步（同步 `KEY_ONBOARDING_STEP_V2` `coerceIn(1, 18)`），`SEARCH_PILL` 改為「下拉搜尋」（錨定頂部把手），新增「快速回覆」、「自動記事規則」與「已記事／已待辦與來源回溯」步驟，並更新 `FILTER_CHIPS` 文案說明固定表頭；舊已完成教學用戶不重跳。
+
+### 變更與修正
+- **首頁固定表頭與清單獨立捲動（#206）**：
+  - `MessagesHomeTab` 重構為外層 `Column` 固定區（離線橫幅 → 統計卡 → 分類篩選列 → 我的最愛列）搭配 `LazyColumn(weight(1f))` 獨立捲動訊息清單，維持 `listState` 與分頁載入行為不變。
+- **頂部下拉搜尋把手與統計卡工具列整合（#205）**：
+  - 移除主頁頂部搜尋膠囊與工具列，重新整理／設定按鈕移入統計卡右側欄（48dp 觸控目標）；新增 `PhantomPullSearchHandle`（22dp 全寬、中央 4dp×120dp 膠囊，支援 `anchoredDraggable` 下拉與點擊開啟全螢幕搜尋，AI 助手分頁自動隱藏）。
+- **對話頁 IME 過度上移修復（#207）**：
+  - `AndroidManifest.xml` 為 `MainActivity` 與 `ConversationActivity` 補齊 `android:windowSoftInputMode="adjustResize"`，解決系統預設 `adjustPan` 疊加 `.imePadding()` 造成的 double lift；鍵盤開啟時僅在清單貼底狀態平滑捲至最新訊息。
+- **搜尋頁與全庫文字對比度修復（#208）**：
+  - 清除 `MessageCard`、`MessageDetailActivity`、`ScamCenterActivity` 與 `SettingsActivity` 殘留之 `Color.Gray`／`Color.Red` 主題盲色，統一改用 `MaterialTheme.colorScheme.onSurfaceVariant`／`error`；`ChatBubbleItem` 與 `MessageCard` 內文顯式指定 `onSurface`。
+  - `PhantomFullScreenSearchOverlay` 背景改為不透明純主題色（alpha `1.0`）；`CardBgMode.TRANSPARENT` 滑桿下限調升至 15%（存量值自動 clamp），玻璃關閉／省電模式 fallback 下限提升至 0.35。
+- **全域健檢、OEM 相容稽核與發佈準備（#210）**：
+  - 補齊全專案有文字輸入之 Activity（`SettingsActivity`、`AutoReplySettingsActivity`、`ApiKeySettingsActivity`、`AppThreadsActivity`、`MessageDetailActivity`、`TagManagementActivity`、`WhitelistManagementActivity`）`windowSoftInputMode="adjustResize"`；完成無障礙 insets、cutout、Room 完整性與 `NotifIds` 互斥稽核。
+  - 版號更新：`versionCode` 25、`versionName` `"2.7.0"`。
+
 ## [2.6.0] - 2026-11-18
 
 ### 新增

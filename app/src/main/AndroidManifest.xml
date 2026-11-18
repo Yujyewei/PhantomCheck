@@ -38,18 +38,39 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".ui.SettingsActivity" android:exported="false" />
-        <activity android:name=".ui.AutoReplySettingsActivity" android:exported="false" />
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.AutoReplySettingsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ui.ScamCenterActivity" android:exported="false" />
-        <activity android:name=".ui.ApiKeySettingsActivity" android:exported="false" />
-        <activity android:name=".ui.AppThreadsActivity" android:exported="false" />
+        <activity
+            android:name=".ui.ApiKeySettingsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.AppThreadsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.ConversationActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".ui.MessageDetailActivity" android:exported="false" />
-        <activity android:name=".ui.TagManagementActivity" android:exported="false" />
-        <activity android:name=".ui.WhitelistManagementActivity" android:exported="false" />
+        <activity
+            android:name=".ui.MessageDetailActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.TagManagementActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.WhitelistManagementActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <service
             android:name=".service.StatsForegroundService"
