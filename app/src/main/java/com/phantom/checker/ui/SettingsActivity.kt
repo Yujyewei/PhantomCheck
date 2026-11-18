@@ -1113,6 +1113,8 @@ fun FilterSettingsScreen(
                             "starred" to "星標",
                             "scams" to "詐騙",
                             "filtered" to "已過濾",
+                            "noted" to "已記事",
+                            "todoed" to "已待辦",
                             "tag" to "標籤"
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

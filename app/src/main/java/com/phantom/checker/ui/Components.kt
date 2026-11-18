@@ -41,7 +41,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -679,6 +681,8 @@ fun MessageCard(
     highlightAsScam: Boolean = false,
     matchedKeywords: List<String> = emptyList(),
     highlightQuery: String = "",
+    hasNote: Boolean = false,
+    hasTodo: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val ctx = LocalContext.current
@@ -717,6 +721,24 @@ fun MessageCard(
                         contentDescription = "星標",
                         tint = Color(0xFFE6A100),
                         modifier = Modifier.size(14.dp)
+                    )
+                }
+                if (hasNote) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "已記事",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+                if (hasTodo) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "已待辦",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(12.dp)
                     )
                 }
                 if (message.riskLabel == "scam") {
@@ -1352,5 +1374,124 @@ fun PhantomFullScreenSearchOverlay(
         }
     }
 }
+
+/**
+ * #204 「不再自動記事/待辦」三範圍二段確認對話框：僅此寄件者（預設）/ 僅此 App / 含此關鍵字。
+ */
+@Composable
+fun NeverAutoMemoConfirmDialog(
+    packageName: String?,
+    appLabel: String,
+    sender: String?,
+    defaultKeyword: String,
+    onDismiss: () -> Unit,
+    onConfirm: (packageName: String?, sender: String?, keyword: String?) -> Unit
+) {
+    val hasSender = !sender.isNullOrBlank()
+    val hasPkg = !packageName.isNullOrBlank()
+    var selectedScope by remember(sender, packageName) {
+        mutableStateOf(if (hasSender) 0 else if (hasPkg) 1 else 2)
+    }
+    var keywordText by remember(defaultKeyword) {
+        mutableStateOf(defaultKeyword.trim().take(20))
+    }
+    val canConfirm = when (selectedScope) {
+        0 -> hasSender
+        1 -> hasPkg
+        else -> keywordText.isNotBlank()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("不再自動記事／待辦") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "選擇不再自動加入記事或待辦的套用範圍：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (hasSender) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedScope = 0 },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.RadioButton(
+                            selected = selectedScope == 0,
+                            onClick = { selectedScope = 0 }
+                        )
+                        Text(
+                            text = "僅此寄件者（$sender）",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+                if (hasPkg) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedScope = 1 },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.RadioButton(
+                            selected = selectedScope == 1,
+                            onClick = { selectedScope = 1 }
+                        )
+                        Text(
+                            text = "僅此 App（${appLabel.ifBlank { packageName!! }}）",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedScope = 2 },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.RadioButton(
+                        selected = selectedScope == 2,
+                        onClick = { selectedScope = 2 }
+                    )
+                    Text(
+                        text = "含此關鍵字",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (selectedScope == 2) {
+                    OutlinedTextField(
+                        value = keywordText,
+                        onValueChange = { keywordText = it },
+                        label = { Text("關鍵字") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when (selectedScope) {
+                        0 -> onConfirm(packageName?.takeIf { it.isNotBlank() }, sender?.trim(), null)
+                        1 -> onConfirm(packageName?.trim(), null, null)
+                        else -> onConfirm(null, null, keywordText.trim())
+                    }
+                },
+                enabled = canConfirm
+            ) {
+                Text("確定不再加入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
 
 

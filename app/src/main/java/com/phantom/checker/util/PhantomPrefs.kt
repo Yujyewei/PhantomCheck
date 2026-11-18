@@ -1021,7 +1021,7 @@ object PhantomPrefs {
         prefs(ctx).edit().putString("home_sort_order", order.prefValue).apply()
     }
 
-    val ALL_OPTIONAL_HOME_FILTERS: Set<String> = setOf("starred", "scams", "filtered", "tag")
+    val ALL_OPTIONAL_HOME_FILTERS: Set<String> = setOf("starred", "scams", "filtered", "noted", "todoed", "tag")
 
     /** 首頁篩選欄自訂顯示項目（全部與未讀固定顯示，此清單控制 星標/詐騙/已過濾/標籤） */
     fun getVisibleHomeFilters(ctx: Context): Set<String> =

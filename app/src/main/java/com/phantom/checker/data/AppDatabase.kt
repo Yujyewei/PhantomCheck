@@ -328,6 +328,18 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE isFiltered = 1 ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
     suspend fun filteredPaged(limit: Int, offset: Int): List<MessageEntity>
 
+    @Query("SELECT * FROM messages WHERE id IN (SELECT relatedMessageId FROM notes WHERE relatedMessageId IS NOT NULL) ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+    suspend fun notedPaged(limit: Int, offset: Int): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE id IN (SELECT relatedMessageId FROM todos WHERE relatedMessageId IS NOT NULL) ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+    suspend fun todoedPaged(limit: Int, offset: Int): List<MessageEntity>
+
+    @Query("SELECT DISTINCT relatedMessageId FROM notes WHERE relatedMessageId IS NOT NULL")
+    suspend fun notedMessageIds(): List<Long>
+
+    @Query("SELECT DISTINCT relatedMessageId FROM todos WHERE relatedMessageId IS NOT NULL")
+    suspend fun todoedMessageIds(): List<Long>
+
     @Query("SELECT m.* FROM messages m INNER JOIN message_tags mt ON m.id = mt.messageId WHERE mt.tagId = :tagId ORDER BY m.timestamp DESC LIMIT :limit OFFSET :offset")
     suspend fun byTagPaged(tagId: Long, limit: Int, offset: Int): List<MessageEntity>
 

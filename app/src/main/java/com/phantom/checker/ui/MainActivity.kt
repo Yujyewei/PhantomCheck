@@ -252,6 +252,8 @@ private sealed interface MessageFilter {
     data object Starred : MessageFilter
     data object Scams : MessageFilter
     data object Filtered : MessageFilter
+    data object Noted : MessageFilter
+    data object Todoed : MessageFilter
     data class Tag(val tag: TagEntity) : MessageFilter
 }
 
@@ -348,6 +350,8 @@ private fun PhantomCheckApp(
     var activeFilterKeywords by remember { mutableStateOf(listOf<String>()) }
     var statsState by remember { mutableStateOf(StatsUiState()) }
     var isLoading by remember { mutableStateOf(true) }
+    var notedMsgIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var todoedMsgIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var actionTargetApp by remember { mutableStateOf<AppGroupUi?>(null) }
     var deleteAppConfirm by remember { mutableStateOf<AppGroupUi?>(null) }
 
@@ -482,6 +486,8 @@ private fun PhantomCheckApp(
             MessageFilter.Starred -> dao.starredPaged(PAGE_SIZE, offset)
             MessageFilter.Scams -> dao.scamsPaged(PAGE_SIZE, offset)
             MessageFilter.Filtered -> dao.filteredPaged(PAGE_SIZE, offset)
+            MessageFilter.Noted -> dao.notedPaged(PAGE_SIZE, offset)
+            MessageFilter.Todoed -> dao.todoedPaged(PAGE_SIZE, offset)
             is MessageFilter.Tag -> dao.byTagPaged(f.tag.id, PAGE_SIZE, offset)
         }
     }
@@ -520,6 +526,8 @@ private fun PhantomCheckApp(
                 } else {
                     db.tagDao().tagsForMessages(found.map { it.id }).groupBy { it.messageId }
                 }
+                notedMsgIds = dao.notedMessageIds().toSet()
+                todoedMsgIds = dao.todoedMessageIds().toSet()
                 searchResults = found
                 activeFilterKeywords = keywords
                 messageTagsMap = foundTags
@@ -532,6 +540,8 @@ private fun PhantomCheckApp(
                         todayScamCount = overview.scam
                         availableTags = db.tagDao().all()
                         tagCounts = db.tagDao().allTagCounts()
+                        notedMsgIds = dao.notedMessageIds().toSet()
+                        todoedMsgIds = dao.todoedMessageIds().toSet()
 
                         if (activeFilter == MessageFilter.All) {
                             val groups = dao.groupByApp()
@@ -1406,6 +1416,8 @@ private fun PhantomCheckApp(
                         activeFilter = activeFilter,
                         filteredMessages = filteredMessages,
                         messageTagsMap = messageTagsMap,
+                        notedMsgIds = notedMsgIds,
+                        todoedMsgIds = todoedMsgIds,
                         hasMoreFiltered = hasMoreFiltered,
                         isLoading = isLoading,
                         isLoadingMore = isLoadingMore,
@@ -1770,6 +1782,8 @@ private fun SearchResultsSection(
                                     highlightAsScam = m.riskLabel == "scam",
                                     matchedKeywords = matchedKeywords,
                                     highlightQuery = query,
+                                    hasNote = m.id in notedMsgIds,
+                                    hasTodo = m.id in todoedMsgIds,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .combinedClickable(
@@ -1808,6 +1822,8 @@ private fun MessagesHomeTab(
     activeFilter: MessageFilter,
     filteredMessages: List<MessageEntity>,
     messageTagsMap: Map<Long, List<MessageTagRow>>,
+    notedMsgIds: Set<Long> = emptySet(),
+    todoedMsgIds: Set<Long> = emptySet(),
     hasMoreFiltered: Boolean,
     isLoading: Boolean,
     isLoadingMore: Boolean,
@@ -2039,6 +2055,38 @@ private fun MessagesHomeTab(
                     shape = chipShape,
                     modifier = Modifier.height(32.dp),
                     label = { Text("已過濾", style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+            if ("noted" in visibleFilters || activeFilter == MessageFilter.Noted) {
+                FilterChip(
+                    selected = activeFilter == MessageFilter.Noted,
+                    onClick = { onSelectFilter(MessageFilter.Noted) },
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    label = { Text("已記事", style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+            if ("todoed" in visibleFilters || activeFilter == MessageFilter.Todoed) {
+                FilterChip(
+                    selected = activeFilter == MessageFilter.Todoed,
+                    onClick = { onSelectFilter(MessageFilter.Todoed) },
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    label = { Text("已待辦", style = MaterialTheme.typography.labelMedium) }
                 )
             }
             if (activeTag != null) {
@@ -2421,6 +2469,8 @@ private fun MessagesHomeTab(
                                     message = m,
                                     glassState = glassState,
                                     highlightAsScam = m.riskLabel == "scam",
+                                    hasNote = m.id in notedMsgIds,
+                                    hasTodo = m.id in todoedMsgIds,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .combinedClickable(
@@ -2494,6 +2544,8 @@ private fun NotesTab(
     var nlMemoRuleInput by remember { mutableStateOf("") }
     var isParsingMemoRule by remember { mutableStateOf(false) }
     var pendingNlMemoRule by remember { mutableStateOf<AiClient.ParsedMemoRule?>(null) }
+    var neverMemoTargetMsg by remember { mutableStateOf<MessageEntity?>(null) }
+    var neverMemoFallbackNote by remember { mutableStateOf<NoteEntity?>(null) }
 
     LaunchedEffect(initialEditTodoId, todos) {
         val targetId = initialEditTodoId ?: return@LaunchedEffect
@@ -2796,6 +2848,19 @@ private fun NotesTab(
                                     )
                                 }
                             }
+                            if (todo.relatedMessageId != null) {
+                                IconButton(
+                                    onClick = { onOpenMessageDetail(todo.relatedMessageId) },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "查看來源訊息",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
                             IconButton(
                                 onClick = {
                                     editingTodo = todo
@@ -2877,8 +2942,31 @@ private fun NotesTab(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
-                            if (isAuto && note.relatedMessageId != null) {
-                                Modifier.clickable { onOpenMessageDetail(note.relatedMessageId) }
+                            if (isAuto) {
+                                Modifier.combinedClickable(
+                                    onClick = {
+                                        if (note.relatedMessageId != null) {
+                                            onOpenMessageDetail(note.relatedMessageId)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        val relId = note.relatedMessageId
+                                        if (relId != null) {
+                                            scope.launch {
+                                                val src = withContext(Dispatchers.IO) {
+                                                    db.messageDao().byId(relId)
+                                                }
+                                                if (src != null) {
+                                                    neverMemoTargetMsg = src
+                                                } else {
+                                                    neverMemoFallbackNote = note
+                                                }
+                                            }
+                                        } else {
+                                            neverMemoFallbackNote = note
+                                        }
+                                    }
+                                )
                             } else {
                                 Modifier
                             }
@@ -3259,6 +3347,66 @@ private fun NotesTab(
         )
     }
 
+    neverMemoTargetMsg?.let { srcMsg ->
+        NeverAutoMemoConfirmDialog(
+            packageName = srcMsg.packageName,
+            appLabel = srcMsg.appLabel,
+            sender = srcMsg.sender,
+            defaultKeyword = srcMsg.content,
+            onDismiss = { neverMemoTargetMsg = null },
+            onConfirm = { pkg, snd, kw ->
+                neverMemoTargetMsg = null
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        db.memoRuleDao().insert(
+                            com.phantom.checker.data.MemoRuleEntity(
+                                packageName = pkg,
+                                sender = snd,
+                                keyword = kw,
+                                action = com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER,
+                                isEnabled = true,
+                                createdAt = System.currentTimeMillis(),
+                                source = com.phantom.checker.data.MemoRuleEntity.SOURCE_DETAIL
+                            )
+                        )
+                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                    }
+                    onShowMessage("已設定不再自動加入記事／待辦")
+                }
+            }
+        )
+    }
+
+    neverMemoFallbackNote?.let { targetNote ->
+        NeverAutoMemoConfirmDialog(
+            packageName = null,
+            appLabel = targetNote.relatedAppLabel.orEmpty(),
+            sender = targetNote.relatedAppLabel,
+            defaultKeyword = targetNote.content,
+            onDismiss = { neverMemoFallbackNote = null },
+            onConfirm = { pkg, snd, kw ->
+                neverMemoFallbackNote = null
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        db.memoRuleDao().insert(
+                            com.phantom.checker.data.MemoRuleEntity(
+                                packageName = pkg,
+                                sender = snd,
+                                keyword = kw,
+                                action = com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER,
+                                isEnabled = true,
+                                createdAt = System.currentTimeMillis(),
+                                source = com.phantom.checker.data.MemoRuleEntity.SOURCE_DETAIL
+                            )
+                        )
+                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                    }
+                    onShowMessage("已設定不再自動加入記事／待辦")
+                }
+            }
+        )
+    }
+
     val nq = notesSearchQuery.trim()
     val matchedTodos = remember(todos, nq) {
         if (nq.isEmpty()) emptyList()
@@ -3320,24 +3468,47 @@ private fun NotesTab(
                             cornerRadius = 14.dp,
                             contentPadding = 12.dp
                         ) {
-                            Text(
-                                text = todo.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                textDecoration = if (todo.isDone) TextDecoration.LineThrough else TextDecoration.None
-                            )
-                            Text(
-                                text = PhantomPrefs.formatMessageTime(appCtx, todo.dueAt, includeDate = true),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (todo.notes.isNotBlank()) {
-                                Text(
-                                    text = todo.notes,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = todo.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textDecoration = if (todo.isDone) TextDecoration.LineThrough else TextDecoration.None
+                                    )
+                                    Text(
+                                        text = PhantomPrefs.formatMessageTime(appCtx, todo.dueAt, includeDate = true),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (todo.notes.isNotBlank()) {
+                                        Text(
+                                            text = todo.notes,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                if (todo.relatedMessageId != null) {
+                                    IconButton(
+                                        onClick = {
+                                            showNotesSearch = false
+                                            onOpenMessageDetail(todo.relatedMessageId)
+                                        },
+                                        modifier = Modifier.size(48.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = "查看來源訊息",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
