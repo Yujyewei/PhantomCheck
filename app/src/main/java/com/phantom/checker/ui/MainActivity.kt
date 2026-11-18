@@ -10,13 +10,18 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -26,16 +31,21 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -114,8 +124,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -270,6 +283,7 @@ private data class AppGroupUi(
     val totalCount: Int,
     val todayCount: Int,
     val unreadTodayCount: Int,
+    val totalUnreadCount: Int = 0,
     val lastTs: Long,
     val lastPreview: String,
     val latestTags: List<MessageTagRow> = emptyList(),
@@ -281,19 +295,30 @@ private data class DayCountUi(
     val count: Int
 )
 
+private data class DailyAppRankUi(
+    val packageName: String,
+    val appLabel: String,
+    val count: Int
+)
+
 private data class StatsUiState(
     val latestSummary: AiSummaryEntity? = null,
     val latestWeeklySummary: AiSummaryEntity? = null,
     val weeklyCounts: List<DayCountUi> = emptyList(),
+    val weeklyRiskCounts: List<DayCountUi> = emptyList(),
     val safeCount: Int = 0,
     val suspiciousCount: Int = 0,
     val scamCount: Int = 0,
     val topRiskyApps: List<AppRiskRow> = emptyList(),
+    val dailyTopApps: List<DailyAppRankUi> = emptyList(),
     val rawAppGroups: List<AppGroupRow> = emptyList(),
     val todayAiTagCounts: List<AiTagCountRow> = emptyList(),
     val todayHourlyCounts: List<Int> = List(24) { 0 },
     val harassmentCount: Int = 0,
-    val totalMessageCount: Int = 0
+    val totalMessageCount: Int = 0,
+    val unreadTotalCount: Int = 0,
+    val todoTotalCount: Int = 0,
+    val todoDoneCount: Int = 0
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -423,6 +448,7 @@ private fun PhantomCheckApp(
     }
 
     var tabBarDisplayMode by remember { mutableStateOf(PhantomPrefs.getTabBarDisplayMode(appCtx)) }
+    var visibleStatsCards by remember { mutableStateOf(PhantomPrefs.getVisibleStatsCards(appCtx)) }
     var tabBarVisible by remember { mutableStateOf(true) }
     var pendingUpdateDialog by remember { mutableStateOf<UpdateCheckResult.UpdateAvailable?>(null) }
     LaunchedEffect(selectedTab, tabBarDisplayMode) {
@@ -455,6 +481,7 @@ private fun PhantomCheckApp(
                 favoritePackages = PhantomPrefs.getFavoriteApps(appCtx)
                 mutedPackages = PhantomPrefs.getMutedApps(appCtx)
                 tabBarDisplayMode = PhantomPrefs.getTabBarDisplayMode(appCtx)
+                visibleStatsCards = PhantomPrefs.getVisibleStatsCards(appCtx)
                 val completedNow = PhantomPrefs.isOnboardingCompleted(appCtx)
                 if (onboardingCompleted && !completedNow) {
                     onboardingCompleted = false
@@ -549,6 +576,8 @@ private fun PhantomCheckApp(
                                 .associate { it.packageName to it.cnt }
                             val unreadTodayMap = dao.todayUnreadCountsByApp(startOfDay)
                                 .associate { it.packageName to it.cnt }
+                            val totalUnreadMap = dao.unreadCountsByApp()
+                                .associate { it.packageName to it.cnt }
                             val recentMsgs = dao.paged(PAGE_SIZE, 0)
                             val latestPreviewByPkg = recentMsgs
                                 .groupBy { it.packageName }
@@ -572,6 +601,7 @@ private fun PhantomCheckApp(
                                     totalCount = g.cnt,
                                     todayCount = todayMap[g.packageName] ?: 0,
                                     unreadTodayCount = unreadTodayMap[g.packageName] ?: 0,
+                                    totalUnreadCount = totalUnreadMap[g.packageName] ?: 0,
                                     lastTs = g.lastTs,
                                     lastPreview = preview,
                                     latestTags = latestMsgId?.let { tagsByLatestMsgId[it] }.orEmpty(),
@@ -582,7 +612,7 @@ private fun PhantomCheckApp(
                                     com.phantom.checker.util.HomeSortOrder.RECENT ->
                                         list.sortedByDescending { it.lastTs }
                                     com.phantom.checker.util.HomeSortOrder.UNREAD ->
-                                        list.sortedWith(compareByDescending<AppGroupUi> { it.unreadTodayCount }.thenByDescending { it.lastTs })
+                                        list.sortedWith(compareByDescending<AppGroupUi> { it.totalUnreadCount }.thenByDescending { it.lastTs })
                                     com.phantom.checker.util.HomeSortOrder.RISK ->
                                         list.sortedWith(compareByDescending<AppGroupUi> { it.riskScore }.thenByDescending { it.lastTs })
                                 }
@@ -612,6 +642,7 @@ private fun PhantomCheckApp(
                         }
                         val sevenDaysAgo = cal.timeInMillis
                         val countsByDayKey = dao.countByDaySince(sevenDaysAgo).associate { it.dayKey to it.cnt }
+                        val riskByDayKey = dao.riskyCountByDaySince(sevenDaysAgo).associate { it.dayKey to it.cnt }
                         val dayFormat = SimpleDateFormat("M/d", Locale.getDefault())
                         val dayKeyFormat = SimpleDateFormat("yyyyMMdd", Locale.US)
                         val weekly = (0..6).map { offset ->
@@ -623,6 +654,17 @@ private fun PhantomCheckApp(
                             DayCountUi(
                                 label = dayFormat.format(dayCal.time),
                                 count = countsByDayKey[key] ?: 0
+                            )
+                        }
+                        val weeklyRisk = (0..6).map { offset ->
+                            val dayCal = Calendar.getInstance().apply {
+                                timeInMillis = sevenDaysAgo
+                                add(Calendar.DAY_OF_YEAR, offset)
+                            }
+                            val key = dayKeyFormat.format(dayCal.time)
+                            DayCountUi(
+                                label = dayFormat.format(dayCal.time),
+                                count = riskByDayKey[key] ?: 0
                             )
                         }
                         val hourly = IntArray(24)
@@ -649,21 +691,46 @@ private fun PhantomCheckApp(
                         }
                         val topRisky = dao.topRiskyApps()
                         val rawGroups = dao.groupByApp()
+                        val labelByPkg = rawGroups.associate { it.packageName to it.appLabel.ifBlank { it.packageName } }
+                        val dailyTopApps = dao.todayCountsByApp(startOfDay)
+                            .sortedByDescending { it.cnt }
+                            .take(5)
+                            .map { row ->
+                                val resolvedLabel = labelByPkg[row.packageName] ?: try {
+                                    appCtx.packageManager.getApplicationLabel(
+                                        appCtx.packageManager.getApplicationInfo(row.packageName, 0)
+                                    ).toString()
+                                } catch (_: Exception) {
+                                    row.packageName
+                                }
+                                DailyAppRankUi(
+                                    packageName = row.packageName,
+                                    appLabel = resolvedLabel,
+                                    count = row.cnt
+                                )
+                            }
+                        val unreadTotal = dao.totalUnreadCount()
+                        val todoCompletion = db.todoDao().completionStats()
                         val aiTagCounts = db.tagDao().todayAiTagCounts(startOfDay)
                         val weeklySummary = db.aiSummaryDao().latestWeekly()
                         statsState = StatsUiState(
                             latestSummary = summary,
                             latestWeeklySummary = weeklySummary,
                             weeklyCounts = weekly,
+                            weeklyRiskCounts = weeklyRisk,
                             safeCount = safe,
                             suspiciousCount = suspicious,
                             scamCount = scam,
                             topRiskyApps = topRisky,
+                            dailyTopApps = dailyTopApps,
                             rawAppGroups = rawGroups,
                             todayAiTagCounts = aiTagCounts,
                             todayHourlyCounts = hourly.toList(),
                             harassmentCount = harassmentCnt,
-                            totalMessageCount = safe + suspicious + scam
+                            totalMessageCount = safe + suspicious + scam,
+                            unreadTotalCount = unreadTotal,
+                            todoTotalCount = todoCompletion.total,
+                            todoDoneCount = todoCompletion.done
                         )
                     }
                 }
@@ -1499,7 +1566,12 @@ private fun PhantomCheckApp(
                             targetBounds = targetBounds + (key to rect)
                         }
                     )
-                    MainTab.ASSISTANT -> Column(modifier = Modifier.fillMaxSize()) {
+                    MainTab.ASSISTANT -> Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .consumeWindowInsets(padding)
+                            .imePadding()
+                    ) {
                         SnackbarHost(hostState = assistantSnackbarHostState)
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             ChatAssistantTab(
@@ -1542,6 +1614,7 @@ private fun PhantomCheckApp(
                     MainTab.STATS -> StatsTab(
                         state = statsState,
                         glassState = glassState,
+                        visibleCards = visibleStatsCards,
                         onSummaryGenerated = { refreshTrigger++ },
                         onShowMessage = { msg ->
                             scope.launch { snackbarHostState.showSnackbar(msg) }
@@ -2160,7 +2233,7 @@ private fun MessagesHomeTab(
                             } catch (_: Exception) {
                                 pkg
                             }
-                            val todayBadge = group?.todayCount ?: 0
+                            val unreadBadge = group?.totalUnreadCount ?: 0
                             val favTags = group?.latestTags.orEmpty()
                             PhantomGlassCard(
                                 glassState = glassState,
@@ -2184,14 +2257,14 @@ private fun MessagesHomeTab(
                                             contentDescription = label,
                                             size = 38.dp
                                         )
-                                        if (todayBadge > 0) {
+                                        if (unreadBadge > 0) {
                                             Surface(
                                                 shape = CircleShape,
                                                 color = MaterialTheme.colorScheme.primary,
                                                 modifier = Modifier.align(Alignment.TopEnd)
                                             ) {
                                                 Text(
-                                                    text = if (todayBadge > 99) "99+" else "$todayBadge",
+                                                    text = if (unreadBadge > 99) "99+" else "$unreadBadge",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onPrimary,
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
@@ -2266,6 +2339,8 @@ private fun MessagesHomeTab(
                     itemsIndexed(appGroups, key = { _, app -> app.packageName }) { idx, app ->
                         val isMuted = app.packageName in mutedPackages
                         val isCompact = PhantomPrefs.getCardDensity(ctx) == com.phantom.checker.util.CardDensity.COMPACT
+                        val stackEnabled = PhantomPrefs.isCardStackEffectEnabled(ctx)
+                        var isCardCollapsed by remember(app.packageName) { mutableStateOf(false) }
                         val is24h = PhantomPrefs.is24HourFormat(ctx)
                         val timeText = remember(app.lastTs, is24h) {
                             PhantomPrefs.formatMessageTime(ctx, app.lastTs, includeDate = true)
@@ -2284,9 +2359,21 @@ private fun MessagesHomeTab(
                             .alpha(if (isMuted) 0.5f else 1f)
                             .pressableScale()
                             .combinedClickable(
-                                onClick = { onOpenApp(app.packageName, app.appLabel) },
+                                onClick = {
+                                    isCardCollapsed = true
+                                    onOpenApp(app.packageName, app.appLabel)
+                                },
                                 onLongClick = { onLongPressApp(app) }
                             )
+                        StackedAppCard(
+                            totalCount = app.totalCount,
+                            enabled = stackEnabled,
+                            isCompact = isCompact,
+                            isMuted = isMuted,
+                            listState = listState,
+                            isCollapsed = isCardCollapsed,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                         PhantomGlassCard(
                             glassState = glassState,
                             modifier = rowModifier,
@@ -2394,6 +2481,7 @@ private fun MessagesHomeTab(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -2522,7 +2610,68 @@ private enum class TodoFilterMode(val label: String) {
     OVERDUE("逾期")
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+private val TuneIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Tune",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(3f, 17f)
+            verticalLineToRelative(2f)
+            horizontalLineToRelative(6f)
+            verticalLineToRelative(-2f)
+            horizontalLineTo(3f)
+            close()
+            moveTo(3f, 5f)
+            verticalLineToRelative(2f)
+            horizontalLineToRelative(10f)
+            verticalLineTo(5f)
+            horizontalLineTo(3f)
+            close()
+            moveTo(13f, 21f)
+            verticalLineToRelative(-2f)
+            horizontalLineToRelative(8f)
+            verticalLineToRelative(-2f)
+            horizontalLineToRelative(-8f)
+            verticalLineToRelative(-2f)
+            horizontalLineToRelative(-2f)
+            verticalLineToRelative(6f)
+            horizontalLineToRelative(2f)
+            close()
+            moveTo(7f, 9f)
+            verticalLineToRelative(2f)
+            horizontalLineTo(3f)
+            verticalLineToRelative(2f)
+            horizontalLineToRelative(4f)
+            verticalLineToRelative(2f)
+            horizontalLineToRelative(2f)
+            verticalLineTo(9f)
+            horizontalLineTo(7f)
+            close()
+            moveTo(21f, 13f)
+            verticalLineToRelative(-2f)
+            horizontalLineTo(11f)
+            verticalLineToRelative(2f)
+            horizontalLineToRelative(10f)
+            close()
+            moveTo(15f, 9f)
+            horizontalLineToRelative(2f)
+            verticalLineTo(7f)
+            horizontalLineToRelative(4f)
+            verticalLineTo(5f)
+            horizontalLineToRelative(-4f)
+            verticalLineTo(3f)
+            horizontalLineToRelative(-2f)
+            verticalLineToRelative(6f)
+            close()
+        }
+    }.build()
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun NotesTab(
     glassState: HazeState,
@@ -2545,6 +2694,7 @@ private fun NotesTab(
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
     var showTodoEditor by remember { mutableStateOf(false) }
     var editingTodo by remember { mutableStateOf<TodoEntity?>(null) }
+    var showMemoRulesPanel by remember { mutableStateOf(false) }
     var showManualMemoRuleDialog by remember { mutableStateOf(false) }
     var nlMemoRuleInput by remember { mutableStateOf("") }
     var isParsingMemoRule by remember { mutableStateOf(false) }
@@ -2648,6 +2798,7 @@ private fun NotesTab(
                                 )
                             )
                         }
+                        com.phantom.checker.widget.NotesWidgetProvider.updateAllIfChanged(appCtx)
                     }
                     onShowMessage(if (target == null) "已新增記事" else "已更新記事")
                 }
@@ -2672,18 +2823,53 @@ private fun NotesTab(
     var showNotesSearch by remember { mutableStateOf(false) }
     var notesSearchQuery by remember { mutableStateOf("") }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "notes_search_pill") {
-            PhantomSearchBarPill(
-                glassState = glassState,
-                query = notesSearchQuery,
-                placeholder = "搜尋待辦或備忘錄…",
-                onClick = { showNotesSearch = true }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PhantomSearchBarPill(
+                    glassState = glassState,
+                    query = notesSearchQuery,
+                    placeholder = "搜尋待辦或備忘錄…",
+                    onClick = { showNotesSearch = true },
+                    modifier = Modifier.weight(1f)
+                )
+                Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    IconButton(
+                        onClick = { showMemoRulesPanel = !showMemoRulesPanel },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = TuneIcon,
+                            contentDescription = "自動記事規則",
+                            tint = if (showMemoRulesPanel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (memoRules.isNotEmpty()) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 4.dp, end = 4.dp)
+                        ) {
+                            Text(
+                                text = if (memoRules.size > 99) "99+" else "${memoRules.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
         // 1. 待辦事項區（與 AI 助手、桌面小工具同步）
         item(key = "notes_todos_section") {
@@ -3060,6 +3246,7 @@ private fun NotesTab(
                                                     updatedAt = System.currentTimeMillis()
                                                 )
                                             )
+                                            com.phantom.checker.widget.NotesWidgetProvider.updateAllIfChanged(appCtx)
                                         }
                                     }
                                 }
@@ -3080,6 +3267,7 @@ private fun NotesTab(
                                         scope.launch {
                                             withContext(Dispatchers.IO) {
                                                 db.noteDao().deleteById(note.id)
+                                                com.phantom.checker.widget.NotesWidgetProvider.updateAllIfChanged(appCtx)
                                             }
                                             onShowMessage("已刪除記事")
                                         }
@@ -3094,36 +3282,82 @@ private fun NotesTab(
             }
         }
 
-        // ===== 自動記事規則區（#203） =====
-        item(key = "memo_rules_header") {
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "自動記事規則 (${memoRules.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                OutlinedButton(
-                    onClick = { showManualMemoRuleDialog = true },
-                    modifier = Modifier.pressableScale()
-                ) {
-                    Text("手動新增")
-                }
-            }
-        }
+    }
 
-        item(key = "memo_rules_nl_input") {
-            PhantomGlassCard(
-                glassState = glassState,
+    BackHandler(enabled = showMemoRulesPanel) {
+        showMemoRulesPanel = false
+    }
+
+    if (showMemoRulesPanel) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.25f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { showMemoRulesPanel = false }
+                )
+        )
+    }
+
+    val panelWidth = minOf(340.dp, maxWidth * 0.9f)
+    val panelMaxHeight = maxHeight * 0.6f
+    AnimatedVisibility(
+        visible = showMemoRulesPanel,
+        enter = expandHorizontally(
+            expandFrom = Alignment.End,
+            animationSpec = spring(stiffness = 380f, dampingRatio = 0.85f)
+        ) + expandVertically(
+            expandFrom = Alignment.Top,
+            animationSpec = spring(stiffness = 380f, dampingRatio = 0.85f)
+        ) + fadeIn(animationSpec = tween(250)),
+        exit = shrinkHorizontally(
+            shrinkTowards = Alignment.End,
+            animationSpec = tween(200)
+        ) + shrinkVertically(
+            shrinkTowards = Alignment.Top,
+            animationSpec = tween(200)
+        ) + fadeOut(animationSpec = tween(200)),
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(top = 52.dp)
+    ) {
+        PhantomGlassCard(
+            glassState = glassState,
+            modifier = Modifier
+                .width(panelWidth)
+                .heightIn(max = panelMaxHeight),
+            cornerRadius = 20.dp,
+            contentPadding = 14.dp
+        ) {
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                cornerRadius = 18.dp,
-                contentPadding = 12.dp
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "自動記事規則 (${memoRules.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OutlinedButton(
+                        onClick = { showManualMemoRuleDialog = true },
+                        modifier = Modifier.pressableScale()
+                    ) {
+                        Text("手動新增")
+                    }
+                }
+                Text(
+                    text = "AI 啟用時以語意判斷相似訊息，未啟用時僅字面匹配",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "自然語言新增規則",
                         style = MaterialTheme.typography.labelLarge,
@@ -3173,103 +3407,104 @@ private fun NotesTab(
                         }
                     }
                 }
-            }
-        }
-
-        if (memoRules.isEmpty()) {
-            item(key = "memo_rules_empty") {
-                PhantomGlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 18.dp,
-                    contentPadding = 14.dp
-                ) {
+                if (memoRules.isEmpty()) {
                     Text(
                         text = "尚無自動記事規則。可於上方用自然語言或「手動新增」設定哪些 App、寄件者或關鍵字要一律記事、一律待辦或永不加入。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-            }
-        } else {
-            items(memoRules, key = { "memo_rule_${it.id}" }) { rule ->
-                val (badgeContainer, badgeContent, badgeText) = when (rule.action) {
-                    com.phantom.checker.data.MemoRuleEntity.ACTION_NOTE -> Triple(
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        MaterialTheme.colorScheme.onTertiaryContainer,
-                        "一律記事"
-                    )
-                    com.phantom.checker.data.MemoRuleEntity.ACTION_TODO -> Triple(
-                        MaterialTheme.colorScheme.primaryContainer,
-                        MaterialTheme.colorScheme.onPrimaryContainer,
-                        "一律待辦"
-                    )
-                    else -> Triple(
-                        MaterialTheme.colorScheme.errorContainer,
-                        MaterialTheme.colorScheme.onErrorContainer,
-                        "永不加入"
-                    )
-                }
-                PhantomGlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 16.dp,
-                    contentPadding = 12.dp
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Surface(color = badgeContainer, shape = RoundedCornerShape(6.dp)) {
-                                    Text(
-                                        text = badgeText,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = badgeContent,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                                Text(
-                                    text = com.phantom.checker.util.MemoRuleEngine.formatConditionSummary(rule),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                        items(memoRules, key = { "memo_rule_${it.id}" }) { rule ->
+                            val (badgeContainer, badgeContent, badgeText) = when (rule.action) {
+                                com.phantom.checker.data.MemoRuleEntity.ACTION_NOTE -> Triple(
+                                    MaterialTheme.colorScheme.tertiaryContainer,
+                                    MaterialTheme.colorScheme.onTertiaryContainer,
+                                    "一律記事"
+                                )
+                                com.phantom.checker.data.MemoRuleEntity.ACTION_TODO -> Triple(
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    MaterialTheme.colorScheme.onPrimaryContainer,
+                                    "一律待辦"
+                                )
+                                else -> Triple(
+                                    MaterialTheme.colorScheme.errorContainer,
+                                    MaterialTheme.colorScheme.onErrorContainer,
+                                    "永不加入"
                                 )
                             }
-                        }
-                        Switch(
-                            checked = rule.isEnabled,
-                            onCheckedChange = { enabled ->
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        db.memoRuleDao().update(rule.copy(isEnabled = enabled))
-                                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Surface(color = badgeContainer, shape = RoundedCornerShape(6.dp)) {
+                                                Text(
+                                                    text = badgeText,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = badgeContent,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            Text(
+                                                text = com.phantom.checker.util.MemoRuleEngine.formatConditionSummary(rule),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = rule.isEnabled,
+                                        onCheckedChange = { enabled ->
+                                            scope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    db.memoRuleDao().update(rule.copy(isEnabled = enabled))
+                                                    com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                                }
+                                            }
+                                        }
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    db.memoRuleDao().deleteById(rule.id)
+                                                    com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                                }
+                                                onShowMessage("已刪除自動記事規則")
+                                            }
+                                        },
+                                        modifier = Modifier.size(40.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "刪除規則",
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
                                     }
                                 }
                             }
-                        )
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        db.memoRuleDao().deleteById(rule.id)
-                                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
-                                    }
-                                    onShowMessage("已刪除自動記事規則")
-                                }
-                            },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "刪除規則",
-                                tint = MaterialTheme.colorScheme.error
-                            )
                         }
                     }
                 }
@@ -3762,6 +3997,7 @@ private fun NoteEditorDialog(
 private fun StatsTab(
     state: StatsUiState,
     glassState: HazeState,
+    visibleCards: Set<String> = PhantomPrefs.DEFAULT_VISIBLE_STATS_CARDS,
     onSummaryGenerated: () -> Unit,
     onShowMessage: (String) -> Unit
 ) {
@@ -3900,7 +4136,8 @@ private fun StatsTab(
             }
         }
         // 每日 AI 摘要玻璃卡
-        item {
+        if ("stats_summary" in visibleCards) {
+        item(key = "stats_summary") {
             var dailyExpanded by remember { mutableStateOf(PhantomPrefs.isDailySummaryExpanded(appCtx)) }
             val summary = state.latestSummary
             PhantomGlassCard(
@@ -4109,6 +4346,7 @@ private fun StatsTab(
                     }
                 }
             }
+        }
         }
 
         // 本週 AI 摘要報告（每週日 22:00 自動生成＋手動生成＋歷史展開）
@@ -4400,7 +4638,8 @@ private fun StatsTab(
         }
 
         // 本週 7 日訊息量簡易 Bar Chart（純 Compose Canvas）
-        item {
+        if ("stats_weekly_bar" in visibleCards) {
+        item(key = "stats_weekly_bar") {
             val barColor = MaterialTheme.colorScheme.primary
             val trackColor = MaterialTheme.colorScheme.surfaceVariant
             PhantomGlassCard(
@@ -4469,9 +4708,11 @@ private fun StatsTab(
                 }
             }
         }
+        }
 
         // 風險分布三色計數卡
-        item {
+        if ("stats_risk_dist" in visibleCards) {
+        item(key = "stats_risk_dist") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -4499,10 +4740,11 @@ private fun StatsTab(
                 )
             }
         }
+        }
 
         // 今日 AI 智慧標記分布
-        if (state.todayAiTagCounts.isNotEmpty()) {
-            item {
+        if ("stats_ai_tags" in visibleCards && state.todayAiTagCounts.isNotEmpty()) {
+            item(key = "stats_ai_tags") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "今日 AI 智慧標記",
@@ -4528,7 +4770,8 @@ private fun StatsTab(
         }
 
         // 今日每小時分布（Task J1：純 Canvas 24 小時 mini bar）
-        item {
+        if ("stats_hourly" in visibleCards) {
+        item(key = "stats_hourly") {
             val hourBarColor = MaterialTheme.colorScheme.secondary
             val hourTrackColor = MaterialTheme.colorScheme.surfaceVariant
             PhantomGlassCard(
@@ -4592,9 +4835,97 @@ private fun StatsTab(
                 }
             }
         }
+        }
+
+        // 今日 App 訊息量排行榜 Top 5（#218）
+        if ("stats_daily_top_apps" in visibleCards) {
+            item(key = "stats_daily_top_apps") {
+                val barColor = MaterialTheme.colorScheme.primary
+                val trackColor = MaterialTheme.colorScheme.surfaceVariant
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text(
+                        text = "今日 App 訊息量排行榜 Top 5",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    if (state.dailyTopApps.isEmpty()) {
+                        Text(
+                            text = "今日尚無收到任何訊息",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        val maxCnt = (state.dailyTopApps.maxOfOrNull { it.count } ?: 1).coerceAtLeast(1)
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            state.dailyTopApps.forEachIndexed { idx, app ->
+                                val ratio = (app.count.toFloat() / maxCnt.toFloat()).coerceIn(0f, 1f)
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "${idx + 1}.",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        AppIconImage(
+                                            packageName = app.packageName,
+                                            contentDescription = app.appLabel,
+                                            size = 24.dp
+                                        )
+                                        Text(
+                                            text = app.appLabel,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            text = "${app.count} 則",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Canvas(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                    ) {
+                                        val r = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+                                        drawRoundRect(
+                                            color = trackColor,
+                                            size = size,
+                                            cornerRadius = r
+                                        )
+                                        if (ratio > 0f) {
+                                            drawRoundRect(
+                                                color = barColor,
+                                                size = Size(size.width * ratio, size.height),
+                                                cornerRadius = r
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // 騷擾佔比（Task J2：行銷 + 垃圾通知 / 總訊息，Canvas arc）
-        item {
+        if ("stats_harassment" in visibleCards) {
+        item(key = "stats_harassment") {
             val total = state.totalMessageCount.coerceAtLeast(0)
             val harass = state.harassmentCount.coerceIn(0, total.coerceAtLeast(0))
             val ratio = if (total > 0) harass.toFloat() / total.toFloat() else 0f
@@ -4658,9 +4989,11 @@ private fun StatsTab(
                 }
             }
         }
+        }
 
         // Top 5 高風險 App 清單
-        item {
+        if ("stats_top_risky" in visibleCards) {
+        item(key = "stats_top_risky") {
             PhantomGlassCard(
                 glassState = glassState,
                 modifier = Modifier.fillMaxWidth(),
@@ -4725,6 +5058,301 @@ private fun StatsTab(
                     modifier = Modifier.align(Alignment.End)
                 ) {
                     Text("查看詐騙警示中心")
+                }
+            }
+        }
+        }
+
+        // 7 日風險趨勢折線圖（#218）
+        if ("stats_risk_trend" in visibleCards) {
+            item(key = "stats_risk_trend") {
+                val lineColor = MaterialTheme.colorScheme.error
+                val gridColor = MaterialTheme.colorScheme.surfaceVariant
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text(
+                        text = "7 日風險趨勢折線（疑似＋詐騙）",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    val points = state.weeklyRiskCounts
+                    val maxRisk = (points.maxOfOrNull { it.count } ?: 1).coerceAtLeast(1)
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(100.dp)
+                    ) {
+                        if (points.isEmpty()) return@Canvas
+                        val padV = 10.dp.toPx()
+                        val usableH = (size.height - padV * 2).coerceAtLeast(1f)
+                        val slotW = size.width / points.size
+                        // 參考底線
+                        drawLine(
+                            color = gridColor,
+                            start = Offset(0f, size.height - padV),
+                            end = Offset(size.width, size.height - padV),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                        val coords = points.mapIndexed { idx, d ->
+                            val x = idx * slotW + slotW / 2f
+                            val y = (size.height - padV) - (d.count.toFloat() / maxRisk.toFloat()) * usableH
+                            Offset(x, y)
+                        }
+                        for (i in 0 until coords.lastIndex) {
+                            drawLine(
+                                color = lineColor,
+                                start = coords[i],
+                                end = coords[i + 1],
+                                strokeWidth = 2.5.dp.toPx(),
+                                cap = StrokeCap.Round
+                            )
+                        }
+                        coords.forEach { pt ->
+                            drawCircle(
+                                color = lineColor,
+                                radius = 4.dp.toPx(),
+                                center = pt
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
+                        points.forEach { day ->
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "${day.count}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (day.count > 0) lineColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = day.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 未讀 / 已讀比例環形（#218）
+        if ("stats_unread_ratio" in visibleCards) {
+            item(key = "stats_unread_ratio") {
+                val total = state.totalMessageCount.coerceAtLeast(0)
+                val unread = state.unreadTotalCount.coerceIn(0, total.coerceAtLeast(0))
+                val read = (total - unread).coerceAtLeast(0)
+                val ratio = if (total > 0) unread.toFloat() / total.toFloat() else 0f
+                val pct = (ratio * 100f).toInt()
+                val arcTrack = MaterialTheme.colorScheme.surfaceVariant
+                val arcColor = MaterialTheme.colorScheme.primary
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.size(72.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val strokeW = 8.dp.toPx()
+                                drawArc(
+                                    color = arcTrack,
+                                    startAngle = -90f,
+                                    sweepAngle = 360f,
+                                    useCenter = false,
+                                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                                )
+                                if (ratio > 0f) {
+                                    drawArc(
+                                        color = arcColor,
+                                        startAngle = -90f,
+                                        sweepAngle = 360f * ratio,
+                                        useCenter = false,
+                                        style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "$pct%",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "未讀 / 已讀比例",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "未讀 $unread 則 · 已讀 $read 則（共 $total 則）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 各 App 訊息佔比橫條前 8（#218）
+        if ("stats_app_share" in visibleCards) {
+            item(key = "stats_app_share") {
+                val top8 = state.rawAppGroups.sortedByDescending { it.cnt }.take(8)
+                val totalAll = state.rawAppGroups.sumOf { it.cnt }.coerceAtLeast(1)
+                val barColor = MaterialTheme.colorScheme.tertiary
+                val trackColor = MaterialTheme.colorScheme.surfaceVariant
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text(
+                        text = "各 App 訊息佔比 Top 8",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    if (top8.isEmpty()) {
+                        Text(
+                            text = "目前尚無訊息紀錄",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            top8.forEach { row ->
+                                val ratio = (row.cnt.toFloat() / totalAll.toFloat()).coerceIn(0f, 1f)
+                                val pct = (ratio * 100f).toInt()
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        AppIconImage(
+                                            packageName = row.packageName,
+                                            contentDescription = row.appLabel,
+                                            size = 22.dp
+                                        )
+                                        Text(
+                                            text = row.appLabel.ifBlank { row.packageName },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            text = "${row.cnt} 則 ($pct%)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Canvas(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(5.dp)
+                                    ) {
+                                        val r = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx())
+                                        drawRoundRect(color = trackColor, size = size, cornerRadius = r)
+                                        if (ratio > 0f) {
+                                            drawRoundRect(
+                                                color = barColor,
+                                                size = Size(size.width * ratio, size.height),
+                                                cornerRadius = r
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 待辦完成率環形（#218）
+        if ("stats_todo_done" in visibleCards) {
+            item(key = "stats_todo_done") {
+                val total = state.todoTotalCount.coerceAtLeast(0)
+                val done = state.todoDoneCount.coerceIn(0, total.coerceAtLeast(0))
+                val ratio = if (total > 0) done.toFloat() / total.toFloat() else 0f
+                val pct = (ratio * 100f).toInt()
+                val arcTrack = MaterialTheme.colorScheme.surfaceVariant
+                val arcColor = MaterialTheme.colorScheme.tertiary
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.size(72.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val strokeW = 8.dp.toPx()
+                                drawArc(
+                                    color = arcTrack,
+                                    startAngle = -90f,
+                                    sweepAngle = 360f,
+                                    useCenter = false,
+                                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                                )
+                                if (ratio > 0f) {
+                                    drawArc(
+                                        color = arcColor,
+                                        startAngle = -90f,
+                                        sweepAngle = 360f * ratio,
+                                        useCenter = false,
+                                        style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "$pct%",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "待辦完成率",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = if (total == 0) "尚無待辦事項" else "$done / $total 項待辦已完成",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }

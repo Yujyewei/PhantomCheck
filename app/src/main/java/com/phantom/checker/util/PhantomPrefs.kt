@@ -1201,4 +1201,66 @@ object PhantomPrefs {
         val safe = if (minutes in setOf(0, 15, 30, 60)) minutes else 30
         prefs(ctx).edit().putInt("reply_proxy_timeout_minutes", safe).apply()
     }
+
+    const val AI_CHAT_TAB_NEW = "new"
+    const val AI_CHAT_TAB_CONTINUE = "continue"
+
+    /** 切換到 AI 助手分頁時的行為（"new" = 開啟新對話，"continue" = 接續上次對話，預設 "new"） */
+    fun getAiChatTabBehavior(ctx: Context): String {
+        val v = prefs(ctx).getString("ai_chat_tab_behavior", AI_CHAT_TAB_NEW)
+        return if (v == AI_CHAT_TAB_CONTINUE) AI_CHAT_TAB_CONTINUE else AI_CHAT_TAB_NEW
+    }
+
+    fun setAiChatTabBehavior(ctx: Context, behavior: String) {
+        val safe = if (behavior == AI_CHAT_TAB_CONTINUE) AI_CHAT_TAB_CONTINUE else AI_CHAT_TAB_NEW
+        prefs(ctx).edit().putString("ai_chat_tab_behavior", safe).apply()
+    }
+
+    fun isAiChatTabContinue(ctx: Context): Boolean =
+        getAiChatTabBehavior(ctx) == AI_CHAT_TAB_CONTINUE
+
+    /** 訊息分頁 App 卡片堆疊效果開關（預設開） */
+    fun isCardStackEffectEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("card_stack_effect_enabled", true)
+
+    fun setCardStackEffectEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("card_stack_effect_enabled", enabled).apply()
+    }
+
+    data class StatsCardOption(val key: String, val title: String, val subtitle: String, val defaultVisible: Boolean)
+
+    val STATS_CARD_OPTIONS: List<StatsCardOption> = listOf(
+        StatsCardOption("stats_summary", "每日 AI 摘要", "顯示今日 AI 重點摘要卡片", true),
+        StatsCardOption("stats_weekly_bar", "本週 7 日訊息量", "顯示近 7 日每日訊息長條圖", true),
+        StatsCardOption("stats_risk_dist", "風險分布三色", "顯示安全／疑似／詐騙計數卡", true),
+        StatsCardOption("stats_hourly", "今日每小時分布", "顯示今日 24 小時訊息分布圖", true),
+        StatsCardOption("stats_daily_top_apps", "今日 App 訊息量排行榜 Top 5", "顯示今日收到訊息最多的前五名 App", true),
+        StatsCardOption("stats_ai_tags", "今日 AI 智慧標記", "顯示今日 AI 自動標記分類統計", true),
+        StatsCardOption("stats_harassment", "騷擾佔比環形", "顯示行銷與垃圾通知佔比環形圖", true),
+        StatsCardOption("stats_top_risky", "Top 5 高風險 App", "顯示累計疑似與詐騙訊息前五名 App", true),
+        StatsCardOption("stats_risk_trend", "7 日風險趨勢折線", "顯示近 7 日每日疑似與詐騙訊息趨勢", false),
+        StatsCardOption("stats_unread_ratio", "未讀 / 已讀比例環形", "顯示未讀與已讀訊息佔比環形圖", false),
+        StatsCardOption("stats_app_share", "各 App 訊息佔比橫條前 8", "顯示各 App 歷史訊息量佔比排行", false),
+        StatsCardOption("stats_todo_done", "待辦完成率環形", "顯示待辦事項已完成比例環形圖", false)
+    )
+
+    val DEFAULT_VISIBLE_STATS_CARDS: Set<String> =
+        STATS_CARD_OPTIONS.filter { it.defaultVisible }.map { it.key }.toSet()
+
+    fun getVisibleStatsCards(ctx: Context): Set<String> =
+        prefs(ctx).getStringSet("visible_stats_cards", DEFAULT_VISIBLE_STATS_CARDS)
+            ?: DEFAULT_VISIBLE_STATS_CARDS
+
+    fun setVisibleStatsCards(ctx: Context, cards: Set<String>) {
+        prefs(ctx).edit().putStringSet("visible_stats_cards", cards.toSet()).apply()
+    }
+
+    fun isStatsCardVisible(ctx: Context, key: String): Boolean =
+        key in getVisibleStatsCards(ctx)
+
+    fun setStatsCardVisible(ctx: Context, key: String, visible: Boolean) {
+        val current = getVisibleStatsCards(ctx).toMutableSet()
+        if (visible) current.add(key) else current.remove(key)
+        setVisibleStatsCards(ctx, current)
+    }
 }

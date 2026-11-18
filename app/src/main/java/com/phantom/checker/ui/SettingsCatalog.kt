@@ -30,6 +30,7 @@ object SettingsCatalog {
         SettingSearchItem("ai_providers", "ai", "多 Provider AI 設定", "管理 OpenAI / Gemini / Groq / 自訂端點與 API Key", listOf("key", "apikey", "模型", "openai", "gemini", "provider", "金鑰"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_tag_dispatch_test", "ai", "AI 標籤分發測試", "以固定樣本訊息測試目前 AI Provider 的風險與自動標籤分發結果", listOf("測試", "分發", "標籤測試", "智慧掃描", "失敗", "tag")),
         SettingSearchItem("ai_chat_suggestions", "ai", "AI 助手常用指令選單", "在 AI 助手輸入列 + 選單顯示常用指令（關閉後僅保留圖片上傳）", listOf("常用指令", "建議問題", "快速提問", "昨日簡報", "助手")),
+        SettingSearchItem("ai_chat_tab_behavior", "ai", "切到 AI 助手時接續上次對話", "預設為開啟新對話；開啟後切換到 AI 助手分頁時自動載入最近一次對話", listOf("接續", "繼續", "上次對話", "新對話", "歷史對話", "session")),
         SettingSearchItem("ai_quick_commands", "ai", "AI 助手常用指令與預設模式", "管理自訂常用指令，設定點擊後「直接執行」或「預輸入」", listOf("常用指令", "快捷指令", "直接執行", "預輸入", "指令", "command")),
         SettingSearchItem("ai_daily_limit", "ai", "每日 AI 額度上限", "限制每日 AI 呼叫次數", listOf("額度", "上限", "次數", "quota", "limit", "每日額度", "每日ai額度", "每日上限")),
         SettingSearchItem("ai_chat_rag_limit", "ai", "AI 助手單次閱讀訊息數", "調整 AI 助手每次讀取的歷史訊息上限（50–800 則；省 token 模式降為 100）", listOf("閱讀", "筆數", "訊息數", "rag", "context", "上下文", "400", "上限", "單次閱讀訊息數", "單次載入訊息數", "載入筆數", "閱讀訊息數", "載入訊息數")),
@@ -80,9 +81,23 @@ object SettingsCatalog {
         SettingSearchItem("personal_sort", "personalization", "首頁 App 排序", "切換首頁 App 清單依時間新→舊、未讀多→少或風險高→低排序", listOf("個人化", "排序", "未讀", "風險", "時間", "sort")),
         SettingSearchItem("personal_filters", "personalization", "首頁篩選欄顯示項目", "自訂首頁篩選欄是否顯示星標、詐騙、已過濾與標籤按鈕", listOf("個人化", "篩選", "filter", "星標", "標籤", "隱藏")),
         SettingSearchItem("personal_summary_collapse", "personalization", "摘要卡預設收合", "控制每日與本週 AI 摘要卡是否預設收合為單行預覽", listOf("個人化", "摘要", "收合", "展開", "折疊")),
+        SettingSearchItem("card_stack_effect_enabled", "personalization", "訊息卡片堆疊效果", "同一 App 有多則訊息時於卡片後方顯示層疊邊緣", listOf("堆疊", "卡片堆疊", "層疊", "stack", "視差", "個人化")),
         SettingSearchItem("personal_time_format", "personalization", "時間顯示格式（12 / 24 小時制）", "切換訊息與對話的時間顯示格式", listOf("個人化", "時間", "12小時", "24小時", "am", "pm")),
         SettingSearchItem("bg_global", "personalization", "全域背景圖片", "設定套用於訊息中心、統計、AI 助手與對話頁的全域底圖", listOf("個人化", "背景", "桌布", "wallpaper", "圖片", "全域")),
         SettingSearchItem("bg_chat", "personalization", "AI 聊天背景圖片", "自訂 AI 助手分頁背景圖片（未設定時沿用全域背景）", listOf("個人化", "背景", "桌布", "wallpaper", "AI", "聊天")),
+        SettingSearchItem("stats_card_visibility", "stats", "統計頁卡片顯示自訂", "勾選要在統計分頁顯示的圖表與統計卡片", listOf("統計", "圖表", "排行榜", "自訂", "卡片", "折線圖", "環形圖")),
+        SettingSearchItem("stats_summary", "stats", "統計卡：每日 AI 摘要", "控制統計頁是否顯示每日 AI 摘要卡片", listOf("統計", "每日摘要", "ai摘要", "stats")),
+        SettingSearchItem("stats_weekly_bar", "stats", "統計卡：本週 7 日訊息量", "控制統計頁是否顯示本週 7 日訊息量長條圖", listOf("統計", "本週", "7日", "長條圖", "訊息量")),
+        SettingSearchItem("stats_risk_dist", "stats", "統計卡：風險分布三色", "控制統計頁是否顯示風險分布三色計數卡", listOf("統計", "風險分布", "安全", "疑似", "詐騙")),
+        SettingSearchItem("stats_hourly", "stats", "統計卡：今日每小時分布", "控制統計頁是否顯示今日 24 小時訊息分布圖", listOf("統計", "每小時", "時段", "分布")),
+        SettingSearchItem("stats_daily_top_apps", "stats", "統計卡：今日 App 訊息量排行榜 Top 5", "控制統計頁是否顯示今日收到訊息最多的前五名 App 排行榜", listOf("統計", "排行榜", "top5", "今日", "app")),
+        SettingSearchItem("stats_ai_tags", "stats", "統計卡：今日 AI 智慧標記", "控制統計頁是否顯示今日 AI 智慧標記分類統計", listOf("統計", "ai標記", "智慧標記", "標籤")),
+        SettingSearchItem("stats_harassment", "stats", "統計卡：騷擾佔比環形", "控制統計頁是否顯示騷擾佔比環形圖", listOf("統計", "騷擾", "行銷", "垃圾通知", "環形圖")),
+        SettingSearchItem("stats_top_risky", "stats", "統計卡：Top 5 高風險 App", "控制統計頁是否顯示累計疑似與詐騙訊息前五名 App", listOf("統計", "高風險", "top5", "詐騙app")),
+        SettingSearchItem("stats_risk_trend", "stats", "統計卡：7 日風險趨勢折線", "控制統計頁是否顯示近 7 日疑似與詐騙訊息趨勢折線圖", listOf("統計", "風險趨勢", "折線圖", "7日", "詐騙趨勢")),
+        SettingSearchItem("stats_unread_ratio", "stats", "統計卡：未讀 / 已讀比例環形", "控制統計頁是否顯示未讀與已讀訊息比例環形圖", listOf("統計", "未讀", "已讀", "比例", "環形圖")),
+        SettingSearchItem("stats_app_share", "stats", "統計卡：各 App 訊息佔比橫條前 8", "控制統計頁是否顯示各 App 訊息佔比前 8 名橫條圖", listOf("統計", "佔比", "app佔比", "橫條圖", "top8")),
+        SettingSearchItem("stats_todo_done", "stats", "統計卡：待辦完成率環形", "控制統計頁是否顯示待辦事項完成率環形圖", listOf("統計", "待辦", "完成率", "環形圖", "todo")),
         SettingSearchItem("bg_conversation", "personalization", "對話頁背景圖片", "自訂對話頁背景圖片（未設定時沿用全域背景）", listOf("個人化", "背景", "桌布", "wallpaper", "對話")),
         SettingSearchItem("bg_scrim", "personalization", "背景暗色遮罩強度", "調整背景圖片上的暗色遮罩透明度以確保文字可讀性", listOf("個人化", "背景", "遮罩", "scrim", "暗度", "對比")),
         SettingSearchItem("glass_strength", "personalization", "玻璃卡片強度", "調整液態玻璃卡片的表面不透明度與視覺強度", listOf("個人化", "玻璃", "強度", "毛玻璃", "透明", "glass")),
@@ -103,6 +118,7 @@ object SettingsCatalog {
         "ai_tag_failure_notif_enabled",
         "ai_dual_model_routing",
         "ai_chat_suggestions",
+        "ai_chat_tab_behavior",
         "ai_daily_summary",
         "ai_daily_summary_notif",
         "notif_persistent_icons",
@@ -115,6 +131,19 @@ object SettingsCatalog {
         "appearance_haptic",
         "intel_enabled",
         "personal_summary_collapse",
+        "card_stack_effect_enabled",
+        "stats_summary",
+        "stats_weekly_bar",
+        "stats_risk_dist",
+        "stats_hourly",
+        "stats_daily_top_apps",
+        "stats_ai_tags",
+        "stats_harassment",
+        "stats_top_risky",
+        "stats_risk_trend",
+        "stats_unread_ratio",
+        "stats_app_share",
+        "stats_todo_done",
         "update_auto_check"
     )
 
@@ -135,6 +164,7 @@ object SettingsCatalog {
             "ai_tag_failure_notif_enabled" -> PhantomPrefs.isAiTagFailureNotifEnabled(appCtx)
             "ai_dual_model_routing" -> PhantomPrefs.isDualModelRoutingEnabled(appCtx)
             "ai_chat_suggestions" -> PhantomPrefs.isChatSuggestionsEnabled(appCtx)
+            "ai_chat_tab_behavior" -> PhantomPrefs.isAiChatTabContinue(appCtx)
             "ai_daily_summary" -> PhantomPrefs.isDailySummaryEnabled(appCtx)
             "ai_daily_summary_notif" -> PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
             "notif_persistent_icons" -> PhantomPrefs.isPersistentNotifShowIcons(appCtx)
@@ -147,6 +177,19 @@ object SettingsCatalog {
             "appearance_haptic" -> PhantomPrefs.isHapticFeedbackEnabled(appCtx)
             "intel_enabled" -> PhantomPrefs.isIntelEnabled(appCtx)
             "personal_summary_collapse" -> PhantomPrefs.isSummaryDefaultCollapsed(appCtx)
+            "card_stack_effect_enabled" -> PhantomPrefs.isCardStackEffectEnabled(appCtx)
+            "stats_summary",
+            "stats_weekly_bar",
+            "stats_risk_dist",
+            "stats_hourly",
+            "stats_daily_top_apps",
+            "stats_ai_tags",
+            "stats_harassment",
+            "stats_top_risky",
+            "stats_risk_trend",
+            "stats_unread_ratio",
+            "stats_app_share",
+            "stats_todo_done" -> PhantomPrefs.isStatsCardVisible(appCtx, id)
             "update_auto_check" -> PhantomPrefs.isUpdateAutoCheckEnabled(appCtx)
             else -> null
         }
@@ -189,6 +232,10 @@ object SettingsCatalog {
             "ai_tag_failure_notif_enabled" -> PhantomPrefs.setAiTagFailureNotifEnabled(appCtx, enabled)
             "ai_dual_model_routing" -> PhantomPrefs.setDualModelRoutingEnabled(appCtx, enabled)
             "ai_chat_suggestions" -> PhantomPrefs.setChatSuggestionsEnabled(appCtx, enabled)
+            "ai_chat_tab_behavior" -> PhantomPrefs.setAiChatTabBehavior(
+                appCtx,
+                if (enabled) PhantomPrefs.AI_CHAT_TAB_CONTINUE else PhantomPrefs.AI_CHAT_TAB_NEW
+            )
             "ai_daily_summary" -> {
                 PhantomPrefs.setDailySummaryEnabled(appCtx, enabled)
                 DailySummaryPolicy.schedule(appCtx)
@@ -207,6 +254,19 @@ object SettingsCatalog {
             "appearance_haptic" -> PhantomPrefs.setHapticFeedbackEnabled(appCtx, enabled)
             "intel_enabled" -> PhantomPrefs.setIntelEnabled(appCtx, enabled)
             "personal_summary_collapse" -> PhantomPrefs.setSummaryDefaultCollapsed(appCtx, enabled)
+            "card_stack_effect_enabled" -> PhantomPrefs.setCardStackEffectEnabled(appCtx, enabled)
+            "stats_summary",
+            "stats_weekly_bar",
+            "stats_risk_dist",
+            "stats_hourly",
+            "stats_daily_top_apps",
+            "stats_ai_tags",
+            "stats_harassment",
+            "stats_top_risky",
+            "stats_risk_trend",
+            "stats_unread_ratio",
+            "stats_app_share",
+            "stats_todo_done" -> PhantomPrefs.setStatsCardVisible(appCtx, id, enabled)
             "update_auto_check" -> PhantomPrefs.setUpdateAutoCheckEnabled(appCtx, enabled)
             else -> return null
         }
