@@ -491,13 +491,15 @@ class NotificationCollectorService : NotificationListenerService() {
         val enableAutoTag = PhantomPrefs.isEffectiveAiAutoTagEnabled(applicationContext)
         val aiTags = if (enableAutoTag) db.tagDao().aiManagedTags() else emptyList()
         val aiRules = cachedActiveAiRules(db)
+        val memoRules = cachedActiveMemoRules(db)
 
         val outcome = AiClient.analyzeMessageBatchDetailed(
             items = items,
             tags = aiTags,
             enableAutoTag = enableAutoTag,
             context = applicationContext,
-            rules = aiRules
+            rules = aiRules,
+            memoRules = memoRules
         )
         val results = when (outcome) {
             is AiClient.BatchAnalysisOutcome.Success -> outcome.results
@@ -956,6 +958,7 @@ class NotificationCollectorService : NotificationListenerService() {
         private var cachedFilterRules: Pair<Long, List<FilterRule>>? = null
         private var cachedAiRules: Pair<Long, List<AiRuleEntity>>? = null
         private var cachedUserTagRules: Pair<Long, List<UserTagRuleEntity>>? = null
+        private var cachedMemoRules: Pair<Long, List<MemoRuleEntity>>? = null
         private val cachedAppCatRules = object : LruCache<String, Pair<Long, List<AppCategoryRuleEntity>>>(64) {}
         private var cachedAlertKeywordsPair: Pair<Long, List<String>>? = null
 
@@ -964,6 +967,7 @@ class NotificationCollectorService : NotificationListenerService() {
                 cachedFilterRules = null
                 cachedAiRules = null
                 cachedUserTagRules = null
+                cachedMemoRules = null
                 cachedAppCatRules.evictAll()
                 cachedAlertKeywordsPair = null
             }
@@ -1010,6 +1014,21 @@ class NotificationCollectorService : NotificationListenerService() {
             val fresh = db.userTagRuleDao().active()
             synchronized(ruleCacheLock) {
                 cachedUserTagRules = System.currentTimeMillis() to fresh
+            }
+            return fresh
+        }
+
+        suspend fun cachedActiveMemoRules(db: AppDatabase): List<MemoRuleEntity> {
+            val now = System.currentTimeMillis()
+            synchronized(ruleCacheLock) {
+                val entry = cachedMemoRules
+                if (entry != null && (now - entry.first) < RULE_CACHE_TTL_MS) {
+                    return entry.second
+                }
+            }
+            val fresh = db.memoRuleDao().active()
+            synchronized(ruleCacheLock) {
+                cachedMemoRules = System.currentTimeMillis() to fresh
             }
             return fresh
         }
@@ -1132,10 +1151,29 @@ class NotificationCollectorService : NotificationListenerService() {
         ) {
             val clean = rawMemo.trim().take(40)
             if (clean.isEmpty()) return
+
+            val matchedRule = try {
+                val rules = cachedActiveMemoRules(db)
+                com.phantom.checker.util.MemoRuleEngine.match(
+                    rules = rules,
+                    packageName = msg.packageName,
+                    sender = msg.sender,
+                    content = msg.content
+                )
+            } catch (_: Exception) {
+                null
+            }
+            if (matchedRule?.action == MemoRuleEntity.ACTION_NEVER) return
+            val effectiveMemoType = when (matchedRule?.action) {
+                MemoRuleEntity.ACTION_TODO -> AiClient.MEMO_TYPE_TODO
+                MemoRuleEntity.ACTION_NOTE -> AiClient.MEMO_TYPE_NOTE
+                else -> memoType
+            }
+
             val now = System.currentTimeMillis()
             val normClean = normalizeForSimilarity(clean)
 
-            if (memoType == AiClient.MEMO_TYPE_TODO) {
+            if (effectiveMemoType == AiClient.MEMO_TYPE_TODO) {
                 if (db.todoDao().findByRelatedMessageId(msg.id) != null) return
                 val since = now - AUTO_MEMO_DEDUP_WINDOW_MS
                 val recentPending = db.todoDao().findRecentPendingSince(since)
@@ -1335,7 +1373,8 @@ object AppDatabaseHolder {
                 AppDatabase.MIGRATION_10_11,
                 AppDatabase.MIGRATION_11_12,
                 AppDatabase.MIGRATION_12_13,
-                AppDatabase.MIGRATION_13_14
+                AppDatabase.MIGRATION_13_14,
+                AppDatabase.MIGRATION_14_15
             ).addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)

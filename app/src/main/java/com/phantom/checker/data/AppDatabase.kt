@@ -28,7 +28,8 @@ data class MessageEntity(
     val isRead: Boolean = false,   // 幻訊內的已讀標記（不影響原 App）
     val dedupKey: String? = null,  // 通知去重雜湊鍵
     val isStarred: Boolean = false, // 星標
-    val remindAt: Long? = null     // 待辦提醒時間（epoch ms）
+    val remindAt: Long? = null,    // 待辦提醒時間（epoch ms）
+    val isOwn: Boolean = false     // 使用者自己送出的回覆
 )
 
 @Entity(tableName = "filter_rules")
@@ -161,6 +162,27 @@ data class AiRuleEntity(
     companion object {
         const val KIND_TAG = "tag"
         const val KIND_WHITELIST = "whitelist"
+    }
+}
+
+@Entity(tableName = "memo_rules")
+data class MemoRuleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val packageName: String? = null,
+    val sender: String? = null,
+    val keyword: String? = null,
+    val action: String, // "note" | "todo" | "never"
+    val isEnabled: Boolean = true,
+    val createdAt: Long = System.currentTimeMillis(),
+    val source: String = SOURCE_MANUAL // "manual" | "chat" | "detail"
+) {
+    companion object {
+        const val ACTION_NOTE = "note"
+        const val ACTION_TODO = "todo"
+        const val ACTION_NEVER = "never"
+        const val SOURCE_MANUAL = "manual"
+        const val SOURCE_CHAT = "chat"
+        const val SOURCE_DETAIL = "detail"
     }
 }
 
@@ -930,6 +952,27 @@ interface NoteDao {
     suspend fun deleteById(id: Long)
 }
 
+@Dao
+interface MemoRuleDao {
+    @Query("SELECT * FROM memo_rules ORDER BY id DESC")
+    fun observeAll(): kotlinx.coroutines.flow.Flow<List<MemoRuleEntity>>
+
+    @Query("SELECT * FROM memo_rules ORDER BY id DESC")
+    suspend fun all(): List<MemoRuleEntity>
+
+    @Query("SELECT * FROM memo_rules WHERE isEnabled = 1 ORDER BY id ASC")
+    suspend fun active(): List<MemoRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(rule: MemoRuleEntity): Long
+
+    @Update
+    suspend fun update(rule: MemoRuleEntity)
+
+    @Query("DELETE FROM memo_rules WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
 @Database(
     entities = [
         MessageEntity::class,
@@ -946,9 +989,10 @@ interface NoteDao {
         UserTagRuleEntity::class,
         TodoEntity::class,
         PendingAiAnalysisEntity::class,
-        NoteEntity::class
+        NoteEntity::class,
+        MemoRuleEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -964,6 +1008,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun todoDao(): TodoDao
     abstract fun pendingAiAnalysisDao(): PendingAiAnalysisDao
     abstract fun noteDao(): NoteDao
+    abstract fun memoRuleDao(): MemoRuleDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1214,6 +1259,26 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE todos ADD COLUMN priority INTEGER NOT NULL DEFAULT 1")
                 db.execSQL("ALTER TABLE todos ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE todos ADD COLUMN repeatRule TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN isOwn INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `memo_rules` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `packageName` TEXT,
+                        `sender` TEXT,
+                        `keyword` TEXT,
+                        `action` TEXT NOT NULL,
+                        `isEnabled` INTEGER NOT NULL DEFAULT 1,
+                        `createdAt` INTEGER NOT NULL,
+                        `source` TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
             }
         }
     }

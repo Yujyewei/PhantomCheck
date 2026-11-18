@@ -69,6 +69,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -80,11 +82,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -2479,12 +2483,17 @@ private fun NotesTab(
 
     val notes by remember(db) { db.noteDao().observeAll() }.collectAsState(initial = emptyList())
     val rawTodos by remember(db) { db.todoDao().observeAll() }.collectAsState(initial = emptyList())
+    val memoRules by remember(db) { db.memoRuleDao().observeAll() }.collectAsState(initial = emptyList())
     val todos = remember(rawTodos) { ReminderScheduler.sortTodosSmart(rawTodos) }
     var todoFilter by remember { mutableStateOf(TodoFilterMode.ALL) }
     var showEditor by remember { mutableStateOf(false) }
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
     var showTodoEditor by remember { mutableStateOf(false) }
     var editingTodo by remember { mutableStateOf<TodoEntity?>(null) }
+    var showManualMemoRuleDialog by remember { mutableStateOf(false) }
+    var nlMemoRuleInput by remember { mutableStateOf("") }
+    var isParsingMemoRule by remember { mutableStateOf(false) }
+    var pendingNlMemoRule by remember { mutableStateOf<AiClient.ParsedMemoRule?>(null) }
 
     LaunchedEffect(initialEditTodoId, todos) {
         val targetId = initialEditTodoId ?: return@LaunchedEffect
@@ -2991,6 +3000,263 @@ private fun NotesTab(
                 }
             }
         }
+
+        // ===== 自動記事規則區（#203） =====
+        item(key = "memo_rules_header") {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "自動記事規則 (${memoRules.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                OutlinedButton(
+                    onClick = { showManualMemoRuleDialog = true },
+                    modifier = Modifier.pressableScale()
+                ) {
+                    Text("手動新增")
+                }
+            }
+        }
+
+        item(key = "memo_rules_nl_input") {
+            PhantomGlassCard(
+                glassState = glassState,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = 18.dp,
+                contentPadding = 12.dp
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "自然語言新增規則",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = nlMemoRuleInput,
+                            onValueChange = { nlMemoRuleInput = it },
+                            placeholder = { Text("例如：Gogolook 驗證碼不要加入待辦") },
+                            singleLine = true,
+                            enabled = !isParsingMemoRule,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                val text = nlMemoRuleInput.trim()
+                                if (text.isEmpty() || isParsingMemoRule) return@Button
+                                isParsingMemoRule = true
+                                scope.launch {
+                                    val result = AiClient.parseMemoRule(appCtx, text)
+                                    isParsingMemoRule = false
+                                    result.fold(
+                                        onSuccess = { parsed ->
+                                            pendingNlMemoRule = parsed
+                                        },
+                                        onFailure = { err ->
+                                            onShowMessage(err.message ?: "解析規則失敗")
+                                        }
+                                    )
+                                }
+                            },
+                            enabled = nlMemoRuleInput.isNotBlank() && !isParsingMemoRule
+                        ) {
+                            if (isParsingMemoRule) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text("送出")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (memoRules.isEmpty()) {
+            item(key = "memo_rules_empty") {
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 18.dp,
+                    contentPadding = 14.dp
+                ) {
+                    Text(
+                        text = "尚無自動記事規則。可於上方用自然語言或「手動新增」設定哪些 App、寄件者或關鍵字要一律記事、一律待辦或永不加入。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            items(memoRules, key = { "memo_rule_${it.id}" }) { rule ->
+                val (badgeContainer, badgeContent, badgeText) = when (rule.action) {
+                    com.phantom.checker.data.MemoRuleEntity.ACTION_NOTE -> Triple(
+                        MaterialTheme.colorScheme.tertiaryContainer,
+                        MaterialTheme.colorScheme.onTertiaryContainer,
+                        "一律記事"
+                    )
+                    com.phantom.checker.data.MemoRuleEntity.ACTION_TODO -> Triple(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.onPrimaryContainer,
+                        "一律待辦"
+                    )
+                    else -> Triple(
+                        MaterialTheme.colorScheme.errorContainer,
+                        MaterialTheme.colorScheme.onErrorContainer,
+                        "永不加入"
+                    )
+                }
+                PhantomGlassCard(
+                    glassState = glassState,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 16.dp,
+                    contentPadding = 12.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(color = badgeContainer, shape = RoundedCornerShape(6.dp)) {
+                                    Text(
+                                        text = badgeText,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = badgeContent,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Text(
+                                    text = com.phantom.checker.util.MemoRuleEngine.formatConditionSummary(rule),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = rule.isEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        db.memoRuleDao().update(rule.copy(isEnabled = enabled))
+                                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                    }
+                                }
+                            }
+                        )
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        db.memoRuleDao().deleteById(rule.id)
+                                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                    }
+                                    onShowMessage("已刪除自動記事規則")
+                                }
+                            },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "刪除規則",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showManualMemoRuleDialog) {
+        ManualMemoRuleDialog(
+            onDismiss = { showManualMemoRuleDialog = false },
+            onSave = { pkg, sender, keyword, action ->
+                showManualMemoRuleDialog = false
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        db.memoRuleDao().insert(
+                            com.phantom.checker.data.MemoRuleEntity(
+                                packageName = pkg,
+                                sender = sender,
+                                keyword = keyword,
+                                action = action,
+                                isEnabled = true,
+                                createdAt = System.currentTimeMillis(),
+                                source = com.phantom.checker.data.MemoRuleEntity.SOURCE_MANUAL
+                            )
+                        )
+                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                    }
+                    onShowMessage("已新增自動記事規則")
+                }
+            }
+        )
+    }
+
+    pendingNlMemoRule?.let { parsed ->
+        val summary = buildString {
+            val parts = listOfNotNull(
+                parsed.app?.let { "App $it" },
+                parsed.sender?.let { "寄件者 $it" },
+                parsed.keyword?.let { "含「$it」" }
+            )
+            append(parts.joinToString("／"))
+            append(" → ")
+            append(com.phantom.checker.util.MemoRuleEngine.actionLabel(parsed.memoAction))
+        }
+        AlertDialog(
+            onDismissRequest = { pendingNlMemoRule = null },
+            title = { Text("確認新增自動記事規則") },
+            text = { Text(summary) },
+            confirmButton = {
+                Button(onClick = {
+                    val rule = parsed
+                    pendingNlMemoRule = null
+                    nlMemoRuleInput = ""
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            db.memoRuleDao().insert(
+                                com.phantom.checker.data.MemoRuleEntity(
+                                    packageName = rule.app,
+                                    sender = rule.sender,
+                                    keyword = rule.keyword,
+                                    action = rule.memoAction,
+                                    isEnabled = true,
+                                    createdAt = System.currentTimeMillis(),
+                                    source = com.phantom.checker.data.MemoRuleEntity.SOURCE_CHAT
+                                )
+                            )
+                            com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                        }
+                        onShowMessage("已新增自動記事規則")
+                    }
+                }) {
+                    Text("確認新增")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingNlMemoRule = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     val nq = notesSearchQuery.trim()
@@ -4330,3 +4596,144 @@ private fun RiskCountCard(
         )
     }
 }
+
+@Composable
+private fun ManualMemoRuleDialog(
+    onDismiss: () -> Unit,
+    onSave: (packageName: String?, sender: String?, keyword: String?, action: String) -> Unit
+) {
+    val ctx = LocalContext.current
+    var pkgText by remember { mutableStateOf("") }
+    var senderText by remember { mutableStateOf("") }
+    var keywordText by remember { mutableStateOf("") }
+    var selectedAction by remember { mutableStateOf(com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER) }
+    var showAppDropdown by remember { mutableStateOf(false) }
+    var appOptions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        appOptions = withContext(Dispatchers.IO) {
+            val pm = ctx.packageManager
+            val fromDb = runCatching {
+                AppDatabaseHolder.db(ctx.applicationContext).messageDao().appGroups()
+                    .map { it.packageName to it.appLabel.ifBlank { it.packageName } }
+            }.getOrDefault(emptyList())
+            val installed = runCatching {
+                pm.getInstalledApplications(0)
+                    .filter { (it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0 }
+                    .map { it.packageName to pm.getApplicationLabel(it).toString() }
+            }.getOrDefault(emptyList())
+            (fromDb + installed)
+                .distinctBy { it.first }
+                .sortedBy { it.second.lowercase() }
+        }
+    }
+
+    val isValid = pkgText.isNotBlank() || senderText.isNotBlank() || keywordText.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("手動新增自動記事規則") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "以下三項條件至少填寫一項（同時填寫時須全部符合）：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Box {
+                    OutlinedTextField(
+                        value = pkgText,
+                        onValueChange = { pkgText = it },
+                        label = { Text("App 套件名（可選）") },
+                        placeholder = { Text("例如 com.gogolook.whoscall") },
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { showAppDropdown = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "選擇已安裝 App"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    DropdownMenu(
+                        expanded = showAppDropdown,
+                        onDismissRequest = { showAppDropdown = false }
+                    ) {
+                        appOptions.take(40).forEach { (pkg, label) ->
+                            DropdownMenuItem(
+                                text = { Text("$label ($pkg)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                onClick = {
+                                    pkgText = pkg
+                                    showAppDropdown = false
+                                }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = senderText,
+                    onValueChange = { senderText = it },
+                    label = { Text("寄件者（可選）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = keywordText,
+                    onValueChange = { keywordText = it },
+                    label = { Text("關鍵字（可選）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "規則動作：",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                listOf(
+                    com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER to "永不加入記事／待辦",
+                    com.phantom.checker.data.MemoRuleEntity.ACTION_TODO to "一律加入待辦",
+                    com.phantom.checker.data.MemoRuleEntity.ACTION_NOTE to "一律加入記事"
+                ).forEach { (act, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedAction = act },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedAction == act,
+                            onClick = { selectedAction = act }
+                        )
+                        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(
+                        pkgText.trim().takeIf { it.isNotEmpty() },
+                        senderText.trim().takeIf { it.isNotEmpty() },
+                        keywordText.trim().takeIf { it.isNotEmpty() },
+                        selectedAction
+                    )
+                },
+                enabled = isValid
+            ) {
+                Text("儲存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+

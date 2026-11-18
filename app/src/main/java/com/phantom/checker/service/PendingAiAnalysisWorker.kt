@@ -63,6 +63,7 @@ class PendingAiAnalysisWorker(
         val enableAutoTag = PhantomPrefs.isEffectiveAiAutoTagEnabled(appCtx)
         val aiTags = if (enableAutoTag) db.tagDao().aiManagedTags() else emptyList()
         val aiRules = db.aiRuleDao().all().filter { it.isEnabled }.take(20)
+        val memoRules = db.memoRuleDao().active().take(10)
 
         var anyTransientFailure = false
         var anyScamAlert = false
@@ -84,7 +85,8 @@ class PendingAiAnalysisWorker(
                     tags = aiTags,
                     enableAutoTag = enableAutoTag,
                     context = appCtx,
-                    rules = aiRules
+                    rules = aiRules,
+                    memoRules = memoRules
                 )
             ) {
                 is AiClient.BatchAnalysisOutcome.Success -> {
