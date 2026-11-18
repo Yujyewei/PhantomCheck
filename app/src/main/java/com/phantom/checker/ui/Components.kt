@@ -6,6 +6,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -14,30 +15,39 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,12 +64,15 @@ import com.phantom.checker.util.BackgroundLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -116,22 +129,51 @@ fun Modifier.phantomGlassSurface(
             false
         }
     }
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val glassStrength = ThemePreferences.getGlassStrengthPercent(ctx)
+    val cardBgMode = ThemePreferences.getCardBgMode(ctx)
+    val cardBgAlpha = ThemePreferences.getCardBgAlphaPercent(ctx) / 100f
+    val darkCardColor = if (isDark) {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+    } else {
+        Color(0xFF16181F).copy(alpha = 0.94f)
+    }
+    val resolvedFallback = when (cardBgMode) {
+        PhantomPrefs.CardBgMode.FOLLOW_GLASS -> fallbackColor
+        PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+        PhantomPrefs.CardBgMode.DARK -> darkCardColor
+    }
+
     return if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
-        val base = this.glassSurface(
-            state = state,
-            fallbackColor = fallbackColor,
-            outlineColor = outlineColor,
-            cornerRadius = cornerRadius
-        )
-        if (glassStrength > 0 && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            base.background(MaterialTheme.colorScheme.surface.copy(alpha = (glassStrength / 100f) * 0.45f))
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val base = this.glassSurface(
+                state = state,
+                fallbackColor = resolvedFallback,
+                outlineColor = outlineColor,
+                cornerRadius = cornerRadius
+            )
+            val overlayColor: Color? = when (cardBgMode) {
+                PhantomPrefs.CardBgMode.FOLLOW_GLASS -> if (glassStrength > 0) {
+                    MaterialTheme.colorScheme.surface.copy(alpha = (glassStrength / 100f) * 0.45f)
+                } else null
+                PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+                PhantomPrefs.CardBgMode.DARK -> darkCardColor
+            }
+            if (overlayColor != null) {
+                base.clip(shape).background(overlayColor, shape)
+            } else {
+                base
+            }
         } else {
-            base
+            this.glassSurface(
+                state = state,
+                fallbackColor = resolvedFallback,
+                outlineColor = outlineColor,
+                cornerRadius = cornerRadius
+            )
         }
     } else {
-        val shape = RoundedCornerShape(cornerRadius)
-        val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
         val resolvedOutline = outlineColor ?: if (isDark) {
             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
         } else {
@@ -139,7 +181,7 @@ fun Modifier.phantomGlassSurface(
         }
         this
             .clip(shape)
-            .background(fallbackColor)
+            .background(resolvedFallback, shape)
             .border(width = 1.dp, color = resolvedOutline, shape = shape)
     }
 }
@@ -161,34 +203,71 @@ fun PhantomGlassCard(
             false
         }
     }
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val glassStrength = ThemePreferences.getGlassStrengthPercent(ctx)
-    if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
-        val extraMod = if (glassStrength > 0 && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            modifier
-                .clip(RoundedCornerShape(cornerRadius))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = (glassStrength / 100f) * 0.45f))
-        } else {
-            modifier
-        }
-        GlassCard(
-            glassState = glassState,
-            modifier = extraMod,
-            cornerRadius = cornerRadius,
-            contentPadding = contentPadding,
-            content = content
-        )
+    val cardBgMode = ThemePreferences.getCardBgMode(ctx)
+    val cardBgAlpha = ThemePreferences.getCardBgAlphaPercent(ctx) / 100f
+    val darkCardColor = if (isDark) {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
     } else {
-        val shape = RoundedCornerShape(cornerRadius)
-        val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-        val outline = if (isDark) {
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+        Color(0xFF16181F).copy(alpha = 0.94f)
+    }
+    val outline = if (isDark) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant
+    }
+
+    if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
+        val fallbackColor = when (cardBgMode) {
+            PhantomPrefs.CardBgMode.FOLLOW_GLASS -> MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+            PhantomPrefs.CardBgMode.DARK -> darkCardColor
+        }
+        val overlayColor: Color? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            when (cardBgMode) {
+                PhantomPrefs.CardBgMode.FOLLOW_GLASS -> if (glassStrength > 0) {
+                    MaterialTheme.colorScheme.surface.copy(alpha = (glassStrength / 100f) * 0.45f)
+                } else null
+                PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+                PhantomPrefs.CardBgMode.DARK -> darkCardColor
+            }
         } else {
-            MaterialTheme.colorScheme.outlineVariant
+            null
+        }
+
+        Box(
+            modifier = modifier
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
+                .clip(shape)
+                .glassSurface(
+                    state = glassState,
+                    fallbackColor = fallbackColor,
+                    cornerRadius = cornerRadius
+                )
+                .let { m -> if (overlayColor != null) m.background(overlayColor, shape) else m }
+        ) {
+            Column(
+                modifier = Modifier.padding(contentPadding),
+                content = content
+            )
+        }
+    } else {
+        val solidBg = when (cardBgMode) {
+            PhantomPrefs.CardBgMode.FOLLOW_GLASS -> MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+            PhantomPrefs.CardBgMode.DARK -> darkCardColor
         }
         Box(
             modifier = modifier
                 .clip(shape)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                .background(solidBg, shape)
                 .border(width = 1.dp, color = outline, shape = shape)
         ) {
             Column(
@@ -994,4 +1073,175 @@ fun WhitelistAddDialogFlow(
         )
     }
 }
+
+/**
+ * #180 統一頂部玻璃搜尋槓：圓角膠囊＋放大鏡＋小字＋頁面動作（觸控目標 ≥ 48dp）。
+ */
+@Composable
+fun PhantomSearchBarPill(
+    glassState: HazeState,
+    query: String,
+    placeholder: String = "搜尋",
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailingActions: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null
+) {
+    val shape = remember { RoundedCornerShape(24.dp) }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .phantomGlassSurface(
+                state = glassState,
+                fallbackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                cornerRadius = 24.dp
+            )
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "開啟搜尋：$placeholder" }
+            .padding(start = 14.dp, end = if (trailingActions != null) 4.dp else 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            text = query.ifBlank { placeholder },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (query.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (trailingActions != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                content = trailingActions
+            )
+        }
+    }
+}
+
+/**
+ * #180 統一全螢幕下拉搜尋覆蓋層：fade+slide、自動聚焦、IME inset、LazyColumn 效能、AI 語意搜尋入口、返回手勢關閉。
+ */
+@Composable
+fun PhantomFullScreenSearchOverlay(
+    visible: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    placeholder: String = "搜尋訊息、寄件者或關鍵字…",
+    onAiSemanticSearch: (() -> Unit)? = null,
+    aiQuotaHint: String = "AI 語意搜尋（消耗 1 次額度）",
+    isAiSearching: Boolean = false,
+    filterRow: (@Composable () -> Unit)? = null,
+    resultsContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit
+) {
+    androidx.activity.compose.BackHandler(enabled = visible) {
+        onDismiss()
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 8 },
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 8 }
+    ) {
+        val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+        LaunchedEffect(visible) {
+            if (visible) {
+                kotlinx.coroutines.delay(60)
+                runCatching { focusRequester.requestFocus() }
+            }
+        }
+        Surface(
+            color = MaterialTheme.colorScheme.background.copy(alpha = 0.97f),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .imePadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "關閉搜尋"
+                        )
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = onQueryChange,
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester),
+                        singleLine = true,
+                        shape = RoundedCornerShape(24.dp),
+                        placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = null)
+                        },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { onQueryChange("") },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(Icons.Default.Clear, contentDescription = "清除搜尋")
+                                }
+                            }
+                        }
+                    )
+                }
+                if (filterRow != null) {
+                    Spacer(Modifier.height(8.dp))
+                    filterRow()
+                }
+                if (onAiSemanticSearch != null && query.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = onAiSemanticSearch,
+                        enabled = !isAiSearching,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                    ) {
+                        if (isAiSearching) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("AI 語意搜尋中…")
+                        } else {
+                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(aiQuotaHint)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 6.dp),
+                    content = resultsContent
+                )
+            }
+        }
+    }
+}
+
 

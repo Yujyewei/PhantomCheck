@@ -49,6 +49,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
@@ -92,12 +93,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -172,6 +175,7 @@ private const val MAX_BATCH_SELECT = 100
 
 class MainActivity : ComponentActivity() {
     private val requestedTabState = mutableStateOf<MainTab?>(null)
+    private val requestedEditTodoIdState = mutableStateOf<Long?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -186,7 +190,9 @@ class MainActivity : ComponentActivity() {
             PhantomCheckTheme {
                 PhantomCheckApp(
                     requestedTab = requestedTabState.value,
-                    onConsumedRequestedTab = { requestedTabState.value = null }
+                    onConsumedRequestedTab = { requestedTabState.value = null },
+                    requestedEditTodoId = requestedEditTodoIdState.value,
+                    onConsumedEditTodoId = { requestedEditTodoIdState.value = null }
                 )
             }
         }
@@ -201,6 +207,12 @@ class MainActivity : ComponentActivity() {
     private fun parseIntentTab(intent: Intent?) {
         when (intent?.getStringExtra(DailySummaryPolicy.EXTRA_OPEN_TAB)) {
             DailySummaryPolicy.TAB_STATS -> requestedTabState.value = MainTab.STATS
+            com.phantom.checker.widget.ReminderWidgetProvider.TAB_NOTES -> requestedTabState.value = MainTab.NOTES
+        }
+        val todoId = intent?.getLongExtra(com.phantom.checker.widget.ReminderWidgetProvider.EXTRA_EDIT_TODO_ID, -1L) ?: -1L
+        if (todoId > 0L) {
+            requestedTabState.value = MainTab.NOTES
+            requestedEditTodoIdState.value = todoId
         }
     }
 }
@@ -280,7 +292,9 @@ private data class StatsUiState(
 @Composable
 private fun PhantomCheckApp(
     requestedTab: MainTab? = null,
-    onConsumedRequestedTab: () -> Unit = {}
+    onConsumedRequestedTab: () -> Unit = {},
+    requestedEditTodoId: Long? = null,
+    onConsumedEditTodoId: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
     val appCtx = ctx.applicationContext
@@ -1287,87 +1301,37 @@ private fun PhantomCheckApp(
                 enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "幻訊 PhantomCheck",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = {
-                            showSearchBar = !showSearchBar
-                            if (!showSearchBar) {
-                                searchQuery = ""
-                                searchRiskFilter = SearchRiskFilter.ALL
-                            }
-                        }) {
-                            Icon(
-                                imageVector = if (showSearchBar) Icons.Default.Clear else Icons.Default.Search,
-                                contentDescription = "搜尋"
-                            )
-                        }
-                        IconButton(onClick = { refreshTrigger++ }) {
+                PhantomSearchBarPill(
+                    glassState = glassState,
+                    query = searchQuery,
+                    placeholder = "搜尋訊息、寄件人或關鍵字",
+                    onClick = { showSearchBar = true },
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        targetBounds = targetBounds + (OnboardingTargets.SEARCH_PILL to coords.boundsInRoot())
+                    },
+                    trailingActions = {
+                        IconButton(
+                            onClick = { refreshTrigger++ },
+                            modifier = Modifier.size(48.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = "重新整理"
                             )
                         }
-                        IconButton(onClick = {
-                            ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
-                        }) {
+                        IconButton(
+                            onClick = {
+                                ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
                                 contentDescription = "設定"
                             )
                         }
                     }
-                }
-            }
-
-            if (showSearchBar || searchQuery.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("搜尋寄件人或訊息內容…") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "搜尋"
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    imageVector = Icons.Default.Clear,
-                                    contentDescription = "清除搜尋"
-                                )
-                            }
-                        }
-                    }
                 )
-                Spacer(Modifier.height(6.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(SearchRiskFilter.entries, key = { it.name }) { filter ->
-                        FilterChip(
-                            selected = searchRiskFilter == filter,
-                            onClick = { searchRiskFilter = filter },
-                            label = { Text(filter.label) }
-                        )
-                    }
-                }
             }
 
             if (isLoading) {
@@ -1409,38 +1373,6 @@ private fun PhantomCheckApp(
                 }
             }
 
-            if (searchQuery.trim().isNotEmpty()) {
-                val displayResults = remember(searchResults, searchRiskFilter) {
-                    when (searchRiskFilter) {
-                        SearchRiskFilter.ALL -> searchResults
-                        SearchRiskFilter.SCAM -> searchResults.filter { it.riskLabel == "scam" }
-                        SearchRiskFilter.SUSPICIOUS -> searchResults.filter { it.riskLabel == "suspicious" }
-                        SearchRiskFilter.STARRED -> searchResults.filter { it.isStarred }
-                    }
-                }
-                SearchResultsSection(
-                    query = searchQuery.trim(),
-                    isLoading = isLoading,
-                    results = displayResults,
-                    activeFilterKeywords = activeFilterKeywords,
-                    messageTagsMap = messageTagsMap,
-                    glassState = glassState,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedMessageIds,
-                    onToggleMultiSelect = {
-                        isMultiSelectMode = !isMultiSelectMode
-                        if (!isMultiSelectMode) selectedMessageIds = emptySet()
-                    },
-                    onToggleSelect = toggleSelection,
-                    onOpenDetail = { msg ->
-                        ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
-                    },
-                    onLongPressMessage = { msg ->
-                        haptic(HapticFeedbackType.LongPress)
-                        messageSheetTarget = msg
-                    }
-                )
-            } else {
                 when (selectedTab) {
                     MainTab.MESSAGES -> MessagesHomeTab(
                         todayCount = todayCount,
@@ -1560,6 +1492,8 @@ private fun PhantomCheckApp(
                     }
                     MainTab.NOTES -> NotesTab(
                         glassState = glassState,
+                        initialEditTodoId = requestedEditTodoId,
+                        onConsumedEditTodoId = onConsumedEditTodoId,
                         onOpenMessageDetail = { messageId ->
                             ctx.startActivity(MessageDetailActivity.createIntent(ctx, messageId))
                         },
@@ -1578,8 +1512,86 @@ private fun PhantomCheckApp(
                 }
             }
         }
-        }
     }
+
+        val overlayResults = remember(searchResults, searchRiskFilter) {
+            when (searchRiskFilter) {
+                SearchRiskFilter.ALL -> searchResults
+                SearchRiskFilter.SCAM -> searchResults.filter { it.riskLabel == "scam" }
+                SearchRiskFilter.SUSPICIOUS -> searchResults.filter { it.riskLabel == "suspicious" }
+                SearchRiskFilter.STARRED -> searchResults.filter { it.isStarred }
+            }
+        }
+        PhantomFullScreenSearchOverlay(
+            visible = showSearchBar,
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            onDismiss = { showSearchBar = false },
+            placeholder = "搜尋寄件人、App 或訊息內容…",
+            onAiSemanticSearch = {
+                val q = searchQuery.trim()
+                showSearchBar = false
+                selectedTab = MainTab.ASSISTANT
+                if (q.isNotEmpty()) {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("ai_search_query", q))
+                    scope.launch {
+                        snackbarHostState.showSnackbar("已切換至 AI 助手並複製「$q」，可直接貼上進行語意搜尋（消耗 1 次額度）")
+                    }
+                }
+            },
+            aiQuotaHint = "AI 語意搜尋（跳轉 AI 助手，消耗 1 次額度）",
+            filterRow = {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(SearchRiskFilter.entries, key = { it.name }) { filter ->
+                        FilterChip(
+                            selected = searchRiskFilter == filter,
+                            onClick = { searchRiskFilter = filter },
+                            label = { Text(filter.label) }
+                        )
+                    }
+                }
+            },
+            resultsContent = {
+                if (searchQuery.trim().isEmpty()) {
+                    item(key = "search_hint") {
+                        Text(
+                            text = "輸入關鍵字即時搜尋訊息，或使用上方 AI 語意搜尋。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                } else if (overlayResults.isEmpty()) {
+                    item(key = "search_empty") {
+                        Text(
+                            text = if (isLoading) "搜尋中…" else "找不到符合「${searchQuery.trim()}」的訊息。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                } else {
+                    items(overlayResults, key = { it.id }) { msg ->
+                        MessageCard(
+                            message = msg,
+                            glassState = glassState,
+                            highlightAsScam = msg.riskLabel == "scam",
+                            highlightQuery = searchQuery.trim(),
+                            matchedKeywords = activeFilterKeywords.filter { kw ->
+                                msg.content.contains(kw, ignoreCase = true) || msg.sender.contains(kw, ignoreCase = true)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showSearchBar = false
+                                    ctx.startActivity(MessageDetailActivity.createIntent(ctx, msg.id))
+                                }
+                        )
+                    }
+                }
+            }
+        )
 
         if (tabBarDisplayMode == TabBarDisplayMode.AUTO_HIDE && !tabBarVisible && !isMultiSelectMode) {
             Box(
@@ -1630,7 +1642,8 @@ private fun PhantomCheckApp(
                         OnboardingStep.TAGS_AND_RULES -> OnboardingStep.TODO_AND_BATCH
                         OnboardingStep.TODO_AND_BATCH -> OnboardingStep.APPEARANCE_AND_BG
                         OnboardingStep.APPEARANCE_AND_BG -> OnboardingStep.KEEP_ALIVE
-                        OnboardingStep.KEEP_ALIVE -> OnboardingStep.DONE
+                        OnboardingStep.KEEP_ALIVE -> OnboardingStep.SEARCH_PILL
+                        OnboardingStep.SEARCH_PILL -> OnboardingStep.DONE
                         OnboardingStep.DONE -> {
                             PhantomPrefs.setOnboardingCompleted(appCtx, true)
                             onboardingCompleted = true
@@ -2395,9 +2408,19 @@ private fun MessagesHomeTab(
     }
 }
 
+private enum class TodoFilterMode(val label: String) {
+    ALL("全部"),
+    PENDING("未完成"),
+    DONE("已完成"),
+    OVERDUE("逾期")
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NotesTab(
     glassState: HazeState,
+    initialEditTodoId: Long? = null,
+    onConsumedEditTodoId: () -> Unit = {},
     onOpenMessageDetail: (Long) -> Unit,
     onShowMessage: (String) -> Unit
 ) {
@@ -2409,13 +2432,80 @@ private fun NotesTab(
     val notes by remember(db) { db.noteDao().observeAll() }.collectAsState(initial = emptyList())
     var todos by remember { mutableStateOf<List<TodoEntity>>(emptyList()) }
     var todoRefresh by remember { mutableIntStateOf(0) }
+    var todoFilter by remember { mutableStateOf(TodoFilterMode.ALL) }
     var showEditor by remember { mutableStateOf(false) }
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
+    var showTodoEditor by remember { mutableStateOf(false) }
+    var editingTodo by remember { mutableStateOf<TodoEntity?>(null) }
 
     LaunchedEffect(todoRefresh) {
         todos = withContext(Dispatchers.IO) {
-            db.todoDao().all()
+            ReminderScheduler.sortTodosSmart(db.todoDao().all())
         }
+    }
+
+    LaunchedEffect(initialEditTodoId, todos) {
+        val targetId = initialEditTodoId ?: return@LaunchedEffect
+        val found = todos.firstOrNull { it.id == targetId }
+            ?: withContext(Dispatchers.IO) { db.todoDao().byId(targetId) }
+        if (found != null) {
+            editingTodo = found
+            showTodoEditor = true
+            onConsumedEditTodoId()
+        }
+    }
+
+    if (showTodoEditor) {
+        TodoEditorDialog(
+            initial = editingTodo,
+            onDismiss = {
+                showTodoEditor = false
+                editingTodo = null
+            },
+            onSave = { title, dueAt, priority, repeatRule, notesText ->
+                val target = editingTodo
+                showTodoEditor = false
+                editingTodo = null
+                scope.launch {
+                    val savedId = withContext(Dispatchers.IO) {
+                        if (target == null) {
+                            db.todoDao().insert(
+                                TodoEntity(
+                                    title = title,
+                                    dueAt = dueAt,
+                                    isDone = false,
+                                    createdAt = System.currentTimeMillis(),
+                                    priority = priority,
+                                    notes = notesText,
+                                    repeatRule = repeatRule
+                                )
+                            )
+                        } else {
+                            db.todoDao().update(
+                                target.copy(
+                                    title = title,
+                                    dueAt = dueAt,
+                                    priority = priority,
+                                    notes = notesText,
+                                    repeatRule = repeatRule
+                                )
+                            )
+                            target.id
+                        }
+                    }
+                    if (target?.isDone != true) {
+                        if (dueAt > System.currentTimeMillis()) {
+                            ReminderScheduler.scheduleTodo(appCtx, savedId, dueAt)
+                        } else {
+                            ReminderScheduler.cancelTodo(appCtx, savedId)
+                        }
+                    }
+                    com.phantom.checker.widget.ReminderWidgetProvider.updateAllIfChanged(appCtx)
+                    todoRefresh++
+                    onShowMessage(if (target == null) "已新增待辦事項" else "已更新待辦事項")
+                }
+            }
+        )
     }
 
     if (showEditor) {
@@ -2458,13 +2548,40 @@ private fun NotesTab(
         )
     }
 
+    val now = System.currentTimeMillis()
+    val startOfToday = NotificationCollectorService.startOfTodayMillis()
+    val dayMs = 24L * 60L * 60L * 1000L
+    val endOfToday = startOfToday + dayMs - 1L
+    val filteredTodos = remember(todos, todoFilter, now) {
+        val sorted = ReminderScheduler.sortTodosSmart(todos, now)
+        when (todoFilter) {
+            TodoFilterMode.ALL -> sorted
+            TodoFilterMode.PENDING -> sorted.filter { !it.isDone }
+            TodoFilterMode.DONE -> sorted.filter { it.isDone }
+            TodoFilterMode.OVERDUE -> sorted.filter { !it.isDone && it.dueAt < now }
+        }
+    }
+
+    var showNotesSearch by remember { mutableStateOf(false) }
+    var notesSearchQuery by remember { mutableStateOf("") }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. 待辦事項區（與 AI 助手共用 todos 表）
+        item(key = "notes_search_pill") {
+            PhantomSearchBarPill(
+                glassState = glassState,
+                query = notesSearchQuery,
+                placeholder = "搜尋待辦或備忘錄…",
+                onClick = { showNotesSearch = true }
+            )
+        }
+        // 1. 待辦事項區（與 AI 助手、桌面小工具同步）
         item(key = "notes_todos_section") {
             val pendingCount = todos.count { !it.isDone }
+            val overdueCount = todos.count { !it.isDone && it.dueAt < now }
             PhantomGlassCard(
                 glassState = glassState,
                 modifier = Modifier.fillMaxWidth(),
@@ -2476,72 +2593,170 @@ private fun NotesTab(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "待辦事項（$pendingCount 未完成）",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "與 AI 助手同步",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "待辦事項（$pendingCount 未完成" +
+                                (if (overdueCount > 0) " · $overdueCount 逾期" else "") + "）",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "與 AI 助手及桌面小工具同步",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            editingTodo = null
+                            showTodoEditor = true
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "新增待辦事項",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    TodoFilterMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = todoFilter == mode,
+                            onClick = { todoFilter = mode },
+                            label = {
+                                val badge = when (mode) {
+                                    TodoFilterMode.ALL -> todos.size
+                                    TodoFilterMode.PENDING -> pendingCount
+                                    TodoFilterMode.DONE -> todos.count { it.isDone }
+                                    TodoFilterMode.OVERDUE -> overdueCount
+                                }
+                                Text("${mode.label}($badge)", style = MaterialTheme.typography.labelSmall)
+                            }
+                        )
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
-                if (todos.isEmpty()) {
+                if (filteredTodos.isEmpty()) {
                     Text(
-                        text = "尚無待辦事項（可在 AI 助手對話中新增待辦）",
+                        text = if (todos.isEmpty()) {
+                            "尚無待辦事項（點右上角 + 手動新增，或在 AI 助手對話中建立）"
+                        } else {
+                            "此篩選條件下無待辦事項"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    todos.forEachIndexed { idx, todo ->
+                    filteredTodos.forEachIndexed { idx, todo ->
                         if (idx > 0) {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         }
+                        val isOverdue = !todo.isDone && todo.dueAt < now
+                        val isDueToday = !todo.isDone && todo.dueAt in startOfToday..endOfToday && !isOverdue
+                        val overdueDays = if (isOverdue) {
+                            ((startOfToday - todo.dueAt) / dayMs).toInt().coerceAtLeast(0)
+                        } else 0
+                        val priorityColor = when (todo.priority) {
+                            TodoEntity.PRIORITY_HIGH -> MaterialTheme.colorScheme.error
+                            TodoEntity.PRIORITY_LOW -> Color(0xFF26A69A)
+                            else -> Color(0xFFFFB300)
+                        }
+                        val overdueColor = Color(0xFFFF6D00)
+
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    editingTodo = todo
+                                    showTodoEditor = true
+                                }
+                                .padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
                                 checked = todo.isDone,
                                 onCheckedChange = { checked ->
                                     scope.launch {
-                                        withContext(Dispatchers.IO) {
-                                            db.todoDao().setDone(todo.id, checked)
-                                        }
-                                        if (checked) {
-                                            ReminderScheduler.cancelTodo(appCtx, todo.id)
-                                        } else if (todo.dueAt > System.currentTimeMillis()) {
-                                            ReminderScheduler.scheduleTodo(
-                                                appCtx,
-                                                todo.id,
-                                                todo.dueAt
-                                            )
+                                        val spawned = withContext(Dispatchers.IO) {
+                                            ReminderScheduler.completeTodoWithRecurrence(appCtx, todo, checked)
                                         }
                                         todoRefresh++
+                                        if (spawned != null) {
+                                            onShowMessage("已完成並自動建立下一次重複待辦")
+                                        }
                                     }
                                 }
                             )
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(priorityColor)
+                            )
+                            Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = todo.title,
                                     style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isOverdue) FontWeight.SemiBold else FontWeight.Normal,
                                     textDecoration = if (todo.isDone) {
                                         androidx.compose.ui.text.style.TextDecoration.LineThrough
                                     } else {
                                         null
                                     },
-                                    color = if (todo.isDone) {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
+                                    color = when {
+                                        todo.isDone -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        isOverdue -> overdueColor
+                                        else -> MaterialTheme.colorScheme.onSurface
                                     }
                                 )
+                                val statusBadge = when {
+                                    isOverdue -> if (overdueDays >= 1) "已逾期 $overdueDays 天 · " else "已逾期 · "
+                                    isDueToday -> "今天到期 · "
+                                    else -> ""
+                                }
+                                val repeatTag = when (todo.repeatRule) {
+                                    TodoEntity.REPEAT_DAILY -> " · 每日"
+                                    TodoEntity.REPEAT_WEEKLY -> " · 每週"
+                                    else -> ""
+                                }
                                 Text(
-                                    text = "到期：${PhantomPrefs.formatMessageTime(ctx, todo.dueAt, includeDate = true)}",
+                                    text = "${statusBadge}到期：${PhantomPrefs.formatMessageTime(ctx, todo.dueAt, includeDate = true)}$repeatTag",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (isOverdue) overdueColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (todo.isDone && todo.completedAt != null) {
+                                    Text(
+                                        text = "完成於：${PhantomPrefs.formatMessageTime(ctx, todo.completedAt, includeDate = true)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                if (todo.notes.isNotBlank()) {
+                                    Text(
+                                        text = todo.notes,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = {
+                                    editingTodo = todo
+                                    showTodoEditor = true
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "編輯待辦",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             IconButton(
@@ -2551,6 +2766,7 @@ private fun NotesTab(
                                         withContext(Dispatchers.IO) {
                                             db.todoDao().deleteById(todo.id)
                                         }
+                                        com.phantom.checker.widget.ReminderWidgetProvider.updateAllIfChanged(appCtx)
                                         todoRefresh++
                                         onShowMessage("已刪除待辦事項")
                                     }
@@ -2737,6 +2953,266 @@ private fun NotesTab(
             }
         }
     }
+
+    val nq = notesSearchQuery.trim()
+    val matchedTodos = remember(todos, nq) {
+        if (nq.isEmpty()) emptyList()
+        else todos.filter {
+            it.title.contains(nq, ignoreCase = true) || it.notes.contains(nq, ignoreCase = true)
+        }
+    }
+    val matchedNotes = remember(notes, nq) {
+        if (nq.isEmpty()) emptyList()
+        else notes.filter {
+            (it.relatedAppLabel?.contains(nq, ignoreCase = true) == true) || it.content.contains(nq, ignoreCase = true)
+        }
+    }
+    PhantomFullScreenSearchOverlay(
+        visible = showNotesSearch,
+        query = notesSearchQuery,
+        onQueryChange = { notesSearchQuery = it },
+        onDismiss = { showNotesSearch = false },
+        placeholder = "搜尋待辦事項或備忘錄…",
+        resultsContent = {
+            if (nq.isEmpty()) {
+                item(key = "notes_search_hint") {
+                    Text(
+                        text = "輸入關鍵字即時搜尋待辦事項與備忘錄。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+            } else if (matchedTodos.isEmpty() && matchedNotes.isEmpty()) {
+                item(key = "notes_search_empty") {
+                    Text(
+                        text = "找不到符合「$nq」的待辦或記事。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+            } else {
+                if (matchedTodos.isNotEmpty()) {
+                    item(key = "notes_search_todos_hdr") {
+                        Text(
+                            text = "待辦事項（${matchedTodos.size}）",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    items(matchedTodos, key = { "todo_${it.id}" }) { todo ->
+                        PhantomGlassCard(
+                            glassState = glassState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showNotesSearch = false
+                                    editingTodo = todo
+                                    showTodoEditor = true
+                                },
+                            cornerRadius = 14.dp,
+                            contentPadding = 12.dp
+                        ) {
+                            Text(
+                                text = todo.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                textDecoration = if (todo.isDone) TextDecoration.LineThrough else TextDecoration.None
+                            )
+                            Text(
+                                text = PhantomPrefs.formatMessageTime(appCtx, todo.dueAt, includeDate = true),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (todo.notes.isNotBlank()) {
+                                Text(
+                                    text = todo.notes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+                if (matchedNotes.isNotEmpty()) {
+                    item(key = "notes_search_notes_hdr") {
+                        Text(
+                            text = "備忘錄（${matchedNotes.size}）",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    items(matchedNotes, key = { "note_${it.id}" }) { note ->
+                        PhantomGlassCard(
+                            glassState = glassState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showNotesSearch = false
+                                    editingNote = note
+                                    showEditor = true
+                                },
+                            cornerRadius = 14.dp,
+                            contentPadding = 12.dp
+                        ) {
+                            val appLabel = note.relatedAppLabel
+                            if (!appLabel.isNullOrBlank()) {
+                                Text(
+                                    text = appLabel,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Text(
+                                text = note.content,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TodoEditorDialog(
+    initial: TodoEntity?,
+    onDismiss: () -> Unit,
+    onSave: (title: String, dueAt: Long, priority: Int, repeatRule: String, notes: String) -> Unit
+) {
+    val ctx = LocalContext.current
+    var title by remember(initial) { mutableStateOf(initial?.title ?: "") }
+    var dueAt by remember(initial) {
+        mutableLongStateOf(initial?.dueAt ?: (System.currentTimeMillis() + 60L * 60L * 1000L))
+    }
+    var priority by remember(initial) { mutableIntStateOf(initial?.priority ?: TodoEntity.PRIORITY_MEDIUM) }
+    var repeatRule by remember(initial) { mutableStateOf(initial?.repeatRule ?: TodoEntity.REPEAT_NONE) }
+    var notes by remember(initial) { mutableStateOf(initial?.notes ?: "") }
+
+    val priorityOptions = listOf(
+        TodoEntity.PRIORITY_LOW to "低",
+        TodoEntity.PRIORITY_MEDIUM to "中",
+        TodoEntity.PRIORITY_HIGH to "高"
+    )
+    val repeatOptions = listOf(
+        TodoEntity.REPEAT_NONE to "不重複",
+        TodoEntity.REPEAT_DAILY to "每日",
+        TodoEntity.REPEAT_WEEKLY to "每週"
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "新增待辦事項" else "編輯待辦事項") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("待辦內容") },
+                    singleLine = false,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = dueAt }
+                            android.app.DatePickerDialog(
+                                ctx,
+                                { _, y, m, d ->
+                                    cal.set(java.util.Calendar.YEAR, y)
+                                    cal.set(java.util.Calendar.MONTH, m)
+                                    cal.set(java.util.Calendar.DAY_OF_MONTH, d)
+                                    dueAt = cal.timeInMillis
+                                },
+                                cal.get(java.util.Calendar.YEAR),
+                                cal.get(java.util.Calendar.MONTH),
+                                cal.get(java.util.Calendar.DAY_OF_MONTH)
+                            ).show()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        val dateFmt = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
+                        Text(dateFmt.format(Date(dueAt)), maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = dueAt }
+                            android.app.TimePickerDialog(
+                                ctx,
+                                { _, h, min ->
+                                    cal.set(java.util.Calendar.HOUR_OF_DAY, h)
+                                    cal.set(java.util.Calendar.MINUTE, min)
+                                    cal.set(java.util.Calendar.SECOND, 0)
+                                    dueAt = cal.timeInMillis
+                                },
+                                cal.get(java.util.Calendar.HOUR_OF_DAY),
+                                cal.get(java.util.Calendar.MINUTE),
+                                PhantomPrefs.is24HourFormat(ctx)
+                            ).show()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(PhantomPrefs.formatMessageTime(ctx, dueAt, includeDate = false), maxLines = 1)
+                    }
+                }
+                Text("優先級", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    priorityOptions.forEach { (pVal, pLabel) ->
+                        FilterChip(
+                            selected = priority == pVal,
+                            onClick = { priority = pVal },
+                            label = { Text(pLabel) }
+                        )
+                    }
+                }
+                Text("重複提醒", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    repeatOptions.forEach { (rVal, rLabel) ->
+                        FilterChip(
+                            selected = repeatRule == rVal,
+                            onClick = { repeatRule = rVal },
+                            label = { Text(rLabel) }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("備註（可選）") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = title.trim().isNotEmpty(),
+                onClick = { onSave(title.trim(), dueAt, priority, repeatRule, notes.trim()) }
+            ) {
+                Text("儲存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

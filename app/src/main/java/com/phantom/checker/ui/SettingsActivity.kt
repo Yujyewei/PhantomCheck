@@ -29,6 +29,8 @@ import com.phantom.checker.util.BackgroundImageHelper
 import com.phantom.checker.util.BackgroundLayer
 import com.phantom.checker.util.UpdateCheckResult
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -44,6 +46,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,6 +69,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -83,6 +87,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -336,6 +341,8 @@ fun FilterSettingsScreen(
     var aiOfflineRetryEnabled by remember { mutableStateOf(PhantomPrefs.isAiOfflineRetryEnabled(appCtx)) }
     var aiAutoMemoEnabled by remember { mutableStateOf(PhantomPrefs.isAiAutoMemoEnabled(appCtx)) }
     var aiTagFailureNotifEnabled by remember { mutableStateOf(PhantomPrefs.isAiTagFailureNotifEnabled(appCtx)) }
+    var dualModelRoutingEnabled by remember { mutableStateOf(PhantomPrefs.isDualModelRoutingEnabled(appCtx)) }
+    var dualModelRoutingModel by remember { mutableStateOf(PhantomPrefs.getDualModelRoutingModel(appCtx)) }
     var chatSuggestionsEnabled by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var quickCommandDefaultMode by remember { mutableStateOf(PhantomPrefs.getQuickCommandDefaultMode(appCtx)) }
     var quickChatCommands by remember { mutableStateOf(PhantomPrefs.getQuickChatCommands(appCtx)) }
@@ -1361,6 +1368,53 @@ fun FilterSettingsScreen(
                             },
                             valueRange = 0f..100f
                         )
+
+                        Spacer(Modifier.height(12.dp))
+                        var cardBgMode by remember { mutableStateOf(ThemePreferences.getCardBgMode(appCtx)) }
+                        var cardBgAlpha by remember { mutableIntStateOf(ThemePreferences.getCardBgAlphaPercent(appCtx)) }
+                        Text(
+                            text = "卡片底色模式",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "自訂訊息卡、對話氣泡與待辦卡的底色不透明度",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            PhantomPrefs.CardBgMode.entries.forEach { mode ->
+                                FilterChip(
+                                    selected = cardBgMode == mode,
+                                    onClick = {
+                                        cardBgMode = mode
+                                        ThemePreferences.setCardBgMode(appCtx, mode)
+                                    },
+                                    label = { Text(mode.label) }
+                                )
+                            }
+                        }
+                        if (cardBgMode == PhantomPrefs.CardBgMode.TRANSPARENT) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = "卡片底色透明度（不透明度 $cardBgAlpha%）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = cardBgAlpha.toFloat(),
+                                onValueChange = { v ->
+                                    val pct = v.roundToInt().coerceIn(0, 100)
+                                    cardBgAlpha = pct
+                                    ThemePreferences.setCardBgAlphaPercent(appCtx, pct)
+                                },
+                                valueRange = 0f..100f
+                            )
+                        }
                     }
                 }
             }
@@ -1470,6 +1524,31 @@ fun FilterSettingsScreen(
                             PhantomPrefs.setAiTagFailureNotifEnabled(appCtx, checked)
                         }
                     )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                    SettingSwitchRow(
+                        title = "雙模型信心路由（省 token）",
+                        subtitle = "訊息分析先打輕量模型，僅 30~70 分模糊帶升級主模型重判（不重複扣額度）",
+                        checked = dualModelRoutingEnabled,
+                        onCheckedChange = { checked ->
+                            dualModelRoutingEnabled = checked
+                            PhantomPrefs.setDualModelRoutingEnabled(appCtx, checked)
+                        }
+                    )
+                    if (dualModelRoutingEnabled) {
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = dualModelRoutingModel,
+                            onValueChange = { next ->
+                                dualModelRoutingModel = next
+                                PhantomPrefs.setDualModelRoutingModel(appCtx, next)
+                            },
+                            label = { Text("第一關輕量路由模型") },
+                            placeholder = { Text(PhantomPrefs.DEFAULT_DUAL_MODEL_ROUTING_MODEL) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     SettingSwitchRow(
@@ -2359,7 +2438,18 @@ fun FilterSettingsScreen(
                     ) {
                         Text("自訂標籤管理")
                     }
-                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+
+                    WhitelistManagementSection(
+                        appCtx = appCtx,
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            cardBounds["whitelist"] = coords.boundsInRoot()
+                        },
+                        onShowMessage = { msg ->
+                            scope.launch { snackbarHostState.showSnackbar(msg) }
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
                     // 保留天數與則數上限
                     Text("訊息保留天數（詐騙記錄永久保留）", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
@@ -2692,13 +2782,14 @@ fun FilterSettingsScreen(
         }
     }
 
-        if (tourStepIndex in 1..6) {
+        val totalTourSteps = SettingsTourStep.entries.size
+        if (tourStepIndex in 1..totalTourSteps) {
             SettingsTourOverlay(
                 stepIndex = tourStepIndex,
                 cardBounds = cardBounds,
                 glassState = glassState,
                 onNext = {
-                    if (tourStepIndex < 6) {
+                    if (tourStepIndex < totalTourSteps) {
                         tourStepIndex += 1
                     } else {
                         tourStepIndex = 0
@@ -3883,35 +3974,47 @@ private enum class SettingsTourStep(
     QUICK(
         index = 1,
         cardKey = "quick",
-        title = "快速設定",
-        description = "最常用的核心開關都集中於此，包含省 token 模式、常駐統計通知與快速操作；你可以直接點擊洞內開關立即試用。"
+        title = "快速設定與省 Token",
+        description = "最常用的核心開關都集中於此，包含「省 token 模式」、常駐統計通知與快速操作；你可以直接點擊洞內開關立即試用。"
+    ),
+    PERSONALIZATION(
+        index = 2,
+        cardKey = "personalization",
+        title = "個人化、玻璃強度與背景圖片",
+        description = "調整卡片密度、時間格式、首頁排序與篩選欄，並可自訂全域／AI 聊天／對話頁三層背景圖片與液態玻璃強度。"
     ),
     AI(
-        index = 2,
+        index = 3,
         cardKey = "ai",
-        title = "AI 與分析",
-        description = "管理多 Provider API Key 與分用途模型、每日分析額度、AI 觸發字數門檻、離線補佇列、自動備忘錄、AI 標籤分發測試／失敗通知，以及每日摘要排程。"
+        title = "AI 用途模型與雙模型路由",
+        description = "管理多 Provider API Key 與 7 種 AI 用途模型，並可開啟「雙模型信心路由」（先打輕量模型，高信心直接採用、不確定才升級主模型）進一步省 token。"
     ),
     NOTIF(
-        index = 3,
+        index = 4,
         cardKey = "notif",
         title = "訊息與通知",
-        description = "設定勿擾時段、即時關鍵字提醒、重複通知節流秒數、滑動刪除與點擊開啟行為，並可使用已遷入此卡的「清除已讀訊息」。"
+        description = "設定勿擾時段、即時關鍵字提醒、重複通知節流秒數、滑動刪除與點擊開啟行為，並可使用「清除已讀訊息」。"
     ),
     DATA(
-        index = 4,
+        index = 5,
         cardKey = "data",
-        title = "資料管理",
-        description = "管理 App 靜音清單、自訂標籤與白名單規則、訊息保留天數與則數上限、CSV 匯出，也可隨時重播新手或設定教學。"
+        title = "資料管理與自訂標籤",
+        description = "管理 App 靜音清單、自訂標籤規則、訊息保留天數與則數上限、CSV 匯出，也可隨時重播新手或設定教學。"
+    ),
+    WHITELIST(
+        index = 6,
+        cardKey = "whitelist",
+        title = "白名單管理卡",
+        description = "依 App 分組收合檢視所有寄件者／內容白名單，支援手動新增（防重複）、開關啟停與確認刪除；AI 助手也會同步讀取這份清單。"
     ),
     APPEARANCE(
-        index = 5,
+        index = 7,
         cardKey = "appearance",
-        title = "外觀與保活",
-        description = "切換主題、動態取色、三層背景圖片（全域／AI 聊天／對話頁）與暗色遮罩強度滑桿、液態玻璃與分頁欄模式，並檢查電池最佳化與前景保活狀態。"
+        title = "外觀、卡片底色與保活",
+        description = "切換深淺主題、Material You 動態取色、分頁欄模式，以及「卡片底色模式」（跟隨玻璃強度／透明模式滑桿／深色底），並檢查電池最佳化與前景保活狀態。"
     ),
     SHIZUKU(
-        index = 6,
+        index = 8,
         cardKey = "shizuku",
         title = "Shizuku 進階",
         description = "進階使用者可透過 Shizuku 進行系統級保活強化、權限補齊與連線診斷；未安裝時可略過不影響一般功能。"
@@ -4180,4 +4283,379 @@ private fun SettingsTourOverlay(
         }
     }
 }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WhitelistManagementSection(
+    appCtx: Context,
+    modifier: Modifier = Modifier,
+    onShowMessage: (String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var rules by remember { mutableStateOf<List<com.phantom.checker.data.AiRuleEntity>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var expandedGroups by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showAddForm by remember { mutableStateOf(false) }
+    var addModeSender by remember { mutableStateOf(true) }
+    var inputTarget by remember { mutableStateOf("") }
+    var inputAllApps by remember { mutableStateOf(true) }
+    var inputPackage by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<com.phantom.checker.data.AiRuleEntity?>(null) }
+
+    val timeFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
+
+    fun reloadRules() {
+        scope.launch {
+            isLoading = true
+            val loaded = withContext(Dispatchers.IO) {
+                AppDatabaseHolder.db(appCtx).aiRuleDao().all()
+                    .filter { it.kind == com.phantom.checker.data.AiRuleEntity.KIND_WHITELIST }
+            }
+            rules = loaded
+            if (expandedGroups.isEmpty() && loaded.isNotEmpty()) {
+                expandedGroups = loaded.map { it.packageName?.takeIf { p -> p.isNotBlank() } ?: "" }.toSet()
+            }
+            isLoading = false
+        }
+    }
+
+    LaunchedEffect(Unit) { reloadRules() }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "白名單管理（${rules.size} 筆）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "白名單內的寄件者或內容會跳過詐騙警示與情報查詢",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            OutlinedButton(
+                onClick = { showAddForm = !showAddForm },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "新增白名單", modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (showAddForm) "收起" else "新增")
+            }
+        }
+
+        AnimatedVisibility(visible = showAddForm) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = addModeSender,
+                            onClick = { addModeSender = true },
+                            label = { Text("寄件者白名單") }
+                        )
+                        FilterChip(
+                            selected = !addModeSender,
+                            onClick = { addModeSender = false },
+                            label = { Text("內容規則白名單") }
+                        )
+                    }
+                    OutlinedTextField(
+                        value = inputTarget,
+                        onValueChange = { inputTarget = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(if (addModeSender) "寄件者名稱" else "白名單規則描述／關鍵字") },
+                        placeholder = { Text(if (addModeSender) "例如：台灣大哥大、玉山銀行" else "例如：官方帳單通知不是詐騙") }
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = inputAllApps,
+                            onClick = { inputAllApps = true },
+                            label = { Text("全部 App（全域）") }
+                        )
+                        FilterChip(
+                            selected = !inputAllApps,
+                            onClick = { inputAllApps = false },
+                            label = { Text("指定 App") }
+                        )
+                    }
+                    if (!inputAllApps) {
+                        OutlinedTextField(
+                            value = inputPackage,
+                            onValueChange = { inputPackage = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("來源 App Package 名稱") },
+                            placeholder = { Text("例如：jp.naver.line.android") }
+                        )
+                    }
+                    val trimmedTarget = inputTarget.trim()
+                    val resolvedPkg = if (inputAllApps) null else inputPackage.trim().takeIf { it.isNotEmpty() }
+                    val isDuplicate = trimmedTarget.isNotEmpty() && rules.any { r ->
+                        if (addModeSender) {
+                            r.sender?.equals(trimmedTarget, ignoreCase = true) == true &&
+                                (r.packageName ?: "") == (resolvedPkg ?: "")
+                        } else {
+                            r.ruleText.equals(trimmedTarget, ignoreCase = true) &&
+                                (r.packageName ?: "") == (resolvedPkg ?: "")
+                        }
+                    }
+                    if (isDuplicate) {
+                        Text(
+                            text = "已存在相同的白名單規則，請勿重複新增。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    val canSubmit = trimmedTarget.isNotEmpty() &&
+                        (inputAllApps || resolvedPkg != null) &&
+                        !isDuplicate
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            enabled = canSubmit,
+                            onClick = {
+                                scope.launch {
+                                    val insertedOk = withContext(Dispatchers.IO) {
+                                        val dao = AppDatabaseHolder.db(appCtx).aiRuleDao()
+                                        val ruleText = if (addModeSender) {
+                                            "白名單寄件者：$trimmedTarget"
+                                        } else {
+                                            trimmedTarget
+                                        }
+                                        val id = dao.insert(
+                                            com.phantom.checker.data.AiRuleEntity(
+                                                ruleText = ruleText,
+                                                kind = com.phantom.checker.data.AiRuleEntity.KIND_WHITELIST,
+                                                isEnabled = true,
+                                                createdAt = System.currentTimeMillis(),
+                                                sender = if (addModeSender) trimmedTarget else null,
+                                                packageName = resolvedPkg
+                                            )
+                                        )
+                                        val verified = dao.byId(id)
+                                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                        id > 0L && verified != null
+                                    }
+                                    if (insertedOk) {
+                                        inputTarget = ""
+                                        inputPackage = ""
+                                        showAddForm = false
+                                        reloadRules()
+                                        onShowMessage("已新增白名單：$trimmedTarget")
+                                    } else {
+                                        onShowMessage("新增白名單失敗，請重試。")
+                                    }
+                                }
+                            }
+                        ) {
+                            Text("確認新增")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isLoading) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+        } else if (rules.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text("目前尚無白名單規則", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        "可點擊右上角「新增」，或在訊息詳情／AI 助手中將信任的寄件者加入白名單。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            val grouped = remember(rules) {
+                rules.groupBy { it.packageName?.takeIf { p -> p.isNotBlank() } ?: "" }
+                    .toSortedMap()
+            }
+            grouped.forEach { (pkg, groupRules) ->
+                val isGroupExpanded = pkg in expandedGroups
+                val groupLabel = remember(pkg) {
+                    if (pkg.isBlank()) {
+                        "全域規則（全部 App）"
+                    } else {
+                        runCatching {
+                            val pm = appCtx.packageManager
+                            val ai = pm.getApplicationInfo(pkg, 0)
+                            pm.getApplicationLabel(ai).toString()
+                        }.getOrDefault(pkg)
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    expandedGroups = if (isGroupExpanded) expandedGroups - pkg else expandedGroups + pkg
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (pkg.isNotBlank()) {
+                                AppIconImage(packageName = pkg, contentDescription = groupLabel, size = 24.dp)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Text(
+                                text = "$groupLabel（${groupRules.size}）",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Icon(
+                                imageVector = if (isGroupExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = if (isGroupExpanded) "收合" else "展開"
+                            )
+                        }
+                        AnimatedVisibility(visible = isGroupExpanded) {
+                            Column(
+                                modifier = Modifier.padding(top = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                groupRules.forEach { rule ->
+                                    val isSenderMode = !rule.sender.isNullOrBlank()
+                                    val displayTitle = rule.sender?.takeIf { it.isNotBlank() } ?: rule.ruleText
+                                    val modeBadge = if (isSenderMode) "寄件者白名單" else "內容規則"
+                                    val timeStr = timeFmt.format(Date(rule.createdAt))
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = displayTitle,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "$modeBadge · 建立於 $timeStr",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Switch(
+                                                checked = rule.isEnabled,
+                                                onCheckedChange = { checked ->
+                                                    scope.launch {
+                                                        val updated = rule.copy(isEnabled = checked)
+                                                        withContext(Dispatchers.IO) {
+                                                            AppDatabaseHolder.db(appCtx).aiRuleDao().update(updated)
+                                                            com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                                        }
+                                                        rules = rules.map { if (it.id == rule.id) updated else it }
+                                                    }
+                                                }
+                                            )
+                                            IconButton(onClick = { deleteTarget = rule }) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "刪除白名單",
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    deleteTarget?.let { target ->
+        val titleDisp = target.sender?.takeIf { it.isNotBlank() } ?: target.ruleText
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("移出白名單") },
+            text = { Text("確定要刪除白名單規則「$titleDisp」嗎？刪除後將恢復正常詐騙風險檢查。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = target
+                        deleteTarget = null
+                        scope.launch {
+                            val deletedOk = withContext(Dispatchers.IO) {
+                                val dao = AppDatabaseHolder.db(appCtx).aiRuleDao()
+                                dao.deleteById(toDelete.id)
+                                val stillExists = dao.byId(toDelete.id) != null
+                                com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                !stillExists
+                            }
+                            if (deletedOk) {
+                                rules = rules.filterNot { it.id == toDelete.id }
+                                onShowMessage("已移出白名單：$titleDisp")
+                            } else {
+                                onShowMessage("刪除失敗，請重試。")
+                            }
+                        }
+                    }
+                ) {
+                    Text("刪除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
 

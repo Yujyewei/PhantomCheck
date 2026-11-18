@@ -138,12 +138,37 @@ object PhantomPrefs {
     private const val KEY_GLASS_EFFECT_ENABLED = "glass_effect_enabled"
     private const val KEY_CHAT_SUGGESTIONS_ENABLED = "chat_suggestions_enabled"
     private const val KEY_CHAT_RAG_MESSAGE_LIMIT = "chat_rag_message_limit"
+    private const val KEY_DUAL_MODEL_ROUTING_ENABLED = "ai_dual_model_routing_enabled"
+    private const val KEY_DUAL_MODEL_ROUTING_MODEL = "ai_dual_model_routing_model"
+    private const val KEY_CHAT_RAG_CACHE_PREFIX = "chat_rag_cache_v1_"
+    private const val KEY_CARD_BG_MODE = "card_bg_mode"
+    private const val KEY_CARD_BG_ALPHA = "card_bg_alpha_percent"
 
     const val MAX_ALERT_KEYWORDS = 20
     const val DEFAULT_CHAT_RAG_MESSAGE_LIMIT = 400
     const val MIN_CHAT_RAG_MESSAGE_LIMIT = 50
     const val MAX_CHAT_RAG_MESSAGE_LIMIT = 800
     const val TOKEN_SAVER_CHAT_RAG_LIMIT = 100
+    const val DEFAULT_DUAL_MODEL_ROUTING_MODEL = "mistral-small-2603"
+
+    enum class CardBgMode(val prefValue: String, val label: String) {
+        FOLLOW_GLASS("follow_glass", "跟隨玻璃強度"),
+        TRANSPARENT("transparent", "透明模式"),
+        DARK("dark", "深色底");
+
+        companion object {
+            fun fromPref(raw: String?): CardBgMode =
+                entries.firstOrNull { it.prefValue == raw } ?: FOLLOW_GLASS
+        }
+    }
+
+    data class ChatRagSessionCache(
+        val sessionId: Long,
+        val summary: String,
+        val lastMsgTimestamp: Long,
+        val ragLimit: Int,
+        val dateKey: Long
+    )
 
     private val gson = Gson()
 
@@ -585,6 +610,9 @@ object PhantomPrefs {
     fun getVipSenders(ctx: Context, packageName: String): Set<String> =
         getVipSendersMap(ctx)[packageName]?.toSet() ?: emptySet()
 
+    fun getAllVipSenders(ctx: Context): Map<String, List<String>> =
+        getVipSendersMap(ctx).toMap()
+
     fun toggleVipSender(ctx: Context, packageName: String, sender: String): Boolean {
         val map = getVipSendersMap(ctx)
         val list = map[packageName]?.toMutableList() ?: mutableListOf()
@@ -612,12 +640,12 @@ object PhantomPrefs {
         prefs(ctx).edit().putStringSet(KEY_COLLAPSED_CARDS, collapsed).apply()
     }
 
-    /** 新手引導步驟索引（1~10），中斷可續 */
+    /** 新手引導步驟索引（1~15），中斷可續 */
     fun getOnboardingStep(ctx: Context): Int =
-        prefs(ctx).getInt(KEY_ONBOARDING_STEP_V2, 1).coerceIn(1, 14)
+        prefs(ctx).getInt(KEY_ONBOARDING_STEP_V2, 1).coerceIn(1, 15)
 
     fun setOnboardingStep(ctx: Context, stepIndex: Int) {
-        prefs(ctx).edit().putInt(KEY_ONBOARDING_STEP_V2, stepIndex.coerceIn(1, 14)).apply()
+        prefs(ctx).edit().putInt(KEY_ONBOARDING_STEP_V2, stepIndex.coerceIn(1, 15)).apply()
     }
 
     /** OEM 自啟動手動確認（誠實標記：無法程式檢查，由使用者手動確認） */
@@ -674,6 +702,58 @@ object PhantomPrefs {
     /** 實際生效的 AI 助手單次閱讀上限（省 token 模式開啟時覆寫為 100，不改動使用者設定值） */
     fun getEffectiveChatRagMessageLimit(ctx: Context): Int =
         if (isTokenSaverEnabled(ctx)) TOKEN_SAVER_CHAT_RAG_LIMIT else getChatRagMessageLimit(ctx)
+
+    /** 雙模型信心路由開關（預設開啟：先以輕量模型判斷，30~70 分才升級主模型重判） */
+    fun isDualModelRoutingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_DUAL_MODEL_ROUTING_ENABLED, true)
+
+    fun setDualModelRoutingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_DUAL_MODEL_ROUTING_ENABLED, enabled).apply()
+    }
+
+    /** 雙模型信心路由第一關輕量模型名稱（預設 mistral-small-2603） */
+    fun getDualModelRoutingModel(ctx: Context): String =
+        prefs(ctx).getString(KEY_DUAL_MODEL_ROUTING_MODEL, DEFAULT_DUAL_MODEL_ROUTING_MODEL)
+            ?.trim()
+            ?.ifEmpty { DEFAULT_DUAL_MODEL_ROUTING_MODEL }
+            ?: DEFAULT_DUAL_MODEL_ROUTING_MODEL
+
+    fun setDualModelRoutingModel(ctx: Context, model: String) {
+        val clean = model.trim().ifEmpty { DEFAULT_DUAL_MODEL_ROUTING_MODEL }
+        prefs(ctx).edit().putString(KEY_DUAL_MODEL_ROUTING_MODEL, clean).apply()
+    }
+
+    /** 讀取指定對話 session 的 RAG 增量摘要快取 */
+    fun getChatRagSessionCache(ctx: Context, sessionId: Long): ChatRagSessionCache? {
+        val raw = prefs(ctx).getString("$KEY_CHAT_RAG_CACHE_PREFIX$sessionId", null) ?: return null
+        return runCatching { gson.fromJson(raw, ChatRagSessionCache::class.java) }.getOrNull()
+    }
+
+    fun saveChatRagSessionCache(ctx: Context, cache: ChatRagSessionCache) {
+        prefs(ctx).edit()
+            .putString("$KEY_CHAT_RAG_CACHE_PREFIX${cache.sessionId}", gson.toJson(cache))
+            .apply()
+    }
+
+    fun clearChatRagSessionCache(ctx: Context, sessionId: Long) {
+        prefs(ctx).edit().remove("$KEY_CHAT_RAG_CACHE_PREFIX$sessionId").apply()
+    }
+
+    /** 卡片底色模式（跟隨玻璃強度 / 透明模式 / 深色底） */
+    fun getCardBgMode(ctx: Context): CardBgMode =
+        CardBgMode.fromPref(prefs(ctx).getString(KEY_CARD_BG_MODE, null))
+
+    fun setCardBgMode(ctx: Context, mode: CardBgMode) {
+        prefs(ctx).edit().putString(KEY_CARD_BG_MODE, mode.prefValue).apply()
+    }
+
+    /** 卡片底色透明模式不透明度（0–100%，預設 35%） */
+    fun getCardBgAlphaPercent(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_CARD_BG_ALPHA, 35).coerceIn(0, 100)
+
+    fun setCardBgAlphaPercent(ctx: Context, percent: Int) {
+        prefs(ctx).edit().putInt(KEY_CARD_BG_ALPHA, percent.coerceIn(0, 100)).apply()
+    }
 
     /** 常駐通知顯示 App 圖示條（預設開） */
     fun isPersistentNotifShowIcons(ctx: Context): Boolean =
