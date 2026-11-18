@@ -1671,11 +1671,14 @@ private fun PhantomCheckApp(
                         OnboardingStep.PERMISSION -> OnboardingStep.HOME_APP
                         OnboardingStep.HOME_APP -> OnboardingStep.LONG_PRESS
                         OnboardingStep.LONG_PRESS -> OnboardingStep.SWIPE_DELETE
-                        OnboardingStep.SWIPE_DELETE -> OnboardingStep.MULTI_SELECT
+                        OnboardingStep.SWIPE_DELETE -> OnboardingStep.QUICK_REPLY
+                        OnboardingStep.QUICK_REPLY -> OnboardingStep.MULTI_SELECT
                         OnboardingStep.MULTI_SELECT -> OnboardingStep.FILTER_CHIPS
                         OnboardingStep.FILTER_CHIPS -> OnboardingStep.AI_ASSISTANT
                         OnboardingStep.AI_ASSISTANT -> OnboardingStep.NOTES_TAB
-                        OnboardingStep.NOTES_TAB -> OnboardingStep.STATS_AND_SUMMARY
+                        OnboardingStep.NOTES_TAB -> OnboardingStep.MEMO_RULES
+                        OnboardingStep.MEMO_RULES -> OnboardingStep.NOTED_TODOED_SOURCE
+                        OnboardingStep.NOTED_TODOED_SOURCE -> OnboardingStep.STATS_AND_SUMMARY
                         OnboardingStep.STATS_AND_SUMMARY -> OnboardingStep.TAGS_AND_RULES
                         OnboardingStep.TAGS_AND_RULES -> OnboardingStep.TODO_AND_BATCH
                         OnboardingStep.TODO_AND_BATCH -> OnboardingStep.APPEARANCE_AND_BG
