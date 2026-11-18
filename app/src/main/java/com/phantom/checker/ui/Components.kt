@@ -83,6 +83,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -198,6 +199,41 @@ fun Modifier.phantomGlassSurface(
             .clip(shape)
             .background(resolvedFallback, shape)
             .border(width = 1.dp, color = resolvedOutline, shape = shape)
+    }
+}
+
+/**
+ * #222 浮動層專用不透明容器（歷史對話抽屜、記事規則面板等）。
+ * 不使用 glassSurface/blur，避免圓角外溢出與底層文字透出；.clip(shape) 必在 .background() 之前。
+ */
+@Composable
+fun PhantomFloatingSurface(
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 20.dp,
+    contentPadding: Dp = 14.dp,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val bgColor = if (isDark) {
+        Color(0xF012151E)
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+    }
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(bgColor, shape)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+                shape = shape
+            )
+    ) {
+        Column(
+            modifier = Modifier.padding(contentPadding),
+            content = content
+        )
     }
 }
 
@@ -1538,7 +1574,12 @@ fun StackedAppCard(
     val baseAlphaScale = if (isMuted) 0.5f else 1f
     val stepY = if (isCompact) 3.dp else 6.dp
     val bottomSpace = stepY * layerCount
-    val layerColor = MaterialTheme.colorScheme.surfaceVariant
+    val layerColor = lerp(
+        MaterialTheme.colorScheme.surfaceVariant,
+        MaterialTheme.colorScheme.onSurface,
+        0.25f
+    )
+    val layerOutline = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
     val layerShape = RoundedCornerShape(20.dp)
 
     Box(modifier = modifier.padding(bottom = bottomSpace)) {
@@ -1554,10 +1595,10 @@ fun StackedAppCard(
                         } else {
                             0f
                         }
-                        val scale = 1f - 0.06f * collapseFactor
+                        val scale = 1f - 0.08f * collapseFactor
                         scaleX = scale
                         scaleY = scale
-                        alpha = 0.18f * baseAlphaScale * collapseFactor
+                        alpha = 0.35f * baseAlphaScale * collapseFactor
                         translationY = (stepY * 2).toPx() * collapseFactor + parallaxPx * collapseFactor
                     }
                     .clip(layerShape)
@@ -1575,14 +1616,15 @@ fun StackedAppCard(
                     } else {
                         0f
                     }
-                    val scale = 1f - 0.03f * collapseFactor
+                    val scale = 1f - 0.04f * collapseFactor
                     scaleX = scale
                     scaleY = scale
-                    alpha = 0.35f * baseAlphaScale * collapseFactor
+                    alpha = 0.55f * baseAlphaScale * collapseFactor
                     translationY = stepY.toPx() * collapseFactor + parallaxPx * collapseFactor
                 }
                 .clip(layerShape)
                 .background(layerColor)
+                .border(width = 1.dp, color = layerOutline, shape = layerShape)
         )
         content()
     }
