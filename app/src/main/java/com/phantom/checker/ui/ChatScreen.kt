@@ -115,6 +115,9 @@ import com.phantom.checker.service.AppDatabaseHolder
 import com.phantom.checker.service.NotificationCollectorService
 import com.phantom.checker.service.ReminderScheduler
 import com.phantom.checker.service.StatsForegroundService
+import com.phantom.checker.util.ClientTimeParser
+import com.phantom.checker.util.NaturalTimeParseResult
+import com.phantom.checker.util.NotificationFoldUtil
 import com.phantom.checker.util.OtpDetector
 import com.phantom.checker.util.PhantomPrefs
 import com.phantom.checker.widget.ReminderWidgetProvider
@@ -752,7 +755,7 @@ fun ChatAssistantTab(
                         if (resolvedRepeat.isBlank() && (isUnsupportedRecurringExpression(rp.time.orEmpty()) || isUnsupportedRecurringExpression(query))) {
                             resolutionErrors.add("重複提醒目前僅支援「每日」與「每週」，暫不支援每月或每年。")
                         } else {
-                            when (val timeRes = parseNaturalReminderTime(rp.time, query, nowMs)) {
+                            when (val timeRes = ClientTimeParser.parseNaturalReminderTime(rp.time, query, nowMs)) {
                                 is NaturalTimeParseResult.Success -> {
                                     resolvedTodoInsertions.add(
                                         PendingTodoInsertion(
@@ -781,7 +784,7 @@ fun ChatAssistantTab(
                         resolutionErrors.add("重複提醒目前僅支援「每日」與「每週」，暫不支援每月或每年。")
                     } else {
                         val title = extractTodoTitleFromQuery(query)
-                        when (val timeRes = parseNaturalReminderTime(null, query, nowMs)) {
+                        when (val timeRes = ClientTimeParser.parseNaturalReminderTime(null, query, nowMs)) {
                             is NaturalTimeParseResult.Success -> {
                                 resolvedTodoInsertions.add(
                                     PendingTodoInsertion(
@@ -1004,7 +1007,7 @@ fun ChatAssistantTab(
                                                 val target = matches.first()
                                                 val updatedTitle = tp.newTitle?.takeIf { it.isNotBlank() } ?: target.title
                                                 val updatedDueAt = if (!tp.time.isNullOrBlank()) {
-                                                    when (val tr = parseNaturalReminderTime(tp.time, query, System.currentTimeMillis())) {
+                                                    when (val tr = ClientTimeParser.parseNaturalReminderTime(tp.time, query, System.currentTimeMillis())) {
                                                         is NaturalTimeParseResult.Success -> tr.epochMillis
                                                         is NaturalTimeParseResult.PastTime -> {
                                                             resolutionErrors.add("修改後的提醒時間已過期，請指定未來的時間。")
@@ -2586,8 +2589,17 @@ fun ChatAssistantTab(
                                                             contentSnippet = primaryMsg.content,
                                                             replyText = draftReply
                                                         )) {
-                                                            is NotificationCollectorService.Companion.ReplySendResult.Success ->
+                                                            is NotificationCollectorService.Companion.ReplySendResult.Success -> {
+                                                                com.phantom.checker.service.ReplyProxyManager.startOrRefreshSession(
+                                                                    ctx = appCtx,
+                                                                    packageName = primaryMsg.packageName,
+                                                                    appLabel = primaryMsg.appLabel,
+                                                                    sender = primaryMsg.sender,
+                                                                    originalSnippet = primaryMsg.content,
+                                                                    initialReplyText = draftReply
+                                                                )
                                                                 "已透過通知快速回覆送出給「${primaryMsg.sender.ifBlank { primaryMsg.appLabel }}」：$draftReply"
+                                                            }
                                                             is NotificationCollectorService.Companion.ReplySendResult.Unavailable ->
                                                                 res.reason
                                                         }
@@ -3672,40 +3684,32 @@ private suspend fun buildRagSystemPrompt(
             }
         } else {
             val contentCap = if (AiClient.isGroqActive(ctx, com.phantom.checker.util.AiPurpose.CHAT)) 100 else 150
-            data class DedupRagEntry(val msg: MessageEntity, var count: Int = 1)
-            val dedupMap = LinkedHashMap<String, DedupRagEntry>()
-            msgs.forEach { m ->
-                val normPrefix = m.content.replace(Regex("\\s+"), " ").trim().take(40)
-                val key = "${m.packageName}|${m.sender.trim()}|$normPrefix"
-                val existing = dedupMap[key]
-                if (existing == null) {
-                    dedupMap[key] = DedupRagEntry(m, 1)
-                } else {
-                    existing.count++
-                }
-            }
-            val deduped = dedupMap.values.toList()
+            val folded = NotificationFoldUtil.fold(msgs)
             val headerTitle = if (canUseIncrementalCache) {
-                "【上次對話後新增訊息（共 ${deduped.size} 組／原 ${msgs.size} 則，舊→新）】"
+                "【上次對話後新增訊息（共 ${folded.size} 組／原 ${msgs.size} 則，舊→新）】"
             } else {
-                "【符合條件的訊息節錄（共 ${deduped.size} 組／原 ${msgs.size} 則，上限 $ragLimit，舊→新）】"
+                "【符合條件的訊息節錄（共 ${folded.size} 組／原 ${msgs.size} 則，上限 $ragLimit，舊→新）】"
             }
             appendLine(headerTitle)
             appendLine("<message_content>")
             val ragSectionBuilder = StringBuilder()
-            deduped.forEachIndexed { idx, entry ->
-                val m = entry.msg
-                val t = timeFmt.format(Date(m.timestamp))
+            folded.forEachIndexed { idx, entry ->
+                val m = entry.representative
                 val risk = if (m.riskLabel.isNotBlank()) "${m.riskLabel}(${m.riskScore})" else "未分析"
-                val safeSender = AiClient.sanitizeForPrompt(m.sender)
-                val contentShort = AiClient.sanitizeForPrompt(m.content.replace("\n", " ").take(contentCap))
-                val repeatTag = if (entry.count > 1) " (×${entry.count})" else ""
-                val line = "${idx + 1}. [id=${m.id}] [${m.appLabel}] $safeSender ($t) [$risk]$repeatTag: $contentShort"
+                val line = if (entry.isFolded) {
+                    val headline = AiClient.sanitizeForPrompt(NotificationFoldUtil.formatFoldedHeadline(entry))
+                    "${idx + 1}. [id=${m.id}] $headline [$risk]"
+                } else {
+                    val t = timeFmt.format(Date(m.timestamp))
+                    val safeSender = AiClient.sanitizeForPrompt(m.sender)
+                    val contentShort = AiClient.sanitizeForPrompt(m.content.replace("\n", " ").take(contentCap))
+                    "${idx + 1}. [id=${m.id}] [${m.appLabel}] $safeSender ($t) [$risk]: $contentShort"
+                }
                 appendLine(line)
                 ragSectionBuilder.appendLine(line)
             }
             appendLine("</message_content>")
-            if (!canUseIncrementalCache && sessionId != null && deduped.size >= 15) {
+            if (!canUseIncrementalCache && sessionId != null && folded.size >= 15) {
                 ragTextForSummary = ragSectionBuilder.toString()
             }
         }
@@ -3885,11 +3889,6 @@ private data class PendingTodoInsertion(
     val repeatRule: String = TodoEntity.REPEAT_NONE
 )
 
-private sealed class NaturalTimeParseResult {
-    data class Success(val epochMillis: Long) : NaturalTimeParseResult()
-    data class PastTime(val epochMillis: Long) : NaturalTimeParseResult()
-    data object Unparseable : NaturalTimeParseResult()
-}
 
 private data class SearchMessagesProposal(
     val query: String?,
@@ -4473,232 +4472,6 @@ private fun extractTodoTitleFromQuery(query: String): String {
     )
     val stripped = s.replace(timeStripRegex, " ").replace(Regex("""^[要得去把\s,，]+"""), "").trim()
     return stripped.ifBlank { s }.ifBlank { "待辦事項" }
-}
-
-private fun parseNaturalReminderTime(
-    rawTime: String?,
-    rawQuery: String,
-    nowMs: Long = System.currentTimeMillis()
-): NaturalTimeParseResult {
-    val zone = ZoneId.systemDefault()
-    val nowZdt = Instant.ofEpochMilli(nowMs).atZone(zone)
-    val nowLdt = nowZdt.toLocalDateTime()
-
-    // 1. 優先嘗試結構化 ISO-8601 / yyyy-MM-dd HH:mm（AI 輸出）
-    if (!rawTime.isNullOrBlank()) {
-        val trimmed = rawTime.trim()
-        runCatching { ZonedDateTime.parse(trimmed).toInstant().toEpochMilli() }.getOrNull()?.let { ms ->
-            return if (ms > nowMs) NaturalTimeParseResult.Success(ms) else NaturalTimeParseResult.PastTime(ms)
-        }
-        runCatching { OffsetDateTime.parse(trimmed).toInstant().toEpochMilli() }.getOrNull()?.let { ms ->
-            return if (ms > nowMs) NaturalTimeParseResult.Success(ms) else NaturalTimeParseResult.PastTime(ms)
-        }
-        val patterns = listOf(
-            "yyyy-MM-dd HH:mm",
-            "yyyy-MM-dd'T'HH:mm",
-            "yyyy-MM-dd HH:mm:ss",
-            "yyyy-MM-dd'T'HH:mm:ss",
-            "yyyy/MM/dd HH:mm",
-            "yyyy/MM/dd HH:mm:ss"
-        )
-        for (pat in patterns) {
-            val ldt = runCatching { LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern(pat)) }.getOrNull()
-            if (ldt != null) {
-                val ms = ldt.atZone(zone).toInstant().toEpochMilli()
-                return if (ms > nowMs) NaturalTimeParseResult.Success(ms) else NaturalTimeParseResult.PastTime(ms)
-            }
-        }
-    }
-
-    // 2. 用戶端確定性自然語言時間解析（先看 rawTime，若無再看 rawQuery）
-    val candidates = listOfNotNull(rawTime?.takeIf { it.isNotBlank() }, rawQuery.takeIf { it.isNotBlank() })
-    for (text in candidates) {
-        parseNaturalTextWithZone(text, nowLdt, nowMs, zone)?.let { return it }
-    }
-    return NaturalTimeParseResult.Unparseable
-}
-
-private fun parseNaturalTextWithZone(
-    text: String,
-    nowLdt: LocalDateTime,
-    nowMs: Long,
-    zone: ZoneId
-): NaturalTimeParseResult? {
-    val s = text.trim()
-    if (s.isEmpty()) return null
-
-    // 2a. 相對時長：半小時後、X 小時後、X 分鐘後、X 天後
-    if (Regex("""半(?:個)?小時(?:以)?後""").containsMatchIn(s)) {
-        val target = nowLdt.plusMinutes(30).withSecond(0).withNano(0)
-        return NaturalTimeParseResult.Success(target.atZone(zone).toInstant().toEpochMilli())
-    }
-    Regex("""(\d+(?:\.\d+)?)\s*(?:個)?小時(?:以)?後""").find(s)?.let { m ->
-        val hours = m.groupValues[1].toDoubleOrNull()
-        if (hours != null && hours > 0) {
-            val mins = (hours * 60.0).roundToInt().coerceAtLeast(1)
-            val target = nowLdt.plusMinutes(mins.toLong()).withSecond(0).withNano(0)
-            return NaturalTimeParseResult.Success(target.atZone(zone).toInstant().toEpochMilli())
-        }
-    }
-    Regex("""(\d+)\s*分鐘(?:以)?後""").find(s)?.let { m ->
-        val mins = m.groupValues[1].toLongOrNull()
-        if (mins != null && mins > 0L) {
-            val target = nowLdt.plusMinutes(mins).withSecond(0).withNano(0)
-            return NaturalTimeParseResult.Success(target.atZone(zone).toInstant().toEpochMilli())
-        }
-    }
-    Regex("""(\d+)\s*天(?:以)?後""").find(s)?.let { m ->
-        val days = m.groupValues[1].toLongOrNull()
-        if (days != null && days > 0L) {
-            val targetDate = nowLdt.toLocalDate().plusDays(days)
-            val target = LocalDateTime.of(targetDate, LocalTime.of(9, 0))
-            return NaturalTimeParseResult.Success(target.atZone(zone).toInstant().toEpochMilli())
-        }
-    }
-
-    // 2b. 日期解析
-    val today = nowLdt.toLocalDate()
-    var parsedDate: LocalDate? = null
-    var hasExplicitDate = false
-
-    Regex("""(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})""").find(s)?.let { m ->
-        val y = m.groupValues[1].toIntOrNull()
-        val mo = m.groupValues[2].toIntOrNull()
-        val d = m.groupValues[3].toIntOrNull()
-        if (y != null && mo != null && d != null) {
-            parsedDate = runCatching { LocalDate.of(y, mo, d) }.getOrNull()
-            if (parsedDate != null) hasExplicitDate = true
-        }
-    }
-    if (parsedDate == null) {
-        Regex("""(\d{1,2})[月/\-](\d{1,2})日?""").find(s)?.let { m ->
-            val mo = m.groupValues[1].toIntOrNull()
-            val d = m.groupValues[2].toIntOrNull()
-            if (mo != null && d != null) {
-                parsedDate = runCatching { LocalDate.of(today.year, mo, d) }.getOrNull()
-                if (parsedDate != null) hasExplicitDate = true
-            }
-        }
-    }
-    if (parsedDate == null) {
-        when {
-            s.contains("大後天") -> { parsedDate = today.plusDays(3); hasExplicitDate = true }
-            s.contains("後天") || s.contains("後日") -> { parsedDate = today.plusDays(2); hasExplicitDate = true }
-            s.contains("明天") || s.contains("明日") || s.contains("明早") || s.contains("明晚") -> {
-                parsedDate = today.plusDays(1); hasExplicitDate = true
-            }
-            s.contains("今天") || s.contains("今日") || s.contains("今晚") -> {
-                parsedDate = today; hasExplicitDate = true
-            }
-        }
-    }
-    if (parsedDate == null) {
-        val dowMatch = Regex("""(下)?(?:這|本)?(?:星期|禮拜|週)([一二三四五六日天])""").find(s)
-        if (dowMatch != null) {
-            val isNextWeek = dowMatch.groupValues[1] == "下"
-            val dow = when (dowMatch.groupValues[2]) {
-                "一" -> DayOfWeek.MONDAY
-                "二" -> DayOfWeek.TUESDAY
-                "三" -> DayOfWeek.WEDNESDAY
-                "四" -> DayOfWeek.THURSDAY
-                "五" -> DayOfWeek.FRIDAY
-                "六" -> DayOfWeek.SATURDAY
-                else -> DayOfWeek.SUNDAY
-            }
-            parsedDate = if (isNextWeek) {
-                val thisWeeksMon = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                thisWeeksMon.plusWeeks(1).with(TemporalAdjusters.nextOrSame(dow))
-            } else {
-                today.with(TemporalAdjusters.nextOrSame(dow))
-            }
-            hasExplicitDate = true
-        }
-    }
-
-    // 2c. 時間解析（HH:mm、X點Y分、時段詞）
-    var hour: Int? = null
-    var minute = 0
-    var hasExplicitTime = false
-
-    val colonMatch = Regex("""(\d{1,2})\s*[:：]\s*(\d{2})""").find(s)
-    if (colonMatch != null) {
-        val h = colonMatch.groupValues[1].toIntOrNull()
-        val min = colonMatch.groupValues[2].toIntOrNull()
-        if (h != null && min != null && h in 0..23 && min in 0..59) {
-            hour = h
-            minute = min
-            hasExplicitTime = true
-        }
-    }
-    if (!hasExplicitTime) {
-        val cnTimeMatch = Regex("""(\d{1,2})\s*[點時]\s*(半|(\d{1,2})\s*分?)?""").find(s)
-        if (cnTimeMatch != null) {
-            val h = cnTimeMatch.groupValues[1].toIntOrNull()
-            val tail = cnTimeMatch.groupValues[2]
-            val minDigits = cnTimeMatch.groupValues[3]
-            if (h != null && h in 0..23) {
-                hour = h
-                minute = when {
-                    tail == "半" -> 30
-                    minDigits.isNotEmpty() -> minDigits.toIntOrNull()?.coerceIn(0, 59) ?: 0
-                    else -> 0
-                }
-                hasExplicitTime = true
-            }
-        }
-    }
-
-    val isMorning = s.contains("早上") || s.contains("上午") || s.contains("明早")
-    val isNoon = s.contains("中午") || s.contains("午間")
-    val isAfternoon = s.contains("下午") || s.contains("午後")
-    val isEvening = s.contains("傍晚")
-    val isNight = s.contains("晚上") || s.contains("今晚") || s.contains("明晚") || s.contains("夜裡")
-    val isDawn = s.contains("凌晨") || s.contains("半夜")
-    val hasPeriodWord = isMorning || isNoon || isAfternoon || isEvening || isNight || isDawn
-
-    if (hasExplicitTime && hour != null) {
-        val h = hour!!
-        hour = when {
-            isDawn && h == 12 -> 0
-            isNoon && h in 1..6 -> h + 12
-            (isAfternoon || isEvening || isNight) && h in 1..11 -> h + 12
-            isMorning && h == 12 -> 0
-            else -> h
-        }
-    } else if (hasPeriodWord) {
-        hour = when {
-            isDawn -> 1
-            isMorning -> 9
-            isNoon -> 12
-            isAfternoon -> 15
-            isEvening -> 18
-            isNight -> 20
-            else -> 9
-        }
-        minute = 0
-        hasExplicitTime = true
-    }
-
-    if (!hasExplicitDate && !hasExplicitTime) {
-        return null
-    }
-
-    val finalDate = parsedDate ?: today
-    val finalTime = if (hasExplicitTime && hour != null) LocalTime.of(hour!!, minute) else LocalTime.of(9, 0)
-    var targetLdt = LocalDateTime.of(finalDate, finalTime)
-    var targetMs = targetLdt.atZone(zone).toInstant().toEpochMilli()
-
-    // 只給時間沒給日期：若今天該時間已過，則順延至明天
-    if (!hasExplicitDate && targetMs <= nowMs) {
-        targetLdt = targetLdt.plusDays(1)
-        targetMs = targetLdt.atZone(zone).toInstant().toEpochMilli()
-    }
-
-    return if (targetMs > nowMs) {
-        NaturalTimeParseResult.Success(targetMs)
-    } else {
-        NaturalTimeParseResult.PastTime(targetMs)
-    }
 }
 
 @Composable

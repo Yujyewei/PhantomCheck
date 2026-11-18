@@ -820,6 +820,12 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE isDone = 0 AND dueAt > :now ORDER BY dueAt ASC")
     suspend fun futurePending(now: Long): List<TodoEntity>
 
+    @Query("SELECT * FROM todos WHERE relatedMessageId = :messageId LIMIT 1")
+    suspend fun findByRelatedMessageId(messageId: Long): TodoEntity?
+
+    @Query("SELECT * FROM todos WHERE isDone = 0 AND createdAt >= :since ORDER BY createdAt DESC")
+    suspend fun findRecentPendingSince(since: Long): List<TodoEntity>
+
     @Insert
     suspend fun insert(todo: TodoEntity): Long
 
@@ -907,6 +913,9 @@ interface NoteDao {
 
     @Query("SELECT * FROM notes WHERE relatedMessageId = :messageId AND source = 'auto' LIMIT 1")
     suspend fun findAutoByMessageId(messageId: Long): NoteEntity?
+
+    @Query("SELECT * FROM notes WHERE source = 'auto' AND relatedAppLabel = :label AND updatedAt >= :since ORDER BY updatedAt DESC")
+    suspend fun findRecentAutoByAppLabel(label: String, since: Long): List<NoteEntity>
 
     @Insert
     suspend fun insert(note: NoteEntity): Long

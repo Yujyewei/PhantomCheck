@@ -2327,6 +2327,44 @@ fun FilterSettingsScreen(
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    var replyProxyEnabled by remember { mutableStateOf(PhantomPrefs.isReplyProxyEnabled(appCtx)) }
+                    var replyProxyTimeout by remember { mutableStateOf(PhantomPrefs.getReplyProxyTimeoutMinutes(appCtx)) }
+                    SettingSwitchRow(
+                        title = "通知欄連續快速回覆",
+                        subtitle = "透過 AI 助手回覆後於通知欄保留對話輸入框，可連續回覆多則",
+                        checked = replyProxyEnabled,
+                        onCheckedChange = {
+                            replyProxyEnabled = it
+                            PhantomPrefs.setReplyProxyEnabled(appCtx, it)
+                        }
+                    )
+                    if (replyProxyEnabled) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "回覆通知閒置自動收起",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.Gray
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                15 to "15 分鐘",
+                                30 to "30 分鐘",
+                                60 to "60 分鐘",
+                                0 to "不自動收起"
+                            ).forEach { (mins, label) ->
+                                FilterChip(
+                                    selected = replyProxyTimeout == mins,
+                                    onClick = {
+                                        replyProxyTimeout = mins
+                                        PhantomPrefs.setReplyProxyTimeoutMinutes(appCtx, mins)
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     OutlinedButton(
                         onClick = { showClearReadConfirm = true },
                         modifier = Modifier.fillMaxWidth(),
@@ -3452,6 +3490,17 @@ private fun AboutSettingsCard(
             text = "本 App 只在本機被動讀取通知備份，不上傳訊息內容。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        var updateAutoCheck by remember { mutableStateOf(PhantomPrefs.isUpdateAutoCheckEnabled(appCtx)) }
+        SettingSwitchRow(
+            title = "自動檢查更新",
+            subtitle = "開啟 App 時自動檢查 GitHub 最新版本，每天最多提示一次",
+            checked = updateAutoCheck,
+            onCheckedChange = {
+                updateAutoCheck = it
+                PhantomPrefs.setUpdateAutoCheckEnabled(appCtx, it)
+            }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedButton(

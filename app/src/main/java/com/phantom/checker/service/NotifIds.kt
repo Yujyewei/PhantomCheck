@@ -17,6 +17,7 @@ object NotifIds {
     const val WEEKLY_SUMMARY = 1004
     const val AI_TAG_FAILURE = 1005
     const val AI_OFFLINE_QUEUE = 1006
+    const val UPDATE_AVAILABLE = 1007
 
     private const val SCAM_ALERT_BASE = 2000
     private const val SCAM_ALERT_SPAN = 20000L
@@ -30,6 +31,9 @@ object NotifIds {
     private const val TODO_REMINDER_BASE = 110000
     private const val TODO_REMINDER_SPAN = 10000L
 
+    private const val REPLY_PROXY_BASE = 120000
+    private const val REPLY_PROXY_SPAN = 10000
+
     fun scamAlert(msgId: Long): Int =
         SCAM_ALERT_BASE + Math.floorMod(msgId, SCAM_ALERT_SPAN).toInt()
 
@@ -41,4 +45,7 @@ object NotifIds {
 
     fun todoReminder(todoId: Long): Int =
         TODO_REMINDER_BASE + Math.floorMod(todoId, TODO_REMINDER_SPAN).toInt()
+
+    fun replyProxy(sessionHash: Int): Int =
+        REPLY_PROXY_BASE + Math.floorMod(sessionHash, REPLY_PROXY_SPAN)
 }

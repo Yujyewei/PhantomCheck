@@ -1143,4 +1143,52 @@ object PhantomPrefs {
     fun setAiTagFailureNotifEnabled(ctx: Context, enabled: Boolean) {
         prefs(ctx).edit().putBoolean("ai_tag_failure_notif_enabled", enabled).apply()
     }
+
+    /** 自動檢查更新開關（預設開） */
+    fun isUpdateAutoCheckEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("update_auto_check_enabled", true)
+
+    fun setUpdateAutoCheckEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("update_auto_check_enabled", enabled).apply()
+    }
+
+    fun getUpdateLastCheckDay(ctx: Context): String =
+        prefs(ctx).getString("update_last_check_day", "").orEmpty()
+
+    fun setUpdateLastCheckDay(ctx: Context, day: String) {
+        prefs(ctx).edit().putString("update_last_check_day", day).apply()
+    }
+
+    fun getUpdateLastPromptKey(ctx: Context): String =
+        prefs(ctx).getString("update_last_prompt_key", "").orEmpty()
+
+    fun setUpdateLastPromptKey(ctx: Context, key: String) {
+        prefs(ctx).edit().putString("update_last_prompt_key", key).apply()
+    }
+
+    fun getUpdateLastNotifiedKey(ctx: Context): String =
+        prefs(ctx).getString("update_last_notified_key", "").orEmpty()
+
+    fun setUpdateLastNotifiedKey(ctx: Context, key: String) {
+        prefs(ctx).edit().putString("update_last_notified_key", key).apply()
+    }
+
+    /** 通知欄連續快速回覆開關（預設開） */
+    fun isReplyProxyEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("reply_proxy_enabled", true)
+
+    fun setReplyProxyEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("reply_proxy_enabled", enabled).apply()
+    }
+
+    /** 代理回覆通知閒置自動收起時間（分鐘：15 / 30 / 60 / 0=不自動收起，預設 30） */
+    fun getReplyProxyTimeoutMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("reply_proxy_timeout_minutes", 30)
+        return if (v in setOf(0, 15, 30, 60)) v else 30
+    }
+
+    fun setReplyProxyTimeoutMinutes(ctx: Context, minutes: Int) {
+        val safe = if (minutes in setOf(0, 15, 30, 60)) minutes else 30
+        prefs(ctx).edit().putInt("reply_proxy_timeout_minutes", safe).apply()
+    }
 }

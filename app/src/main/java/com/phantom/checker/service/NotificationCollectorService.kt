@@ -23,6 +23,7 @@ import com.phantom.checker.data.MessageTagCrossRef
 import com.phantom.checker.data.NoteEntity
 import com.phantom.checker.data.PendingAiAnalysisEntity
 import com.phantom.checker.data.TagEntity
+import com.phantom.checker.data.TodoEntity
 import com.phantom.checker.data.UserTagRuleEntity
 import com.phantom.checker.network.AiClient
 import com.phantom.checker.network.IndicatorExtractor
@@ -31,9 +32,11 @@ import com.phantom.checker.ui.MainActivity
 import com.phantom.checker.ui.MessageDetailActivity
 import com.phantom.checker.ui.ScamCenterActivity
 import com.phantom.checker.util.AiPurpose
+import com.phantom.checker.util.ClientTimeParser
 import com.phantom.checker.util.MuteMode
 import com.phantom.checker.util.NotifClickBehavior
 import com.phantom.checker.util.PhantomPrefs
+import com.phantom.checker.widget.ReminderWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -584,7 +587,14 @@ class NotificationCollectorService : NotificationListenerService() {
                 }
             }
             if (PhantomPrefs.isAiAutoMemoEnabled(applicationContext) && result.memo.isNotBlank()) {
-                saveAutoMemoIfPresent(db, msg, result.memo)
+                saveAutoMemoIfPresent(
+                    db = db,
+                    msg = msg,
+                    rawMemo = result.memo,
+                    memoType = result.memoType,
+                    todoDue = result.todoDue,
+                    ctx = applicationContext
+                )
             }
             if (result.riskLabel == "scam") {
                 hasNewScam = true
@@ -1048,29 +1058,111 @@ class NotificationCollectorService : NotificationListenerService() {
             }
         }
 
+        private const val AUTO_MEMO_DEDUP_WINDOW_MS = 7L * 24L * 60L * 60L * 1000L
+
+        internal fun normalizeForSimilarity(text: String): String =
+            text.trim().replace(Regex("\\s+"), " ")
+
+        internal fun diceBigramSimilarity(a: String, b: String): Double {
+            if (a == b) return 1.0
+            if (a.length < 2 || b.length < 2) return 0.0
+            val aBigrams = HashMap<String, Int>(a.length)
+            for (i in 0 until a.length - 1) {
+                val bg = a.substring(i, i + 2)
+                aBigrams[bg] = (aBigrams[bg] ?: 0) + 1
+            }
+            var intersection = 0
+            val bCount = b.length - 1
+            for (i in 0 until bCount) {
+                val bg = b.substring(i, i + 2)
+                val rem = aBigrams[bg] ?: 0
+                if (rem > 0) {
+                    intersection++
+                    aBigrams[bg] = rem - 1
+                }
+            }
+            return (2.0 * intersection) / ((a.length - 1) + bCount)
+        }
+
         suspend fun saveAutoMemoIfPresent(
             db: AppDatabase,
             msg: MessageEntity,
-            rawMemo: String
+            rawMemo: String,
+            memoType: String = AiClient.MEMO_TYPE_NOTE,
+            todoDue: String = "",
+            ctx: Context? = null
         ) {
             val clean = rawMemo.trim().take(40)
             if (clean.isEmpty()) return
             val now = System.currentTimeMillis()
-            val existing = db.noteDao().findAutoByMessageId(msg.id)
-            if (existing != null) {
-                db.noteDao().update(existing.copy(content = clean, updatedAt = now))
-            } else {
-                db.noteDao().insert(
-                    NoteEntity(
-                        content = clean,
-                        source = NoteEntity.SOURCE_AUTO,
-                        relatedMessageId = msg.id,
-                        relatedAppLabel = msg.appLabel.ifBlank { msg.packageName },
+            val normClean = normalizeForSimilarity(clean)
+
+            if (memoType == AiClient.MEMO_TYPE_TODO) {
+                if (db.todoDao().findByRelatedMessageId(msg.id) != null) return
+                val since = now - AUTO_MEMO_DEDUP_WINDOW_MS
+                val recentPending = db.todoDao().findRecentPendingSince(since)
+                if (recentPending.any { normalizeForSimilarity(it.title) == normClean }) return
+
+                val parsedDue = ClientTimeParser.parseStructuredDueAt(todoDue)
+                val dueAt = parsedDue ?: (msg.timestamp + 2L * 60L * 60L * 1000L)
+                val newId = db.todoDao().insert(
+                    TodoEntity(
+                        title = clean,
+                        dueAt = dueAt,
+                        isDone = false,
                         createdAt = now,
-                        updatedAt = now
+                        relatedMessageId = msg.id,
+                        sourceSessionId = null,
+                        priority = 1
                     )
                 )
+                val appCtx = ctx?.applicationContext
+                if (appCtx != null) {
+                    if (dueAt > now) {
+                        ReminderScheduler.scheduleTodo(appCtx, newId, dueAt)
+                    }
+                    ReminderWidgetProvider.updateAllIfChanged(appCtx)
+                }
+                return
             }
+
+            val appLabel = msg.appLabel.ifBlank { msg.packageName }
+
+            val existing = db.noteDao().findAutoByMessageId(msg.id)
+            if (existing != null) {
+                if (existing.pinned) return
+                db.noteDao().update(existing.copy(content = clean, updatedAt = now))
+                return
+            }
+
+            val since = now - AUTO_MEMO_DEDUP_WINDOW_MS
+            val recent = db.noteDao().findRecentAutoByAppLabel(appLabel, since)
+            val duplicate = recent.firstOrNull { cand ->
+                val normCand = normalizeForSimilarity(cand.content)
+                normCand == normClean || diceBigramSimilarity(normCand, normClean) >= 0.9
+            }
+            if (duplicate != null) {
+                if (duplicate.pinned) return
+                db.noteDao().update(
+                    duplicate.copy(
+                        content = clean,
+                        updatedAt = now,
+                        relatedMessageId = msg.id
+                    )
+                )
+                return
+            }
+
+            db.noteDao().insert(
+                NoteEntity(
+                    content = clean,
+                    source = NoteEntity.SOURCE_AUTO,
+                    relatedMessageId = msg.id,
+                    relatedAppLabel = appLabel,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
         }
 
         private fun sha256(input: String): String {
