@@ -645,7 +645,7 @@ fun FilterSettingsScreen(
                     Text(
                         text = "共 ${PresetKeywords.keywords.size} 個常見詐騙關鍵字（將新增 $newCount 個，略過 $skipCount 個已存在項目）：",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -1106,7 +1106,7 @@ fun FilterSettingsScreen(
                         Text(
                             text = "「全部」與「未讀」固定顯示，可自訂其餘按鈕",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(6.dp))
                         val filterOptions = listOf(
@@ -1423,13 +1423,13 @@ fun FilterSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Slider(
-                                value = cardBgAlpha.toFloat(),
+                                value = cardBgAlpha.coerceIn(15, 100).toFloat(),
                                 onValueChange = { v ->
-                                    val pct = v.roundToInt().coerceIn(0, 100)
+                                    val pct = v.roundToInt().coerceIn(15, 100)
                                     cardBgAlpha = pct
                                     ThemePreferences.setCardBgAlphaPercent(appCtx, pct)
                                 },
-                                valueRange = 0f..100f
+                                valueRange = 15f..100f
                             )
                         }
                     }
@@ -1918,7 +1918,7 @@ fun FilterSettingsScreen(
                     Text(
                         text = "獨立於過濾規則，命中即發送高優先「🔔 重要訊息」通知",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(6.dp))
                     Row(
@@ -2059,7 +2059,7 @@ fun FilterSettingsScreen(
                         }
                     }
                     Spacer(Modifier.height(6.dp))
-                    Text("命中動作：", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                    Text("命中動作：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(
                             FilterRule.ACTION_FILTER to "標記已過濾",
@@ -2099,7 +2099,7 @@ fun FilterSettingsScreen(
                     if (isLoadingRules) {
                         CircularProgressIndicator()
                     } else if (rules.isEmpty()) {
-                        Text("目前尚無過濾關鍵字", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("目前尚無過濾關鍵字", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         rules.forEach { rule ->
                             FilterRuleRow(
@@ -2149,7 +2149,7 @@ fun FilterSettingsScreen(
                     Text(
                         text = "僅作用於內容相同的重複更新（實質新訊息一律收錄，不漏訊）",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Slider(
                         value = throttleSec,
@@ -2180,7 +2180,7 @@ fun FilterSettingsScreen(
                         Text(
                             text = "尚未設定個別 App 覆寫，全部套用上方全域秒數",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
                         Spacer(Modifier.height(4.dp))
@@ -2360,7 +2360,7 @@ fun FilterSettingsScreen(
                         Text(
                             text = "回覆通知閒置自動收起",
                             style = MaterialTheme.typography.labelMedium,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(4.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2420,7 +2420,7 @@ fun FilterSettingsScreen(
                             Text(
                                 "已靜音 App 可選擇完全不記錄或僅靜默記錄（不影響既有歷史訊息）",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.width(8.dp))
@@ -2468,7 +2468,7 @@ fun FilterSettingsScreen(
                                         Text(
                                             text = mode.label,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
@@ -3773,7 +3773,7 @@ private fun SettingSwitchRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.width(8.dp))
         FluidSwitch(checked = checked, onCheckedChange = onCheckedChange)
@@ -3803,12 +3803,12 @@ private fun FilterRuleRow(
             Text(
                 text = rule.keyword,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (rule.isActive) MaterialTheme.colorScheme.onSurface else Color.Gray
+                color = if (rule.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 text = "${if (rule.packageName.isNullOrBlank()) "全部 App" else rule.packageName}・$actionLabel",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.Gray
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         FluidSwitch(checked = rule.isActive, onCheckedChange = onToggleActive)
@@ -3906,7 +3906,7 @@ private fun AppMutePickerDialog(
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(app.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1)
+                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }
                             if (alreadyMuted) {
                                 Text("已靜音", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -4010,7 +4010,7 @@ private fun AppThrottlePickerDialog(
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(app.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1)
+                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }
                             if (existing != null) {
                                 Text(

@@ -150,7 +150,7 @@ fun Modifier.phantomGlassSurface(
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val glassStrength = ThemePreferences.getGlassStrengthPercent(ctx)
     val cardBgMode = ThemePreferences.getCardBgMode(ctx)
-    val cardBgAlpha = ThemePreferences.getCardBgAlphaPercent(ctx) / 100f
+    val cardBgAlpha = (ThemePreferences.getCardBgAlphaPercent(ctx) / 100f).coerceAtLeast(0.15f)
     val darkCardColor = if (isDark) {
         MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
     } else {
@@ -158,7 +158,7 @@ fun Modifier.phantomGlassSurface(
     }
     val resolvedFallback = when (cardBgMode) {
         PhantomPrefs.CardBgMode.FOLLOW_GLASS -> fallbackColor
-        PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+        PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha.coerceAtLeast(0.35f))
         PhantomPrefs.CardBgMode.DARK -> darkCardColor
     }
 
@@ -220,7 +220,7 @@ fun PhantomGlassCard(
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val glassStrength = ThemePreferences.getGlassStrengthPercent(ctx)
     val cardBgMode = ThemePreferences.getCardBgMode(ctx)
-    val cardBgAlpha = ThemePreferences.getCardBgAlphaPercent(ctx) / 100f
+    val cardBgAlpha = (ThemePreferences.getCardBgAlphaPercent(ctx) / 100f).coerceAtLeast(0.15f)
     val darkCardColor = if (isDark) {
         MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
     } else {
@@ -235,7 +235,7 @@ fun PhantomGlassCard(
     if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
         val fallbackColor = when (cardBgMode) {
             PhantomPrefs.CardBgMode.FOLLOW_GLASS -> MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
-            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha.coerceAtLeast(0.35f))
             PhantomPrefs.CardBgMode.DARK -> darkCardColor
         }
         val overlayColor: Color? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -275,7 +275,7 @@ fun PhantomGlassCard(
     } else {
         val solidBg = when (cardBgMode) {
             PhantomPrefs.CardBgMode.FOLLOW_GLASS -> MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
-            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha.coerceAtLeast(0.35f))
             PhantomPrefs.CardBgMode.DARK -> darkCardColor
         }
         Box(
@@ -747,7 +747,7 @@ fun MessageCard(
                 if (message.riskLabel == "scam") {
                     Text(
                         text = "  ⚠️ 詐騙 ${message.riskScore}",
-                        color = if (highlightAsScam) MaterialTheme.colorScheme.error else Color.Red,
+                        color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -761,7 +761,7 @@ fun MessageCard(
                 if (message.isFiltered) {
                     Text(
                         text = "  [已過濾]",
-                        color = Color.Gray,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -772,7 +772,7 @@ fun MessageCard(
                 color = if (highlightAsScam) {
                     MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.75f)
                 } else {
-                    Color.Gray
+                    MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
         }
@@ -780,6 +780,11 @@ fun MessageCard(
         Text(
             text = highlightMatches(message.content, highlightQuery),
             style = MaterialTheme.typography.bodySmall,
+            color = if (highlightAsScam) {
+                MaterialTheme.colorScheme.onErrorContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
             maxLines = if (isCompact) 2 else 4,
             overflow = TextOverflow.Ellipsis
         )
@@ -799,7 +804,7 @@ fun MessageCard(
                 color = if (highlightAsScam) {
                     MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
                 } else {
-                    Color.Gray
+                    MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = if (isCompact) 1 else 3,
@@ -1292,7 +1297,7 @@ fun PhantomFullScreenSearchOverlay(
             }
         }
         Surface(
-            color = MaterialTheme.colorScheme.background.copy(alpha = 0.97f),
+            color = MaterialTheme.colorScheme.background,
             modifier = Modifier.fillMaxSize()
         ) {
             Column(

@@ -298,7 +298,7 @@ fun MessageDetailScreen(
                 }
                 message == null -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("找不到此訊息（可能已被刪除）", color = Color.Gray)
+                        Text("找不到此訊息（可能已被刪除）", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 else -> {

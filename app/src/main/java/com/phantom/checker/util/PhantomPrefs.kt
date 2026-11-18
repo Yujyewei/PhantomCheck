@@ -757,12 +757,12 @@ object PhantomPrefs {
         prefs(ctx).edit().putString(KEY_CARD_BG_MODE, mode.prefValue).apply()
     }
 
-    /** 卡片底色透明模式不透明度（0–100%，預設 35%） */
+    /** 卡片底色透明模式不透明度（15–100%，預設 35%） */
     fun getCardBgAlphaPercent(ctx: Context): Int =
-        prefs(ctx).getInt(KEY_CARD_BG_ALPHA, 35).coerceIn(0, 100)
+        prefs(ctx).getInt(KEY_CARD_BG_ALPHA, 35).coerceIn(15, 100)
 
     fun setCardBgAlphaPercent(ctx: Context, percent: Int) {
-        prefs(ctx).edit().putInt(KEY_CARD_BG_ALPHA, percent.coerceIn(0, 100)).apply()
+        prefs(ctx).edit().putInt(KEY_CARD_BG_ALPHA, percent.coerceIn(15, 100)).apply()
     }
 
     /** 常駐通知顯示 App 圖示條（預設開） */
