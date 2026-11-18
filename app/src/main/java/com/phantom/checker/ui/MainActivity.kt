@@ -1337,49 +1337,19 @@ private fun PhantomCheckApp(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 頂部標題列：迷你搜尋膠囊＋下方右側重新整理與設定齒輪（切到 AI 助手分頁時平滑隱藏）
+            // 頂部下拉搜尋把手（切到 AI 助手分頁時平滑隱藏）
             AnimatedVisibility(
                 visible = selectedTab != MainTab.ASSISTANT,
                 enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    PhantomSearchBarPill(
-                        glassState = glassState,
-                        query = searchQuery,
-                        placeholder = "搜尋訊息、寄件人或關鍵字",
-                        onClick = { showSearchBar = true },
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            targetBounds = targetBounds + (OnboardingTargets.SEARCH_PILL to coords.boundsInRoot())
-                        }
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { refreshTrigger++ },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "重新整理"
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
-                            },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "設定"
-                            )
-                        }
+                PhantomPullSearchHandle(
+                    glassState = glassState,
+                    onOpenSearch = { showSearchBar = true },
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        targetBounds = targetBounds + (OnboardingTargets.SEARCH_PILL to coords.boundsInRoot())
                     }
-                }
+                )
             }
 
             if (isLoading) {
@@ -1458,6 +1428,10 @@ private fun PhantomCheckApp(
                                 refreshTrigger++
                                 snackbarHostState.showSnackbar("已將全部訊息標記為已讀")
                             }
+                        },
+                        onRefresh = { refreshTrigger++ },
+                        onOpenSettings = {
+                            ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
                         },
                         onLoadMore = {
                             if (!isLoadingMore && hasMoreFiltered) {
@@ -1842,6 +1816,8 @@ private fun MessagesHomeTab(
     onSelectFilter: (MessageFilter) -> Unit,
     onOpenTagPicker: () -> Unit,
     onMarkAllRead: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpenSettings: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenApp: (String, String) -> Unit,
     onLongPressApp: (AppGroupUi) -> Unit,
@@ -1969,6 +1945,28 @@ private fun MessagesHomeTab(
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onRefresh,
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "重新整理",
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "設定",
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
                     if (unreadCount > 0) {
                         TextButton(onClick = onMarkAllRead) {
                             Text("全部標已讀")

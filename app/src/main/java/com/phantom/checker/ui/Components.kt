@@ -3,10 +3,17 @@ package com.phantom.checker.ui
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.rememberSplineBasedDecay
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.snapTo
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,11 +63,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import com.phantom.checker.util.BackgroundImageHelper
 import com.phantom.checker.util.BackgroundLayer
@@ -73,8 +82,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -1138,6 +1150,88 @@ fun PhantomSearchBarPill(
                 content = trailingActions
             )
         }
+    }
+}
+
+/**
+ * #205 頂部下拉搜尋把手：22dp 高、無文字、中央 4dp×120dp 膠囊，支援下拉（anchoredDraggable）或點擊開啟搜尋。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PhantomPullSearchHandle(
+    glassState: HazeState,
+    onOpenSearch: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val decaySpec = rememberSplineBasedDecay<Float>()
+    val dragDistancePx = with(density) { 48.dp.toPx() }
+    val state = remember {
+        AnchoredDraggableState(
+            initialValue = 0f,
+            positionalThreshold = { distance: Float -> distance * 0.5f },
+            velocityThreshold = { with(density) { 800.dp.toPx() } },
+            snapAnimationSpec = spring(stiffness = 380f, dampingRatio = 0.85f),
+            decayAnimationSpec = decaySpec
+        )
+    }
+
+    SideEffect {
+        state.updateAnchors(
+            DraggableAnchors {
+                0f at 0f
+                1f at dragDistancePx
+            }
+        )
+    }
+
+    LaunchedEffect(state.currentValue) {
+        if (state.currentValue == 1f) {
+            onOpenSearch()
+            state.snapTo(0f)
+        }
+    }
+
+    val progress = if (dragDistancePx > 0f && !state.offset.isNaN()) {
+        (state.offset / dragDistancePx).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val pillBaseColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(22.dp)
+            .anchoredDraggable(state, Orientation.Vertical)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onOpenSearch
+            )
+            .semantics {
+                contentDescription = "下拉開啟搜尋"
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(120.dp)
+                .height(4.dp)
+                .graphicsLayer {
+                    scaleX = 1f + 0.3f * progress
+                    alpha = 0.45f + 0.35f * progress
+                    translationY = progress * with(density) { 4.dp.toPx() }
+                }
+                .clip(RoundedCornerShape(2.dp))
+                .phantomGlassSurface(
+                    state = glassState,
+                    fallbackColor = pillBaseColor.copy(alpha = 0.45f),
+                    cornerRadius = 2.dp
+                )
+                .background(pillBaseColor.copy(alpha = 0.45f))
+        )
     }
 }
 
