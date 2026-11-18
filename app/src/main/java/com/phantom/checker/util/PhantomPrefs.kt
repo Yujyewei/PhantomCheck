@@ -650,12 +650,12 @@ object PhantomPrefs {
         prefs(ctx).edit().putStringSet(KEY_COLLAPSED_CARDS, collapsed).apply()
     }
 
-    /** 新手引導步驟索引（1~15），中斷可續 */
+    /** 新手引導步驟索引（1~18），中斷可續 */
     fun getOnboardingStep(ctx: Context): Int =
-        prefs(ctx).getInt(KEY_ONBOARDING_STEP_V2, 1).coerceIn(1, 15)
+        prefs(ctx).getInt(KEY_ONBOARDING_STEP_V2, 1).coerceIn(1, 18)
 
     fun setOnboardingStep(ctx: Context, stepIndex: Int) {
-        prefs(ctx).edit().putInt(KEY_ONBOARDING_STEP_V2, stepIndex.coerceIn(1, 15)).apply()
+        prefs(ctx).edit().putInt(KEY_ONBOARDING_STEP_V2, stepIndex.coerceIn(1, 18)).apply()
     }
 
     /** OEM 自啟動手動確認（誠實標記：無法程式檢查，由使用者手動確認） */
@@ -757,12 +757,12 @@ object PhantomPrefs {
         prefs(ctx).edit().putString(KEY_CARD_BG_MODE, mode.prefValue).apply()
     }
 
-    /** 卡片底色透明模式不透明度（0–100%，預設 35%） */
+    /** 卡片底色透明模式不透明度（15–100%，預設 35%） */
     fun getCardBgAlphaPercent(ctx: Context): Int =
-        prefs(ctx).getInt(KEY_CARD_BG_ALPHA, 35).coerceIn(0, 100)
+        prefs(ctx).getInt(KEY_CARD_BG_ALPHA, 35).coerceIn(15, 100)
 
     fun setCardBgAlphaPercent(ctx: Context, percent: Int) {
-        prefs(ctx).edit().putInt(KEY_CARD_BG_ALPHA, percent.coerceIn(0, 100)).apply()
+        prefs(ctx).edit().putInt(KEY_CARD_BG_ALPHA, percent.coerceIn(15, 100)).apply()
     }
 
     /** 常駐通知顯示 App 圖示條（預設開） */
@@ -1021,7 +1021,7 @@ object PhantomPrefs {
         prefs(ctx).edit().putString("home_sort_order", order.prefValue).apply()
     }
 
-    val ALL_OPTIONAL_HOME_FILTERS: Set<String> = setOf("starred", "scams", "filtered", "tag")
+    val ALL_OPTIONAL_HOME_FILTERS: Set<String> = setOf("starred", "scams", "filtered", "noted", "todoed", "tag")
 
     /** 首頁篩選欄自訂顯示項目（全部與未讀固定顯示，此清單控制 星標/詐騙/已過濾/標籤） */
     fun getVisibleHomeFilters(ctx: Context): Set<String> =

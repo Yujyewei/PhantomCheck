@@ -73,17 +73,20 @@ enum class OnboardingStep(val index: Int) {
     HOME_APP(2),
     LONG_PRESS(3),
     SWIPE_DELETE(4),
-    MULTI_SELECT(5),
-    FILTER_CHIPS(6),
-    AI_ASSISTANT(7),
-    NOTES_TAB(8),
-    STATS_AND_SUMMARY(9),
-    TAGS_AND_RULES(10),
-    TODO_AND_BATCH(11),
-    APPEARANCE_AND_BG(12),
-    KEEP_ALIVE(13),
-    SEARCH_PILL(14),
-    DONE(15);
+    QUICK_REPLY(5),
+    MULTI_SELECT(6),
+    FILTER_CHIPS(7),
+    AI_ASSISTANT(8),
+    NOTES_TAB(9),
+    MEMO_RULES(10),
+    NOTED_TODOED_SOURCE(11),
+    STATS_AND_SUMMARY(12),
+    TAGS_AND_RULES(13),
+    TODO_AND_BATCH(14),
+    APPEARANCE_AND_BG(15),
+    KEEP_ALIVE(16),
+    SEARCH_PILL(17),
+    DONE(18);
 
     companion object {
         fun fromIndex(index: Int): OnboardingStep =
@@ -169,10 +172,25 @@ fun OnboardingOverlay(
 
     var lastAutoSkippedStep by remember { mutableStateOf<OnboardingStep?>(null) }
 
-    // 僅在權限步驟且已授權時單步自動跳轉，避免目標缺失時連鎖跳步
-    LaunchedEffect(step, isListenerEnabled) {
+    // 僅在權限已授權或必要錨點缺失時單步自動跳轉，避免連鎖跳步
+    LaunchedEffect(step, isListenerEnabled, targetBounds) {
         if (lastAutoSkippedStep == step) return@LaunchedEffect
-        if (step == OnboardingStep.PERMISSION && isListenerEnabled) {
+        val requiredTarget = when (step) {
+            OnboardingStep.MULTI_SELECT -> OnboardingTargets.SELECT_BUTTON
+            OnboardingStep.FILTER_CHIPS,
+            OnboardingStep.TAGS_AND_RULES -> OnboardingTargets.FILTER_CHIPS
+            OnboardingStep.AI_ASSISTANT -> OnboardingTargets.AI_ASSISTANT_TAB
+            OnboardingStep.NOTES_TAB,
+            OnboardingStep.MEMO_RULES,
+            OnboardingStep.NOTED_TODOED_SOURCE,
+            OnboardingStep.TODO_AND_BATCH -> OnboardingTargets.NOTES_TAB
+            OnboardingStep.STATS_AND_SUMMARY -> OnboardingTargets.STATS_TAB
+            OnboardingStep.SEARCH_PILL -> OnboardingTargets.SEARCH_PILL
+            else -> null
+        }
+        val shouldSkip = (step == OnboardingStep.PERMISSION && isListenerEnabled) ||
+            (requiredTarget != null && targetBounds.isNotEmpty() && !targetBounds.containsKey(requiredTarget))
+        if (shouldSkip) {
             lastAutoSkippedStep = step
             onNextStep()
         } else if (step != OnboardingStep.PERMISSION) {
@@ -182,7 +200,8 @@ fun OnboardingOverlay(
 
     val rawHoleRect: Rect? = remember(step, targetBounds, overlayOrigin) {
         val target = when (step) {
-            OnboardingStep.PERMISSION -> null
+            OnboardingStep.PERMISSION,
+            OnboardingStep.QUICK_REPLY -> null
             OnboardingStep.HOME_APP -> {
                 val stats = targetBounds[OnboardingTargets.STATS_CARD]
                 val appRow = targetBounds[OnboardingTargets.FIRST_APP_ROW]
@@ -204,6 +223,8 @@ fun OnboardingOverlay(
             OnboardingStep.TAGS_AND_RULES -> targetBounds[OnboardingTargets.FILTER_CHIPS]
             OnboardingStep.AI_ASSISTANT -> targetBounds[OnboardingTargets.AI_ASSISTANT_TAB]
             OnboardingStep.NOTES_TAB,
+            OnboardingStep.MEMO_RULES,
+            OnboardingStep.NOTED_TODOED_SOURCE,
             OnboardingStep.TODO_AND_BATCH -> targetBounds[OnboardingTargets.NOTES_TAB]
             OnboardingStep.STATS_AND_SUMMARY -> targetBounds[OnboardingTargets.STATS_TAB]
             OnboardingStep.SEARCH_PILL -> targetBounds[OnboardingTargets.SEARCH_PILL]
@@ -339,18 +360,27 @@ fun OnboardingOverlay(
                         "步驟 ${step.index} / $totalSteps・滑動刪除" to
                             "進入對話頁後，將任一訊息向左滑動即可快速刪除（需在「設定 → 訊息與通知」開啟滑動刪除）。$noMsgNote"
                     }
+                    OnboardingStep.QUICK_REPLY ->
+                        "步驟 ${step.index} / $totalSteps・快速回覆" to
+                            "在對話詳情頁底部輸入框可直接回覆訊息（支援通知快速回覆或簡訊），你送出的回覆會顯示在對話右側氣泡並完整保留。"
                     OnboardingStep.MULTI_SELECT ->
                         "步驟 ${step.index} / $totalSteps・多選批次" to
                             "在篩選或搜尋清單點右上角「選取」，可一次批次標記已讀、星標或刪除多則訊息。"
                     OnboardingStep.FILTER_CHIPS ->
-                        "步驟 ${step.index} / $totalSteps・標籤篩選" to
-                            "使用橫向篩選列，依未讀、星標、詐騙、已過濾、App 分類或 AI 標籤快速過濾訊息。"
+                        "步驟 ${step.index} / $totalSteps・固定表頭與分類篩選" to
+                            "頂部統計卡、分類篩選列與我的最愛列固定於上方，下方訊息清單可獨立捲動；可依未讀、星標、詐騙、已過濾、已記事、已待辦、App 分類或 AI 標籤快速過濾。"
                     OnboardingStep.AI_ASSISTANT ->
                         "步驟 ${step.index} / $totalSteps・AI 助手" to
-                            "切換到「AI 助手」分頁，支援自然語言查訊、常用快速指令、昨日簡報與截圖圖片分析。"
+                            "切換到「AI 助手」分頁，支援自然語言查訊、建立自動記事規則、常用快速指令、昨日簡報與截圖圖片分析。"
                     OnboardingStep.NOTES_TAB ->
                         "步驟 ${step.index} / $totalSteps・記事與自動備忘錄" to
                             "切換到「記事」分頁可管理備忘與待辦（支援優先級、重複提醒與編輯）；開啟「自動備忘錄」後，AI 分析訊息時會自動擷取繳費、取貨與約定事項寫入。"
+                    OnboardingStep.MEMO_RULES ->
+                        "步驟 ${step.index} / $totalSteps・自動記事規則" to
+                            "在「記事」分頁的「自動記事規則」管理卡，可手動或以自然語言設定哪些寄件者、App 或關鍵字要自動記為記事／待辦，或永遠不要自動加入。"
+                    OnboardingStep.NOTED_TODOED_SOURCE ->
+                        "步驟 ${step.index} / $totalSteps・已記事／已待辦與來源回溯" to
+                            "首頁「已記事／已待辦」篩選標籤可快速找出已建立備忘的訊息；待辦列可點來源圖示回到原訊息，訊息詳情頁也能一鍵「不再自動記事／待辦」。"
                     OnboardingStep.STATS_AND_SUMMARY ->
                         "步驟 ${step.index} / $totalSteps・統計、摘要與離線佇列" to
                             "「統計」分頁整合每日／每週 AI 摘要、訊息趨勢圖表與詐騙警示入口；斷網未分析的訊息會顯示離線補佇列橫幅並在連線後自動補齊。"
@@ -367,11 +397,11 @@ fun OnboardingOverlay(
                         "步驟 ${step.index} / $totalSteps・保活設定" to
                             "完成以下三項檢查，讓幻訊在背景穩定接收與分析通知："
                     OnboardingStep.SEARCH_PILL ->
-                        "步驟 ${step.index} / $totalSteps・統一全域搜尋槓" to
-                            "點擊頂部玻璃搜尋槓可展開全螢幕搜尋，支援即時文字搜尋訊息／待辦／備忘錄，以及 AI 語意搜尋。"
+                        "步驟 ${step.index} / $totalSteps・下拉搜尋" to
+                            "頂部把手可下拉或點擊開啟全畫面訊息搜尋，支援即時文字搜尋訊息／待辦／備忘錄，以及 AI 語意搜尋。"
                     OnboardingStep.DONE ->
                         "步驟 ${step.index} / $totalSteps・你學會了！" to
-                            "已掌握四大主分頁（訊息、AI 助手、記事、統計）、全域搜尋槓、批次與待辦管理、標籤與 VIP 規則、背景外觀與保活設定。"
+                            "已掌握四大主分頁（訊息、AI 助手、記事、統計）、下拉搜尋、快速回覆、自動記事規則與已記事／已待辦篩選、背景外觀與保活設定。"
                 }
 
                 Text(

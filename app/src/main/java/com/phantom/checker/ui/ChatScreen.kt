@@ -1413,11 +1413,15 @@ fun ChatAssistantTab(
     pendingRuleQueue.firstOrNull()?.let { pending ->
         val proposal = pending.proposal
         val remainingCount = pendingRuleQueue.size
-        val kindLabel = if (proposal.kind == AiRuleEntity.KIND_WHITELIST) "白名單規則（跳過詐騙警示／情報）" else "AI 標籤規則"
+        val kindLabel = when (proposal.kind) {
+            AiRuleEntity.KIND_WHITELIST -> "白名單規則（跳過詐騙警示／情報）"
+            "memo" -> "自動記事/待辦規則"
+            else -> "AI 標籤規則"
+        }
         AlertDialog(
             onDismissRequest = { pendingRuleQueue = pendingRuleQueue.drop(1) },
             title = {
-                Text(if (remainingCount > 1) "確認新增 AI 規則（尚有 $remainingCount 筆）" else "確認新增 AI 規則")
+                Text(if (remainingCount > 1) "確認新增規則（尚有 $remainingCount 筆）" else "確認新增規則")
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1447,39 +1451,84 @@ fun ChatAssistantTab(
                     scope.launch {
                         val verifiedOk = withContext(Dispatchers.IO) {
                             val db = AppDatabaseHolder.db(appCtx)
-                            val targetTagId = if (proposal.kind == AiRuleEntity.KIND_TAG && !proposal.tagName.isNullOrBlank()) {
-                                db.tagDao().all().firstOrNull { it.name.equals(proposal.tagName.trim(), ignoreCase = true) }?.id
+                            if (proposal.kind == "memo") {
+                                val pkg = proposal.memoApp?.trim()?.takeIf { it.isNotEmpty() }
+                                val snd = proposal.memoSender?.trim()?.takeIf { it.isNotEmpty() }
+                                val kw = proposal.memoKeyword?.trim()?.takeIf { it.isNotEmpty() }
+                                val act = proposal.memoAction ?: com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER
+                                val existing = db.memoRuleDao().all().any { r ->
+                                    (r.packageName ?: "") == (pkg ?: "") &&
+                                        (r.sender ?: "").equals(snd ?: "", ignoreCase = true) &&
+                                        (r.keyword ?: "").equals(kw ?: "", ignoreCase = true) &&
+                                        r.action == act
+                                }
+                                val ok = if (existing) {
+                                    true
+                                } else {
+                                    val insertedId = db.memoRuleDao().insert(
+                                        com.phantom.checker.data.MemoRuleEntity(
+                                            packageName = pkg,
+                                            sender = snd,
+                                            keyword = kw,
+                                            action = act,
+                                            isEnabled = true,
+                                            createdAt = System.currentTimeMillis(),
+                                            source = com.phantom.checker.data.MemoRuleEntity.SOURCE_CHAT
+                                        )
+                                    )
+                                    insertedId > 0L
+                                }
+                                NotificationCollectorService.invalidateRuleCaches()
+                                db.chatDao().insertMessage(
+                                    ChatMessageEntity(
+                                        sessionId = sid,
+                                        role = ChatMessageEntity.ROLE_ASSISTANT,
+                                        content = if (existing) {
+                                            "✓ 已有相同自動記事規則：${proposal.ruleText}"
+                                        } else if (ok) {
+                                            "✓ 已新增自動記事規則：${proposal.ruleText}"
+                                        } else {
+                                            "✗ 新增自動記事規則失敗：${proposal.ruleText}"
+                                        },
+                                        createdAt = System.currentTimeMillis()
+                                    )
+                                )
+                                ok
                             } else {
-                                null
+                                val targetTagId = if (proposal.kind == AiRuleEntity.KIND_TAG && !proposal.tagName.isNullOrBlank()) {
+                                    db.tagDao().all().firstOrNull { it.name.equals(proposal.tagName.trim(), ignoreCase = true) }?.id
+                                } else {
+                                    null
+                                }
+                                val insertedId = db.aiRuleDao().insert(
+                                    AiRuleEntity(
+                                        ruleText = proposal.ruleText,
+                                        targetTagId = targetTagId,
+                                        kind = proposal.kind,
+                                        isEnabled = true,
+                                        createdAt = System.currentTimeMillis()
+                                    )
+                                )
+                                val verified = db.aiRuleDao().byId(insertedId)
+                                NotificationCollectorService.invalidateRuleCaches()
+                                val ok = insertedId > 0L && verified != null
+                                db.chatDao().insertMessage(
+                                    ChatMessageEntity(
+                                        sessionId = sid,
+                                        role = ChatMessageEntity.ROLE_ASSISTANT,
+                                        content = if (ok) {
+                                            "✓ 已新增規則 #${verified!!.id}：${proposal.ruleText}（已寫入並驗證）"
+                                        } else {
+                                            "✗ 新增規則失敗：${proposal.ruleText}（DB 寫入驗證失敗）"
+                                        },
+                                        createdAt = System.currentTimeMillis()
+                                    )
+                                )
+                                ok
                             }
-                            val insertedId = db.aiRuleDao().insert(
-                                AiRuleEntity(
-                                    ruleText = proposal.ruleText,
-                                    targetTagId = targetTagId,
-                                    kind = proposal.kind,
-                                    isEnabled = true,
-                                    createdAt = System.currentTimeMillis()
-                                )
-                            )
-                            val verified = db.aiRuleDao().byId(insertedId)
-                            NotificationCollectorService.invalidateRuleCaches()
-                            val ok = insertedId > 0L && verified != null
-                            db.chatDao().insertMessage(
-                                ChatMessageEntity(
-                                    sessionId = sid,
-                                    role = ChatMessageEntity.ROLE_ASSISTANT,
-                                    content = if (ok) {
-                                        "✓ 已新增規則 #${verified!!.id}：${proposal.ruleText}（已寫入並驗證）"
-                                    } else {
-                                        "✗ 新增規則失敗：${proposal.ruleText}（DB 寫入驗證失敗）"
-                                    },
-                                    createdAt = System.currentTimeMillis()
-                                )
-                            )
-                            ok
                         }
                         loadMessages(sid)
-                        onShowMessage(if (verifiedOk) "已新增 AI 規則" else "新增 AI 規則失敗")
+                        onShowMessage(if (verifiedOk) "已新增規則" else "新增規則失敗")
                     }
                 }) {
                     Text("確認新增")
@@ -2597,6 +2646,25 @@ fun ChatAssistantTab(
                                                                     conversationKey = primaryMsg.conversationKey
                                                                 )) {
                                                                     is NotificationCollectorService.Companion.ReplySendResult.Success -> {
+                                                                        val convKey = primaryMsg.conversationKey.ifBlank { primaryMsg.sender }
+                                                                        withContext(Dispatchers.IO) {
+                                                                            AppDatabaseHolder.db(appCtx).messageDao().insert(
+                                                                                MessageEntity(
+                                                                                    packageName = primaryMsg.packageName,
+                                                                                    appLabel = primaryMsg.appLabel,
+                                                                                    sender = "我",
+                                                                                    content = draftReply,
+                                                                                    timestamp = System.currentTimeMillis(),
+                                                                                    riskScore = 0,
+                                                                                    riskLabel = "",
+                                                                                    riskReason = "",
+                                                                                    isRead = true,
+                                                                                    conversationKey = convKey,
+                                                                                    dedupKey = null,
+                                                                                    isOwn = true
+                                                                                )
+                                                                            )
+                                                                        }
                                                                         com.phantom.checker.service.ReplyProxyManager.startOrRefreshSession(
                                                                             ctx = appCtx,
                                                                             packageName = primaryMsg.packageName,
@@ -3588,6 +3656,7 @@ private suspend fun buildRagSystemPrompt(
         appendLine("- 加入白名單：{\"action\":\"whitelist\",\"kind\":\"sender|message\",\"messageRef\":\"<id數字或寄件者>\"}")
         appendLine("- 移出白名單（刪除前會先列出項目確認）：{\"action\":\"whitelist_delete\",\"ruleId\":123,\"query\":\"寄件者或關鍵字(可選)\"}")
         appendLine("- 新增規則：{\"action\":\"add_rule\",\"kind\":\"whitelist|tag\",\"ruleText\":\"規則描述\",\"tagName\":\"目標標籤(僅kind=tag)\"}")
+        appendLine("- 新增自動記事/待辦規則（當使用者說「XX 不要加入待辦／一律加入記事／一律加入待辦」時使用；app、sender、keyword 至少填一項）：{\"action\":\"add_rule\",\"kind\":\"memo\",\"app\":\"App套件名或名稱(可選)\",\"sender\":\"寄件者(可選)\",\"keyword\":\"關鍵字(可選)\",\"memoAction\":\"note|todo|never\"}，例如「Gogolook 驗證碼不要加入待辦」→ {\"action\":\"add_rule\",\"kind\":\"memo\",\"sender\":\"Gogolook\",\"keyword\":\"驗證碼\",\"memoAction\":\"never\"}")
         appendLine("- 建立標籤記憶規則（當使用者教 AI 把某 App／寄件者／關鍵字／語意類別如 otp、system、bill、marketing、delivery 歸類為特定標籤時使用；必須至少填一項條件）：{\"action\":\"tag_rule\",\"description\":\"規則簡述\",\"appLabel\":\"App名稱(可選)\",\"appPackage\":\"套件名(可選)\",\"senderPattern\":\"寄件者(可選)\",\"contentKeyword\":\"關鍵字(可選)\",\"contentRegex\":\"正則(可選)\",\"semanticCategory\":\"otp|system|bill|marketing|delivery(可選)\",\"tagName\":\"目標標籤\"}")
         appendLine("- 加入常用指令（當使用者說「加入常用指令：…」時使用）：{\"action\":\"quick_command_add\",\"label\":\"指令簡稱\",\"prompt\":\"實際送出或預填的提問內容\",\"mode\":\"direct|prefill(可選)\"}")
         appendLine("- 新增待辦提醒（當使用者要求提醒、建立待辦或日程時使用；time 必須為 yyyy-MM-dd HH:mm 或 ISO-8601；priority 0=低/1=中/2=高，repeatRule 為 daily/weekly/空字串）：{\"action\":\"reminder_add\",\"title\":\"待辦內容\",\"time\":\"yyyy-MM-dd HH:mm\",\"priority\":1,\"repeatRule\":\"\",\"notes\":\"可選備註\"}")
@@ -3839,7 +3908,11 @@ private data class WhitelistActionProposal(
 private data class PendingRuleProposal(
     val kind: String,
     val ruleText: String,
-    val tagName: String?
+    val tagName: String?,
+    val memoApp: String? = null,
+    val memoSender: String? = null,
+    val memoKeyword: String? = null,
+    val memoAction: String? = null
 )
 
 private data class PendingRuleInsertion(
@@ -4133,13 +4206,50 @@ private fun parseSingleActionJson(
     when (action) {
         "add_rule" -> {
             val rawKind = obj.get("kind")?.takeIf { !it.isJsonNull }?.asString?.trim()?.lowercase()
-            val kind = if (rawKind == AiRuleEntity.KIND_TAG) AiRuleEntity.KIND_TAG else AiRuleEntity.KIND_WHITELIST
-            val ruleText = obj.get("ruleText")?.takeIf { !it.isJsonNull }?.asString?.trim().orEmpty()
-            val tagName = obj.get("tagName")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotBlank() }
-            if (ruleText.isBlank()) {
-                errorsOut.add("新增規則動作缺少 ruleText 內容。")
+            if (rawKind == "memo") {
+                fun optStr(k: String): String? =
+                    obj.get(k)?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+                val app = optStr("app") ?: optStr("packageName")
+                val sender = optStr("sender")
+                val keyword = optStr("keyword")
+                val memoAction = optStr("memoAction")?.lowercase()
+                if (app == null && sender == null && keyword == null) {
+                    errorsOut.add("自動記事規則至少需指定 App、寄件者或關鍵字其中一項。")
+                } else if (memoAction !in setOf(
+                        com.phantom.checker.data.MemoRuleEntity.ACTION_NOTE,
+                        com.phantom.checker.data.MemoRuleEntity.ACTION_TODO,
+                        com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER
+                    )
+                ) {
+                    errorsOut.add("自動記事規則缺少有效的 memoAction（note/todo/never）。")
+                } else {
+                    val cond = listOfNotNull(
+                        app?.let { "App $it" },
+                        sender?.let { "寄件者 $it" },
+                        keyword?.let { "含「$it」" }
+                    ).joinToString("／")
+                    val actLabel = com.phantom.checker.util.MemoRuleEngine.actionLabel(memoAction!!)
+                    ruleOut.add(
+                        PendingRuleProposal(
+                            kind = "memo",
+                            ruleText = "$cond → $actLabel",
+                            tagName = null,
+                            memoApp = app,
+                            memoSender = sender,
+                            memoKeyword = keyword,
+                            memoAction = memoAction
+                        )
+                    )
+                }
             } else {
-                ruleOut.add(PendingRuleProposal(kind, ruleText, tagName))
+                val kind = if (rawKind == AiRuleEntity.KIND_TAG) AiRuleEntity.KIND_TAG else AiRuleEntity.KIND_WHITELIST
+                val ruleText = obj.get("ruleText")?.takeIf { !it.isJsonNull }?.asString?.trim().orEmpty()
+                val tagName = obj.get("tagName")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotBlank() }
+                if (ruleText.isBlank()) {
+                    errorsOut.add("新增規則動作缺少 ruleText 內容。")
+                } else {
+                    ruleOut.add(PendingRuleProposal(kind, ruleText, tagName))
+                }
             }
         }
         "tag_rule" -> {

@@ -3,10 +3,17 @@ package com.phantom.checker.ui
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.rememberSplineBasedDecay
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.snapTo
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,7 +41,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -56,11 +65,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import com.phantom.checker.util.BackgroundImageHelper
 import com.phantom.checker.util.BackgroundLayer
@@ -73,8 +84,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -136,7 +150,7 @@ fun Modifier.phantomGlassSurface(
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val glassStrength = ThemePreferences.getGlassStrengthPercent(ctx)
     val cardBgMode = ThemePreferences.getCardBgMode(ctx)
-    val cardBgAlpha = ThemePreferences.getCardBgAlphaPercent(ctx) / 100f
+    val cardBgAlpha = (ThemePreferences.getCardBgAlphaPercent(ctx) / 100f).coerceAtLeast(0.15f)
     val darkCardColor = if (isDark) {
         MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
     } else {
@@ -144,7 +158,7 @@ fun Modifier.phantomGlassSurface(
     }
     val resolvedFallback = when (cardBgMode) {
         PhantomPrefs.CardBgMode.FOLLOW_GLASS -> fallbackColor
-        PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+        PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha.coerceAtLeast(0.35f))
         PhantomPrefs.CardBgMode.DARK -> darkCardColor
     }
 
@@ -190,6 +204,7 @@ fun PhantomGlassCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 24.dp,
     contentPadding: Dp = 16.dp,
+    tintColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val ctx = LocalContext.current
@@ -205,7 +220,7 @@ fun PhantomGlassCard(
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val glassStrength = ThemePreferences.getGlassStrengthPercent(ctx)
     val cardBgMode = ThemePreferences.getCardBgMode(ctx)
-    val cardBgAlpha = ThemePreferences.getCardBgAlphaPercent(ctx) / 100f
+    val cardBgAlpha = (ThemePreferences.getCardBgAlphaPercent(ctx) / 100f).coerceAtLeast(0.15f)
     val darkCardColor = if (isDark) {
         MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
     } else {
@@ -220,7 +235,7 @@ fun PhantomGlassCard(
     if (ThemePreferences.isGlassEffectEnabled(ctx) && !isPowerSave) {
         val fallbackColor = when (cardBgMode) {
             PhantomPrefs.CardBgMode.FOLLOW_GLASS -> MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
-            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha.coerceAtLeast(0.35f))
             PhantomPrefs.CardBgMode.DARK -> darkCardColor
         }
         val overlayColor: Color? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -250,6 +265,7 @@ fun PhantomGlassCard(
                 )
                 .clip(shape)
                 .let { m -> if (overlayColor != null) m.background(overlayColor, shape) else m }
+                .let { m -> if (tintColor != null) m.background(tintColor, shape) else m }
         ) {
             Column(
                 modifier = Modifier.padding(contentPadding),
@@ -259,13 +275,14 @@ fun PhantomGlassCard(
     } else {
         val solidBg = when (cardBgMode) {
             PhantomPrefs.CardBgMode.FOLLOW_GLASS -> MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
-            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha)
+            PhantomPrefs.CardBgMode.TRANSPARENT -> MaterialTheme.colorScheme.surface.copy(alpha = cardBgAlpha.coerceAtLeast(0.35f))
             PhantomPrefs.CardBgMode.DARK -> darkCardColor
         }
         Box(
             modifier = modifier
                 .clip(shape)
                 .background(solidBg, shape)
+                .let { m -> if (tintColor != null) m.background(tintColor, shape) else m }
                 .border(width = 1.dp, color = outline, shape = shape)
         ) {
             Column(
@@ -667,6 +684,8 @@ fun MessageCard(
     highlightAsScam: Boolean = false,
     matchedKeywords: List<String> = emptyList(),
     highlightQuery: String = "",
+    hasNote: Boolean = false,
+    hasTodo: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val ctx = LocalContext.current
@@ -707,10 +726,28 @@ fun MessageCard(
                         modifier = Modifier.size(14.dp)
                     )
                 }
+                if (hasNote) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "已記事",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+                if (hasTodo) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "已待辦",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
                 if (message.riskLabel == "scam") {
                     Text(
                         text = "  ⚠️ 詐騙 ${message.riskScore}",
-                        color = if (highlightAsScam) MaterialTheme.colorScheme.error else Color.Red,
+                        color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -724,7 +761,7 @@ fun MessageCard(
                 if (message.isFiltered) {
                     Text(
                         text = "  [已過濾]",
-                        color = Color.Gray,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -735,7 +772,7 @@ fun MessageCard(
                 color = if (highlightAsScam) {
                     MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.75f)
                 } else {
-                    Color.Gray
+                    MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
         }
@@ -743,6 +780,11 @@ fun MessageCard(
         Text(
             text = highlightMatches(message.content, highlightQuery),
             style = MaterialTheme.typography.bodySmall,
+            color = if (highlightAsScam) {
+                MaterialTheme.colorScheme.onErrorContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
             maxLines = if (isCompact) 2 else 4,
             overflow = TextOverflow.Ellipsis
         )
@@ -762,7 +804,7 @@ fun MessageCard(
                 color = if (highlightAsScam) {
                     MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
                 } else {
-                    Color.Gray
+                    MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = if (isCompact) 1 else 3,
@@ -1142,6 +1184,88 @@ fun PhantomSearchBarPill(
 }
 
 /**
+ * #205 頂部下拉搜尋把手：22dp 高、無文字、中央 4dp×120dp 膠囊，支援下拉（anchoredDraggable）或點擊開啟搜尋。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PhantomPullSearchHandle(
+    glassState: HazeState,
+    onOpenSearch: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val decaySpec = rememberSplineBasedDecay<Float>()
+    val dragDistancePx = with(density) { 48.dp.toPx() }
+    val state = remember {
+        AnchoredDraggableState(
+            initialValue = 0f,
+            positionalThreshold = { distance: Float -> distance * 0.5f },
+            velocityThreshold = { with(density) { 800.dp.toPx() } },
+            snapAnimationSpec = spring(stiffness = 380f, dampingRatio = 0.85f),
+            decayAnimationSpec = decaySpec
+        )
+    }
+
+    SideEffect {
+        state.updateAnchors(
+            DraggableAnchors {
+                0f at 0f
+                1f at dragDistancePx
+            }
+        )
+    }
+
+    LaunchedEffect(state.currentValue) {
+        if (state.currentValue == 1f) {
+            onOpenSearch()
+            state.snapTo(0f)
+        }
+    }
+
+    val progress = if (dragDistancePx > 0f && !state.offset.isNaN()) {
+        (state.offset / dragDistancePx).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val pillBaseColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(22.dp)
+            .anchoredDraggable(state, Orientation.Vertical)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onOpenSearch
+            )
+            .semantics {
+                contentDescription = "下拉開啟搜尋"
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(120.dp)
+                .height(4.dp)
+                .graphicsLayer {
+                    scaleX = 1f + 0.3f * progress
+                    alpha = 0.45f + 0.35f * progress
+                    translationY = progress * with(density) { 4.dp.toPx() }
+                }
+                .clip(RoundedCornerShape(2.dp))
+                .phantomGlassSurface(
+                    state = glassState,
+                    fallbackColor = pillBaseColor.copy(alpha = 0.45f),
+                    cornerRadius = 2.dp
+                )
+                .background(pillBaseColor.copy(alpha = 0.45f))
+        )
+    }
+}
+
+/**
  * #180 統一全螢幕下拉搜尋覆蓋層：fade+slide、自動聚焦、IME inset、LazyColumn 效能、AI 語意搜尋入口、返回手勢關閉。
  */
 @Composable
@@ -1173,7 +1297,7 @@ fun PhantomFullScreenSearchOverlay(
             }
         }
         Surface(
-            color = MaterialTheme.colorScheme.background.copy(alpha = 0.97f),
+            color = MaterialTheme.colorScheme.background,
             modifier = Modifier.fillMaxSize()
         ) {
             Column(
@@ -1258,5 +1382,124 @@ fun PhantomFullScreenSearchOverlay(
         }
     }
 }
+
+/**
+ * #204 「不再自動記事/待辦」三範圍二段確認對話框：僅此寄件者（預設）/ 僅此 App / 含此關鍵字。
+ */
+@Composable
+fun NeverAutoMemoConfirmDialog(
+    packageName: String?,
+    appLabel: String,
+    sender: String?,
+    defaultKeyword: String,
+    onDismiss: () -> Unit,
+    onConfirm: (packageName: String?, sender: String?, keyword: String?) -> Unit
+) {
+    val hasSender = !sender.isNullOrBlank()
+    val hasPkg = !packageName.isNullOrBlank()
+    var selectedScope by remember(sender, packageName) {
+        mutableStateOf(if (hasSender) 0 else if (hasPkg) 1 else 2)
+    }
+    var keywordText by remember(defaultKeyword) {
+        mutableStateOf(defaultKeyword.trim().take(20))
+    }
+    val canConfirm = when (selectedScope) {
+        0 -> hasSender
+        1 -> hasPkg
+        else -> keywordText.isNotBlank()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("不再自動記事／待辦") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "選擇不再自動加入記事或待辦的套用範圍：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (hasSender) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedScope = 0 },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.RadioButton(
+                            selected = selectedScope == 0,
+                            onClick = { selectedScope = 0 }
+                        )
+                        Text(
+                            text = "僅此寄件者（$sender）",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+                if (hasPkg) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedScope = 1 },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.RadioButton(
+                            selected = selectedScope == 1,
+                            onClick = { selectedScope = 1 }
+                        )
+                        Text(
+                            text = "僅此 App（${appLabel.ifBlank { packageName!! }}）",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedScope = 2 },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.RadioButton(
+                        selected = selectedScope == 2,
+                        onClick = { selectedScope = 2 }
+                    )
+                    Text(
+                        text = "含此關鍵字",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (selectedScope == 2) {
+                    OutlinedTextField(
+                        value = keywordText,
+                        onValueChange = { keywordText = it },
+                        label = { Text("關鍵字") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when (selectedScope) {
+                        0 -> onConfirm(packageName?.takeIf { it.isNotBlank() }, sender?.trim(), null)
+                        1 -> onConfirm(packageName?.trim(), null, null)
+                        else -> onConfirm(null, null, keywordText.trim())
+                    }
+                },
+                enabled = canConfirm
+            ) {
+                Text("確定不再加入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
 
 

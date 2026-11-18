@@ -144,6 +144,8 @@ fun MessageDetailScreen(
     var activeProfile by remember { mutableStateOf(AiClient.getActiveProfile(appCtx)) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showReminderPicker by remember { mutableStateOf(false) }
+    var showNeverMemoDialog by remember { mutableStateOf(false) }
+    var hasNeverMemoRule by remember { mutableStateOf(false) }
     var resumeRefreshTrigger by remember { mutableIntStateOf(0) }
 
     val lifecycleOwner = ctx as? LifecycleOwner
@@ -296,7 +298,7 @@ fun MessageDetailScreen(
                 }
                 message == null -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("找不到此訊息（可能已被刪除）", color = Color.Gray)
+                        Text("找不到此訊息（可能已被刪除）", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 else -> {
@@ -893,6 +895,59 @@ fun MessageDetailScreen(
                                     Text("取消提醒")
                                 }
                             }
+                        }
+
+                        LaunchedEffect(msg.id, resumeRefreshTrigger) {
+                            hasNeverMemoRule = withContext(Dispatchers.IO) {
+                                val activeRules = AppDatabaseHolder.db(appCtx).memoRuleDao().active()
+                                com.phantom.checker.util.MemoRuleEngine.match(
+                                    rules = activeRules,
+                                    packageName = msg.packageName,
+                                    sender = msg.sender,
+                                    content = msg.content
+                                )?.action == com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = { showNeverMemoDialog = true },
+                            enabled = !hasNeverMemoRule,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pressableScale()
+                        ) {
+                            Text(if (hasNeverMemoRule) "已設定不再自動記事／待辦" else "不再自動記事／待辦")
+                        }
+
+                        if (showNeverMemoDialog) {
+                            NeverAutoMemoConfirmDialog(
+                                packageName = msg.packageName,
+                                appLabel = msg.appLabel,
+                                sender = msg.sender,
+                                defaultKeyword = msg.content,
+                                onDismiss = { showNeverMemoDialog = false },
+                                onConfirm = { pkg, snd, kw ->
+                                    showNeverMemoDialog = false
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            AppDatabaseHolder.db(appCtx).memoRuleDao().insert(
+                                                com.phantom.checker.data.MemoRuleEntity(
+                                                    packageName = pkg,
+                                                    sender = snd,
+                                                    keyword = kw,
+                                                    action = com.phantom.checker.data.MemoRuleEntity.ACTION_NEVER,
+                                                    isEnabled = true,
+                                                    createdAt = System.currentTimeMillis(),
+                                                    source = com.phantom.checker.data.MemoRuleEntity.SOURCE_DETAIL
+                                                )
+                                            )
+                                            com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
+                                        }
+                                        hasNeverMemoRule = true
+                                        snackbarHostState.showSnackbar("已設定不再自動加入記事／待辦")
+                                    }
+                                }
+                            )
                         }
 
                         val shizukuReady = remember(msg.packageName) {
