@@ -19,6 +19,7 @@ import com.phantom.checker.data.AppCategoryRuleEntity
 import com.phantom.checker.data.AppDatabase
 import com.phantom.checker.data.FilterRule
 import com.phantom.checker.data.IntelResultEntity
+import com.phantom.checker.data.MemoRuleEntity
 import com.phantom.checker.data.MessageEntity
 import com.phantom.checker.data.MessageTagCrossRef
 import com.phantom.checker.data.NoteEntity

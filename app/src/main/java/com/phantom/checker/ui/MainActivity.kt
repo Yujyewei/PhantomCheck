@@ -1719,7 +1719,9 @@ private fun SearchResultsSection(
     onToggleMultiSelect: () -> Unit,
     onToggleSelect: (Long) -> Unit,
     onOpenDetail: (MessageEntity) -> Unit,
-    onLongPressMessage: (MessageEntity) -> Unit
+    onLongPressMessage: (MessageEntity) -> Unit,
+    notedMsgIds: Set<Long> = emptySet(),
+    todoedMsgIds: Set<Long> = emptySet()
 ) {
     when {
         isLoading && results.isEmpty() -> {
@@ -4788,7 +4790,7 @@ private fun ManualMemoRuleDialog(
         appOptions = withContext(Dispatchers.IO) {
             val pm = ctx.packageManager
             val fromDb = runCatching {
-                AppDatabaseHolder.db(ctx.applicationContext).messageDao().appGroups()
+                AppDatabaseHolder.db(ctx.applicationContext).messageDao().groupByApp()
                     .map { it.packageName to it.appLabel.ifBlank { it.packageName } }
             }.getOrDefault(emptyList())
             val installed = runCatching {
