@@ -1337,21 +1337,27 @@ private fun PhantomCheckApp(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 頂部標題列：搜尋＋重新整理＋設定齒輪（切到 AI 助手分頁時平滑隱藏，改由分頁內提供入口）
+            // 頂部標題列：迷你搜尋膠囊＋下方右側重新整理與設定齒輪（切到 AI 助手分頁時平滑隱藏）
             AnimatedVisibility(
                 visible = selectedTab != MainTab.ASSISTANT,
                 enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
             ) {
-                PhantomSearchBarPill(
-                    glassState = glassState,
-                    query = searchQuery,
-                    placeholder = "搜尋訊息、寄件人或關鍵字",
-                    onClick = { showSearchBar = true },
-                    modifier = Modifier.onGloballyPositioned { coords ->
-                        targetBounds = targetBounds + (OnboardingTargets.SEARCH_PILL to coords.boundsInRoot())
-                    },
-                    trailingActions = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    PhantomSearchBarPill(
+                        glassState = glassState,
+                        query = searchQuery,
+                        placeholder = "搜尋訊息、寄件人或關鍵字",
+                        onClick = { showSearchBar = true },
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            targetBounds = targetBounds + (OnboardingTargets.SEARCH_PILL to coords.boundsInRoot())
+                        }
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         IconButton(
                             onClick = { refreshTrigger++ },
                             modifier = Modifier.size(48.dp)
@@ -1373,7 +1379,7 @@ private fun PhantomCheckApp(
                             )
                         }
                     }
-                )
+                }
             }
 
             if (isLoading) {
@@ -2472,19 +2478,13 @@ private fun NotesTab(
     val db = remember(appCtx) { AppDatabaseHolder.db(appCtx) }
 
     val notes by remember(db) { db.noteDao().observeAll() }.collectAsState(initial = emptyList())
-    var todos by remember { mutableStateOf<List<TodoEntity>>(emptyList()) }
-    var todoRefresh by remember { mutableIntStateOf(0) }
+    val rawTodos by remember(db) { db.todoDao().observeAll() }.collectAsState(initial = emptyList())
+    val todos = remember(rawTodos) { ReminderScheduler.sortTodosSmart(rawTodos) }
     var todoFilter by remember { mutableStateOf(TodoFilterMode.ALL) }
     var showEditor by remember { mutableStateOf(false) }
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
     var showTodoEditor by remember { mutableStateOf(false) }
     var editingTodo by remember { mutableStateOf<TodoEntity?>(null) }
-
-    LaunchedEffect(todoRefresh) {
-        todos = withContext(Dispatchers.IO) {
-            ReminderScheduler.sortTodosSmart(db.todoDao().all())
-        }
-    }
 
     LaunchedEffect(initialEditTodoId, todos) {
         val targetId = initialEditTodoId ?: return@LaunchedEffect
@@ -2543,7 +2543,6 @@ private fun NotesTab(
                         }
                     }
                     com.phantom.checker.widget.ReminderWidgetProvider.updateAllIfChanged(appCtx)
-                    todoRefresh++
                     onShowMessage(if (target == null) "已新增待辦事項" else "已更新待辦事項")
                 }
             }
@@ -2727,8 +2726,7 @@ private fun NotesTab(
                                         val spawned = withContext(Dispatchers.IO) {
                                             ReminderScheduler.completeTodoWithRecurrence(appCtx, todo, checked)
                                         }
-                                        todoRefresh++
-                                        if (spawned != null) {
+                                                            if (spawned != null) {
                                             onShowMessage("已完成並自動建立下一次重複待辦")
                                         }
                                     }
@@ -2809,8 +2807,7 @@ private fun NotesTab(
                                             db.todoDao().deleteById(todo.id)
                                         }
                                         com.phantom.checker.widget.ReminderWidgetProvider.updateAllIfChanged(appCtx)
-                                        todoRefresh++
-                                        onShowMessage("已刪除待辦事項")
+                                                            onShowMessage("已刪除待辦事項")
                                     }
                                 }
                             ) {
