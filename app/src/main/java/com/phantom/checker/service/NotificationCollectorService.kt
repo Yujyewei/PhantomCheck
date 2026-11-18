@@ -192,6 +192,8 @@ class NotificationCollectorService : NotificationListenerService() {
                 ?: lastStyleMessage?.sender?.toString()
             )?.trim()?.takeIf { it.isNotEmpty() }
             ?: extractLastSenderFromExtraMessages(extras)
+        val senderPersonIcon = extractLastSenderIconFromExtraMessages(extras)
+            ?: lastStyleMessage?.person?.icon?.toIcon(applicationContext)
 
         val fallbackTitle = resolveNotificationTitle(extras, rawText, pkg)
         val title = styleSender ?: fallbackTitle
@@ -263,6 +265,40 @@ class NotificationCollectorService : NotificationListenerService() {
                     return@launch
                 }
             }
+            // #237 自己回覆 echo 抑制：3 分鐘內命中（normalize 全等或 dice >= 0.9）→ 略過 insert 並刪除命中列
+            val nowMs = System.currentTimeMillis()
+            val echoDao = db.ownReplyEchoDao()
+            val recentEchoes = echoDao.recentByPkg(pkg, nowMs - OWN_REPLY_ECHO_WINDOW_MS)
+            if (recentEchoes.isNotEmpty()) {
+                val myNames = PhantomPrefs.getMyDisplayNames(applicationContext)
+                val normText = normalizeForSimilarity(text)
+                val strippedText = stripOwnSenderPrefix(text, myNames)
+                val normStripped = if (strippedText != null) normalizeForSimilarity(strippedText) else null
+                val matchedEcho = recentEchoes.firstOrNull { echo ->
+                    val convMatches = echo.conversationKey.isBlank() ||
+                        conversationKey.isBlank() ||
+                        echo.conversationKey.equals(conversationKey, ignoreCase = true) ||
+                        echo.conversationKey.equals(title, ignoreCase = true)
+                    if (!convMatches) return@firstOrNull false
+                    val matchesRaw = normText.isNotEmpty() && (
+                        echo.normalizedText == normText ||
+                            diceBigramSimilarity(echo.normalizedText, normText) >= 0.9
+                        )
+                    val matchesStripped = !normStripped.isNullOrEmpty() && (
+                        echo.normalizedText == normStripped ||
+                            diceBigramSimilarity(echo.normalizedText, normStripped) >= 0.9
+                        )
+                    matchesRaw || matchesStripped
+                }
+                if (matchedEcho != null) {
+                    echoDao.deleteById(matchedEcho.id)
+                    return@launch
+                }
+            }
+
+            // #237 自我身分偵測：群組通知寄件者命中「我的名稱」→ 標記 isOwn=true
+            val isOwnSender = PhantomPrefs.isMyDisplayName(applicationContext, styleSender ?: title)
+
             val rules = cachedActiveFilterRules(db)
             val matchedRule = rules.firstOrNull { rule ->
                 if (rule.packageName != null && rule.packageName != pkg) return@firstOrNull false
@@ -285,14 +321,21 @@ class NotificationCollectorService : NotificationListenerService() {
                     conversationKey = conversationKey,
                     content = text,
                     timestamp = sbn.postTime,
-                    riskScore = if (isRuleScam) 95 else 0,
-                    riskLabel = if (isRuleScam) "scam" else "",
-                    riskReason = if (isRuleScam) "命中自訂詐騙過濾規則：${matchedRule?.keyword}" else "",
-                    isFiltered = isRuleFiltered,
-                    isRead = silentMuted,
-                    dedupKey = dedupKey
+                    riskScore = if (isRuleScam && !isOwnSender) 95 else 0,
+                    riskLabel = if (isRuleScam && !isOwnSender) "scam" else "",
+                    riskReason = if (isRuleScam && !isOwnSender) "命中自訂詐騙過濾規則：${matchedRule?.keyword}" else "",
+                    isFiltered = isRuleFiltered && !isOwnSender,
+                    isRead = silentMuted || isOwnSender,
+                    dedupKey = dedupKey,
+                    isOwn = isOwnSender
                 )
             )
+            if (isOwnSender) {
+                return@launch
+            }
+            if (senderPersonIcon != null && title.isNotBlank()) {
+                saveSenderAvatar(db, pkg, title, senderPersonIcon, nowMs)
+            }
 
             // 使用者標籤記憶規則（確定性、零 LLM token，優先序高於 App 分類與 AI 標籤）
             val userTagRules = try {
@@ -623,6 +666,72 @@ class NotificationCollectorService : NotificationListenerService() {
         return name?.trim()?.takeIf { it.isNotEmpty() }
     }
 
+    @Suppress("DEPRECATION")
+    private fun extractLastSenderIconFromExtraMessages(extras: android.os.Bundle): android.graphics.drawable.Icon? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        return try {
+            val parcelables = extras.getParcelableArray(Notification.EXTRA_MESSAGES) ?: return null
+            val msgs = Notification.MessagingStyle.Message.getMessagesFromBundleArray(parcelables)
+            msgs.lastOrNull()?.senderPerson?.icon
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun saveSenderAvatar(
+        db: AppDatabase,
+        packageName: String,
+        sender: String,
+        icon: android.graphics.drawable.Icon,
+        nowMs: Long
+    ) {
+        try {
+            val drawable = icon.loadDrawable(applicationContext) ?: return
+            val srcW = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
+            val srcH = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
+            val maxDim = maxOf(srcW, srcH)
+            val scale = if (maxDim > 96) 96f / maxDim.toFloat() else 1f
+            val targetW = (srcW * scale).toInt().coerceIn(1, 96)
+            val targetH = (srcH * scale).toInt().coerceIn(1, 96)
+            val bmp = android.graphics.Bitmap.createBitmap(
+                targetW,
+                targetH,
+                android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            drawable.setBounds(0, 0, targetW, targetH)
+            drawable.draw(canvas)
+
+            val baos = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+            var bytes = baos.toByteArray()
+            if (bytes.size > 16 * 1024) {
+                for (q in listOf(85, 70, 50)) {
+                    baos.reset()
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, q, baos)
+                    bytes = baos.toByteArray()
+                    if (bytes.size <= 16 * 1024) break
+                }
+            }
+            bmp.recycle()
+            if (bytes.isEmpty() || bytes.size > 16 * 1024) return
+
+            val avatarDao = db.senderAvatarDao()
+            avatarDao.upsert(
+                com.phantom.checker.data.SenderAvatarEntity(
+                    packageName = packageName,
+                    sender = sender.trim(),
+                    icon = bytes,
+                    updatedAt = nowMs
+                )
+            )
+            if (nowMs % 20L == 0L) {
+                avatarDao.deleteOlderThan(nowMs - 30L * 24L * 60L * 60L * 1000L)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     private fun resolveNotificationTitle(
         extras: android.os.Bundle,
         rawText: String,
@@ -930,6 +1039,14 @@ class NotificationCollectorService : NotificationListenerService() {
                     }
                     android.app.RemoteInput.addResultsToIntent(arrayOf(remoteInput), replyIntent, bundle)
                     replyAction.actionIntent.send(context, 0, replyIntent)
+                    val echoConvKey = convKeyNorm.ifBlank { senderNorm }
+                    val appCtx = context.applicationContext
+                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                        try {
+                            recordOwnReplyEcho(appCtx, packageName, echoConvKey, trimmedReply)
+                        } catch (_: Exception) {
+                        }
+                    }
                     Log.d("PhantomReply", "sendReplyToNotification: sent pkg=$packageName convKey=$convKeyNorm sender=$senderNorm")
                     ReplySendResult.Success
                 } catch (e: Exception) {
@@ -1117,9 +1234,46 @@ class NotificationCollectorService : NotificationListenerService() {
         }
 
         private const val AUTO_MEMO_DEDUP_WINDOW_MS = 7L * 24L * 60L * 60L * 1000L
+        private const val OWN_REPLY_ECHO_WINDOW_MS = 3L * 60L * 1000L
+
+        internal fun stripOwnSenderPrefix(text: String, myNames: Set<String>): String? {
+            val trimmed = text.trimStart()
+            val colonIdx = trimmed.indexOfFirst { it == ':' || it == '：' }
+            if (colonIdx !in 1..24) return null
+            val prefix = trimmed.substring(0, colonIdx).trim()
+            val isOwnPrefix = prefix == "我" || myNames.any { it.equals(prefix, ignoreCase = true) }
+            if (!isOwnPrefix) return null
+            return trimmed.substring(colonIdx + 1).trimStart()
+        }
+
+        suspend fun recordOwnReplyEcho(
+            ctx: Context,
+            packageName: String,
+            conversationKey: String,
+            replyText: String
+        ) {
+            val norm = normalizeForSimilarity(replyText)
+            if (norm.isEmpty()) return
+            val now = System.currentTimeMillis()
+            val dao = AppDatabaseHolder.db(ctx.applicationContext).ownReplyEchoDao()
+            dao.deleteExpired(now - OWN_REPLY_ECHO_WINDOW_MS)
+            dao.insert(
+                com.phantom.checker.data.OwnReplyEchoEntity(
+                    packageName = packageName,
+                    conversationKey = conversationKey.trim(),
+                    normalizedText = norm,
+                    sentAt = now
+                )
+            )
+        }
 
         internal fun normalizeForSimilarity(text: String): String =
-            text.trim().replace(Regex("\\s+"), " ")
+            java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
+                .trim()
+                .lowercase(java.util.Locale.ROOT)
+                .replace(Regex("[\\p{Punct}\\p{IsPunctuation}]+"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
 
         internal fun diceBigramSimilarity(a: String, b: String): Double {
             if (a == b) return 1.0
@@ -1177,14 +1331,36 @@ class NotificationCollectorService : NotificationListenerService() {
 
             val now = System.currentTimeMillis()
             val normClean = normalizeForSimilarity(clean)
+            val appLabel = msg.appLabel.ifBlank { msg.packageName }
 
             if (effectiveMemoType == AiClient.MEMO_TYPE_TODO) {
                 if (db.todoDao().findByRelatedMessageId(msg.id) != null) return
                 val since = now - AUTO_MEMO_DEDUP_WINDOW_MS
-                val recentPending = db.todoDao().findRecentPendingSince(since)
-                if (recentPending.any { normalizeForSimilarity(it.title) == normClean }) return
-
+                val recentPending = db.todoDao().findRecentPendingByAppLabel(appLabel, since)
+                val duplicateTodo = recentPending.firstOrNull { cand ->
+                    val normCand = normalizeForSimilarity(cand.title)
+                    normCand == normClean || diceBigramSimilarity(normCand, normClean) >= 0.9
+                }
                 val parsedDue = ClientTimeParser.parseStructuredDueAt(todoDue)
+                if (duplicateTodo != null) {
+                    val updatedDue = parsedDue ?: duplicateTodo.dueAt
+                    db.todoDao().update(
+                        duplicateTodo.copy(
+                            title = clean,
+                            dueAt = updatedDue,
+                            relatedMessageId = msg.id
+                        )
+                    )
+                    val appCtx = ctx?.applicationContext
+                    if (appCtx != null) {
+                        if (parsedDue != null && parsedDue > now && parsedDue != duplicateTodo.dueAt) {
+                            ReminderScheduler.scheduleTodo(appCtx, duplicateTodo.id, parsedDue)
+                        }
+                        ReminderWidgetProvider.updateAllIfChanged(appCtx)
+                    }
+                    return
+                }
+
                 val dueAt = parsedDue ?: (msg.timestamp + 2L * 60L * 60L * 1000L)
                 val newId = db.todoDao().insert(
                     TodoEntity(
@@ -1206,8 +1382,6 @@ class NotificationCollectorService : NotificationListenerService() {
                 }
                 return
             }
-
-            val appLabel = msg.appLabel.ifBlank { msg.packageName }
 
             val existing = db.noteDao().findAutoByMessageId(msg.id)
             if (existing != null) {
@@ -1382,7 +1556,8 @@ object AppDatabaseHolder {
                 AppDatabase.MIGRATION_11_12,
                 AppDatabase.MIGRATION_12_13,
                 AppDatabase.MIGRATION_13_14,
-                AppDatabase.MIGRATION_14_15
+                AppDatabase.MIGRATION_14_15,
+                AppDatabase.MIGRATION_15_16
             ).addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)

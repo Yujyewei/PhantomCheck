@@ -63,6 +63,7 @@ object SettingsCatalog {
         SettingSearchItem("notif_digit_variance", "notif", "數字微變視為同一則更新", "對監控類通知將僅數字變動視為同 key 更新並節流", listOf("數字微變", "節流", "電量", "流量")),
         SettingSearchItem("notif_reply_proxy", "notif", "通知欄連續快速回覆", "透過 AI 助手回覆後於通知欄保留對話輸入框，可連續回覆多則", listOf("連續回覆", "快速回覆", "代理回覆", "通知欄回覆", "reply")),
         SettingSearchItem("notif_reply_proxy_timeout", "notif", "回覆通知閒置自動收起", "設定代理回覆通知閒置多久後自動收起（15 / 30 / 60 分鐘或不自動收起）", listOf("連續回覆", "逾時", "自動收起", "閒置", "回覆通知")),
+        SettingSearchItem("notif_my_display_names", "notif", "我的名稱（自我身分偵測）", "設定自己在群組通知中的顯示名稱，命中時標記為自己傳送且不計入統計", listOf("我的名稱", "自我身分", "Eric Chiu", "自己回覆", "群組名稱", "isOwn")),
         SettingSearchItem("notif_clear_read", "notif", "清除已讀訊息", "永久刪除所有已讀訊息（保留未讀訊息）", listOf("清除已讀", "已讀", "刪除已讀", "清已讀")),
         SettingSearchItem("data_retention", "data", "訊息保留與清理", "訊息保留天數與最大保留則數上限", listOf("保留", "天數", "上限", "清理")),
         SettingSearchItem("data_muted_apps", "data", "App 靜音清單", "設定特定 App 完全不記錄或靜默記錄", listOf("靜音", "封鎖", "app", "略過")),
@@ -82,7 +83,7 @@ object SettingsCatalog {
         SettingSearchItem("personal_sort", "personalization", "首頁 App 排序", "切換首頁 App 清單依時間新→舊、未讀多→少或風險高→低排序", listOf("個人化", "排序", "未讀", "風險", "時間", "sort")),
         SettingSearchItem("personal_filters", "personalization", "首頁篩選欄顯示項目", "自訂首頁篩選欄是否顯示星標、詐騙、已過濾與標籤按鈕", listOf("個人化", "篩選", "filter", "星標", "標籤", "隱藏")),
         SettingSearchItem("personal_summary_collapse", "personalization", "摘要卡預設收合", "控制每日與本週 AI 摘要卡是否預設收合為單行預覽", listOf("個人化", "摘要", "收合", "展開", "折疊")),
-        SettingSearchItem("card_stack_effect_enabled", "personalization", "訊息卡片堆疊效果", "同一 App 有多則訊息時於卡片後方顯示層疊邊緣", listOf("堆疊", "卡片堆疊", "層疊", "stack", "視差", "個人化")),
+        SettingSearchItem("personal_home_card_layout", "personalization", "首頁卡片排列模式", "切換首頁 App 卡片為一般條列、往下露頂部（撲克牌式）或往上露底部（資料夾式）", listOf("堆疊", "條列", "撲克牌", "資料夾", "卡片排列", "重疊", "個人化")),
         SettingSearchItem("personal_time_format", "personalization", "時間顯示格式（12 / 24 小時制）", "切換訊息與對話的時間顯示格式", listOf("個人化", "時間", "12小時", "24小時", "am", "pm")),
         SettingSearchItem("bg_global", "personalization", "全域背景圖片", "設定套用於訊息中心、統計、AI 助手與對話頁的全域底圖", listOf("個人化", "背景", "桌布", "wallpaper", "圖片", "全域")),
         SettingSearchItem("bg_chat", "personalization", "AI 聊天背景圖片", "自訂 AI 助手分頁背景圖片（未設定時沿用全域背景）", listOf("個人化", "背景", "桌布", "wallpaper", "AI", "聊天")),
@@ -132,7 +133,6 @@ object SettingsCatalog {
         "appearance_haptic",
         "intel_enabled",
         "personal_summary_collapse",
-        "card_stack_effect_enabled",
         "stats_summary",
         "stats_weekly_bar",
         "stats_risk_dist",
@@ -178,7 +178,6 @@ object SettingsCatalog {
             "appearance_haptic" -> PhantomPrefs.isHapticFeedbackEnabled(appCtx)
             "intel_enabled" -> PhantomPrefs.isIntelEnabled(appCtx)
             "personal_summary_collapse" -> PhantomPrefs.isSummaryDefaultCollapsed(appCtx)
-            "card_stack_effect_enabled" -> PhantomPrefs.isCardStackEffectEnabled(appCtx)
             "stats_summary",
             "stats_weekly_bar",
             "stats_risk_dist",
@@ -255,7 +254,6 @@ object SettingsCatalog {
             "appearance_haptic" -> PhantomPrefs.setHapticFeedbackEnabled(appCtx, enabled)
             "intel_enabled" -> PhantomPrefs.setIntelEnabled(appCtx, enabled)
             "personal_summary_collapse" -> PhantomPrefs.setSummaryDefaultCollapsed(appCtx, enabled)
-            "card_stack_effect_enabled" -> PhantomPrefs.setCardStackEffectEnabled(appCtx, enabled)
             "stats_summary",
             "stats_weekly_bar",
             "stats_risk_dist",
