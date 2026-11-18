@@ -1876,83 +1876,16 @@ private fun MessagesHomeTab(
             }
     }
 
-    LazyColumn(
-        state = listState,
+    Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item(key = "offline_retry_banner") {
-            AnimatedVisibility(visible = offlineRetryEnabled && pendingRetryCount > 0) {
-                PhantomGlassCard(
-                    glassState = glassState,
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 18.dp,
-                    contentPadding = 12.dp
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (isRetryPaused) {
-                                    "已暫停補分析（待處理 $pendingRetryCount 則）"
-                                } else {
-                                    "$pendingRetryCount 則訊息待 AI 補分析"
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = if (isRetryPaused) {
-                                    "點擊「繼續」於網路恢復後自動補分析"
-                                } else {
-                                    "網路恢復後將自動排程補齊風險分析"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Row {
-                            TextButton(
-                                onClick = {
-                                    if (isRetryPaused) {
-                                        com.phantom.checker.service.PendingAiAnalysisPolicy.resume(ctx)
-                                        isRetryPaused = false
-                                    } else {
-                                        com.phantom.checker.service.PendingAiAnalysisPolicy.pause(ctx)
-                                        isRetryPaused = true
-                                    }
-                                }
-                            ) {
-                                Text(if (isRetryPaused) "繼續" else "暫停")
-                            }
-                            TextButton(
-                                onClick = {
-                                    com.phantom.checker.service.PendingAiAnalysisPolicy.retryNow(ctx)
-                                    isRetryPaused = false
-                                }
-                            ) {
-                                Text("立即重試")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 頂部統計玻璃卡
-        item {
+        AnimatedVisibility(visible = offlineRetryEnabled && pendingRetryCount > 0) {
             PhantomGlassCard(
                 glassState = glassState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { coords ->
-                        onReportBounds(OnboardingTargets.STATS_CARD, coords.boundsInRoot())
-                    },
-                cornerRadius = 20.dp,
-                contentPadding = 14.dp
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = 18.dp,
+                contentPadding = 12.dp
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1961,208 +1894,266 @@ private fun MessagesHomeTab(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "今日 $todayCount 則・未讀 $unreadCount・詐騙 $todayScamCount",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            text = if (isRetryPaused) {
+                                "已暫停補分析（待處理 $pendingRetryCount 則）"
+                            } else {
+                                "$pendingRetryCount 則訊息待 AI 補分析"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
                         )
-                        Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "點選 App 查看訊息；長按可釘選、靜音或刪除",
+                            text = if (isRetryPaused) {
+                                "點擊「繼續」於網路恢復後自動補分析"
+                            } else {
+                                "網路恢復後將自動排程補齊風險分析"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Column(horizontalAlignment = Alignment.End) {
-                        if (unreadCount > 0) {
-                            TextButton(onClick = onMarkAllRead) {
-                                Text("全部標已讀")
+                    Row {
+                        TextButton(
+                            onClick = {
+                                if (isRetryPaused) {
+                                    com.phantom.checker.service.PendingAiAnalysisPolicy.resume(ctx)
+                                    isRetryPaused = false
+                                } else {
+                                    com.phantom.checker.service.PendingAiAnalysisPolicy.pause(ctx)
+                                    isRetryPaused = true
+                                }
                             }
+                        ) {
+                            Text(if (isRetryPaused) "繼續" else "暫停")
+                        }
+                        TextButton(
+                            onClick = {
+                                com.phantom.checker.service.PendingAiAnalysisPolicy.retryNow(ctx)
+                                isRetryPaused = false
+                            }
+                        ) {
+                            Text("立即重試")
                         }
                     }
                 }
             }
         }
 
-        // 快速篩選 Chip 列（FlowRow 自動換行，免橫向滑動全部可見；全部與未讀固定顯示）
-        item {
-            val activeTag = (activeFilter as? MessageFilter.Tag)?.tag
-            val visibleFilters = PhantomPrefs.getVisibleHomeFilters(ctx)
-            val chipShape = RoundedCornerShape(8.dp)
-            FlowRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { coords ->
-                        onReportBounds(OnboardingTargets.FILTER_CHIPS, coords.boundsInRoot())
-                    },
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+        // 頂部統計玻璃卡（固定）
+        PhantomGlassCard(
+            glassState = glassState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coords ->
+                    onReportBounds(OnboardingTargets.STATS_CARD, coords.boundsInRoot())
+                },
+            cornerRadius = 20.dp,
+            contentPadding = 14.dp
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                FilterChip(
-                    selected = activeFilter == MessageFilter.All,
-                    onClick = { onSelectFilter(MessageFilter.All) },
-                    shape = chipShape,
-                    modifier = Modifier.height(32.dp),
-                    label = { Text("全部", style = MaterialTheme.typography.labelMedium) }
-                )
-                FilterChip(
-                    selected = activeFilter == MessageFilter.Unread,
-                    onClick = { onSelectFilter(MessageFilter.Unread) },
-                    shape = chipShape,
-                    modifier = Modifier.height(32.dp),
-                    label = { Text("未讀", style = MaterialTheme.typography.labelMedium) }
-                )
-                if ("starred" in visibleFilters || activeFilter == MessageFilter.Starred) {
-                    FilterChip(
-                        selected = activeFilter == MessageFilter.Starred,
-                        onClick = { onSelectFilter(MessageFilter.Starred) },
-                        shape = chipShape,
-                        modifier = Modifier.height(32.dp),
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        },
-                        label = { Text("星標", style = MaterialTheme.typography.labelMedium) }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "今日 $todayCount 則・未讀 $unreadCount・詐騙 $todayScamCount",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "點選 App 查看訊息；長按可釘選、靜音或刪除",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if ("scams" in visibleFilters || activeFilter == MessageFilter.Scams) {
-                    FilterChip(
-                        selected = activeFilter == MessageFilter.Scams,
-                        onClick = { onSelectFilter(MessageFilter.Scams) },
-                        shape = chipShape,
-                        modifier = Modifier.height(32.dp),
-                        label = { Text("詐騙", style = MaterialTheme.typography.labelMedium) }
-                    )
-                }
-                if ("filtered" in visibleFilters || activeFilter == MessageFilter.Filtered) {
-                    FilterChip(
-                        selected = activeFilter == MessageFilter.Filtered,
-                        onClick = { onSelectFilter(MessageFilter.Filtered) },
-                        shape = chipShape,
-                        modifier = Modifier.height(32.dp),
-                        label = { Text("已過濾", style = MaterialTheme.typography.labelMedium) }
-                    )
-                }
-                if (activeTag != null) {
-                    val tagColor = parseTagColor(activeTag.colorHex)
-                    FilterChip(
-                        selected = true,
-                        onClick = onOpenTagPicker,
-                        shape = chipShape,
-                        modifier = Modifier.height(32.dp),
-                        leadingIcon = {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(tagColor)
-                            )
-                        },
-                        trailingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "關閉標籤篩選",
-                                modifier = Modifier
-                                    .size(14.dp)
-                                    .clickable { onSelectFilter(MessageFilter.All) }
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = tagColor.copy(alpha = 0.2f)
-                        ),
-                        label = { Text(activeTag.name, style = MaterialTheme.typography.labelMedium) }
-                    )
-                }
-                if ("tag" in visibleFilters || activeTag != null) {
-                    FilterChip(
-                        selected = activeTag != null,
-                        onClick = onOpenTagPicker,
-                        shape = chipShape,
-                        modifier = Modifier.height(32.dp),
-                        label = { Text("標籤 ▾", style = MaterialTheme.typography.labelMedium) }
-                    )
+                Column(horizontalAlignment = Alignment.End) {
+                    if (unreadCount > 0) {
+                        TextButton(onClick = onMarkAllRead) {
+                            Text("全部標已讀")
+                        }
+                    }
                 }
             }
         }
 
-        if (activeFilter == MessageFilter.All) {
-            // 我的最愛 App 橫向列
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "我的最愛 App",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (favoritePackages.isEmpty()) {
-                        Text(
-                            text = "尚未釘選最愛 App（長按下方任一 App 即可釘選）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+        // 快速篩選 Chip 列（固定，FlowRow 自動換行，免橫向滑動全部可見；全部與未讀固定顯示）
+        val activeTag = (activeFilter as? MessageFilter.Tag)?.tag
+        val visibleFilters = PhantomPrefs.getVisibleHomeFilters(ctx)
+        val chipShape = RoundedCornerShape(8.dp)
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coords ->
+                    onReportBounds(OnboardingTargets.FILTER_CHIPS, coords.boundsInRoot())
+                },
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilterChip(
+                selected = activeFilter == MessageFilter.All,
+                onClick = { onSelectFilter(MessageFilter.All) },
+                shape = chipShape,
+                modifier = Modifier.height(32.dp),
+                label = { Text("全部", style = MaterialTheme.typography.labelMedium) }
+            )
+            FilterChip(
+                selected = activeFilter == MessageFilter.Unread,
+                onClick = { onSelectFilter(MessageFilter.Unread) },
+                shape = chipShape,
+                modifier = Modifier.height(32.dp),
+                label = { Text("未讀", style = MaterialTheme.typography.labelMedium) }
+            )
+            if ("starred" in visibleFilters || activeFilter == MessageFilter.Starred) {
+                FilterChip(
+                    selected = activeFilter == MessageFilter.Starred,
+                    onClick = { onSelectFilter(MessageFilter.Starred) },
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
                         )
-                    } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(favoritePackages, key = { it }) { pkg ->
-                                val group = groupMap[pkg]
-                                val label = group?.appLabel ?: try {
-                                    ctx.packageManager.getApplicationLabel(
-                                        ctx.packageManager.getApplicationInfo(pkg, 0)
-                                    ).toString()
-                                } catch (_: Exception) {
-                                    pkg
-                                }
-                                val todayBadge = group?.todayCount ?: 0
-                                val favTags = group?.latestTags.orEmpty()
-                                PhantomGlassCard(
-                                    glassState = glassState,
-                                    modifier = Modifier
-                                        .width(108.dp)
-                                        .pressableScale()
-                                        .combinedClickable(
-                                            onClick = { onOpenApp(pkg, label) },
-                                            onLongClick = { onLongPressFavorite(pkg) }
-                                        ),
-                                    cornerRadius = 20.dp,
-                                    contentPadding = 10.dp
+                    },
+                    label = { Text("星標", style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+            if ("scams" in visibleFilters || activeFilter == MessageFilter.Scams) {
+                FilterChip(
+                    selected = activeFilter == MessageFilter.Scams,
+                    onClick = { onSelectFilter(MessageFilter.Scams) },
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    label = { Text("詐騙", style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+            if ("filtered" in visibleFilters || activeFilter == MessageFilter.Filtered) {
+                FilterChip(
+                    selected = activeFilter == MessageFilter.Filtered,
+                    onClick = { onSelectFilter(MessageFilter.Filtered) },
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    label = { Text("已過濾", style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+            if (activeTag != null) {
+                val tagColor = parseTagColor(activeTag.colorHex)
+                FilterChip(
+                    selected = true,
+                    onClick = onOpenTagPicker,
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    leadingIcon = {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(tagColor)
+                        )
+                    },
+                    trailingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Clear,
+                            contentDescription = "關閉標籤篩選",
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clickable { onSelectFilter(MessageFilter.All) }
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = tagColor.copy(alpha = 0.2f)
+                    ),
+                    label = { Text(activeTag.name, style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+            if ("tag" in visibleFilters || activeTag != null) {
+                FilterChip(
+                    selected = activeTag != null,
+                    onClick = onOpenTagPicker,
+                    shape = chipShape,
+                    modifier = Modifier.height(32.dp),
+                    label = { Text("標籤 ▾", style = MaterialTheme.typography.labelMedium) }
+                )
+            }
+        }
+
+        if (activeFilter == MessageFilter.All) {
+            // 我的最愛 App 橫向列（固定）
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "我的最愛 App",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                if (favoritePackages.isEmpty()) {
+                    Text(
+                        text = "尚未釘選最愛 App（長按下方任一 App 即可釘選）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(favoritePackages, key = { it }) { pkg ->
+                            val group = groupMap[pkg]
+                            val label = group?.appLabel ?: try {
+                                ctx.packageManager.getApplicationLabel(
+                                    ctx.packageManager.getApplicationInfo(pkg, 0)
+                                ).toString()
+                            } catch (_: Exception) {
+                                pkg
+                            }
+                            val todayBadge = group?.todayCount ?: 0
+                            val favTags = group?.latestTags.orEmpty()
+                            PhantomGlassCard(
+                                glassState = glassState,
+                                modifier = Modifier
+                                    .width(108.dp)
+                                    .pressableScale()
+                                    .combinedClickable(
+                                        onClick = { onOpenApp(pkg, label) },
+                                        onLongClick = { onLongPressFavorite(pkg) }
+                                    ),
+                                cornerRadius = 20.dp,
+                                contentPadding = 10.dp
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Box {
-                                            AppIconImage(
-                                                packageName = pkg,
-                                                contentDescription = label,
-                                                size = 38.dp
-                                            )
-                                            if (todayBadge > 0) {
-                                                Surface(
-                                                    shape = CircleShape,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.align(Alignment.TopEnd)
-                                                ) {
-                                                    Text(
-                                                        text = if (todayBadge > 99) "99+" else "$todayBadge",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onPrimary,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                    )
-                                                }
+                                    Box {
+                                        AppIconImage(
+                                            packageName = pkg,
+                                            contentDescription = label,
+                                            size = 38.dp
+                                        )
+                                        if (todayBadge > 0) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.align(Alignment.TopEnd)
+                                            ) {
+                                                Text(
+                                                    text = if (todayBadge > 99) "99+" else "$todayBadge",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimary,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
                                             }
                                         }
-                                        Spacer(Modifier.height(6.dp))
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        if (favTags.isNotEmpty()) {
-                                            Spacer(Modifier.height(4.dp))
-                                            MessageTagChipRow(tags = favTags)
-                                        }
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (favTags.isNotEmpty()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        MessageTagChipRow(tags = favTags)
                                     }
                                 }
                             }
@@ -2170,10 +2161,20 @@ private fun MessagesHomeTab(
                     }
                 }
             }
+        }
 
-            // App 分組清單
-            when {
-                isLoading && appGroups.isEmpty() -> {
+        // 可捲動訊息清單區
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (activeFilter == MessageFilter.All) {
+                // App 分組清單
+                when {
+                    isLoading && appGroups.isEmpty() -> {
                     item {
                         Box(
                             modifier = Modifier
@@ -2452,6 +2453,7 @@ private fun MessagesHomeTab(
                     }
                 }
             }
+        }
         }
     }
 }
