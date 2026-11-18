@@ -204,6 +204,7 @@ fun PhantomGlassCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 24.dp,
     contentPadding: Dp = 16.dp,
+    tintColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val ctx = LocalContext.current
@@ -264,6 +265,7 @@ fun PhantomGlassCard(
                 )
                 .clip(shape)
                 .let { m -> if (overlayColor != null) m.background(overlayColor, shape) else m }
+                .let { m -> if (tintColor != null) m.background(tintColor, shape) else m }
         ) {
             Column(
                 modifier = Modifier.padding(contentPadding),
@@ -280,6 +282,7 @@ fun PhantomGlassCard(
             modifier = modifier
                 .clip(shape)
                 .background(solidBg, shape)
+                .let { m -> if (tintColor != null) m.background(tintColor, shape) else m }
                 .border(width = 1.dp, color = outline, shape = shape)
         ) {
             Column(

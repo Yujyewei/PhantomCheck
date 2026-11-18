@@ -81,6 +81,7 @@ object MessageExporter {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val sb = StringBuilder()
         sb.appendLine(CSV_HEADER)
+        // 匯出包含使用者自己的回覆（isOwn = true），寄件者欄位固定標記為「我」
         for (msg in messages) {
             val timeStr = dateFormat.format(Date(msg.timestamp))
             val appName = msg.appLabel.ifBlank { msg.packageName }

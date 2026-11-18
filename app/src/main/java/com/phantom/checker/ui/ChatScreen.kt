@@ -2646,6 +2646,25 @@ fun ChatAssistantTab(
                                                                     conversationKey = primaryMsg.conversationKey
                                                                 )) {
                                                                     is NotificationCollectorService.Companion.ReplySendResult.Success -> {
+                                                                        val convKey = primaryMsg.conversationKey.ifBlank { primaryMsg.sender }
+                                                                        withContext(Dispatchers.IO) {
+                                                                            AppDatabaseHolder.db(appCtx).messageDao().insert(
+                                                                                MessageEntity(
+                                                                                    packageName = primaryMsg.packageName,
+                                                                                    appLabel = primaryMsg.appLabel,
+                                                                                    sender = "我",
+                                                                                    content = draftReply,
+                                                                                    timestamp = System.currentTimeMillis(),
+                                                                                    riskScore = 0,
+                                                                                    riskLabel = "",
+                                                                                    riskReason = "",
+                                                                                    isRead = true,
+                                                                                    conversationKey = convKey,
+                                                                                    dedupKey = null,
+                                                                                    isOwn = true
+                                                                                )
+                                                                            )
+                                                                        }
                                                                         com.phantom.checker.service.ReplyProxyManager.startOrRefreshSession(
                                                                             ctx = appCtx,
                                                                             packageName = primaryMsg.packageName,

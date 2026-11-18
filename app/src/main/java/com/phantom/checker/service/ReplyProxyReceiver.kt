@@ -85,6 +85,22 @@ class ReplyProxyReceiver : BroadcastReceiver() {
                         when (res) {
                             is NotificationCollectorService.Companion.ReplySendResult.Success -> {
                                 Log.d(TAG, "Proxy reply sent pkg=${session.packageName} sender=${session.sender}")
+                                AppDatabaseHolder.db(appCtx).messageDao().insert(
+                                    com.phantom.checker.data.MessageEntity(
+                                        packageName = session.packageName,
+                                        appLabel = session.appLabel,
+                                        sender = "我",
+                                        content = replyText,
+                                        timestamp = System.currentTimeMillis(),
+                                        riskScore = 0,
+                                        riskLabel = "",
+                                        riskReason = "",
+                                        isRead = true,
+                                        conversationKey = session.sender,
+                                        dedupKey = null,
+                                        isOwn = true
+                                    )
+                                )
                                 ReplyProxyManager.appendMessageAndNotify(
                                     ctx = appCtx,
                                     sessionKey = sessionKey,
@@ -105,6 +121,22 @@ class ReplyProxyReceiver : BroadcastReceiver() {
                                             replyText,
                                             null,
                                             null
+                                        )
+                                        AppDatabaseHolder.db(appCtx).messageDao().insert(
+                                            com.phantom.checker.data.MessageEntity(
+                                                packageName = session.packageName,
+                                                appLabel = session.appLabel,
+                                                sender = "我",
+                                                content = replyText,
+                                                timestamp = System.currentTimeMillis(),
+                                                riskScore = 0,
+                                                riskLabel = "",
+                                                riskReason = "",
+                                                isRead = true,
+                                                conversationKey = session.sender,
+                                                dedupKey = null,
+                                                isOwn = true
+                                            )
                                         )
                                         ReplyProxyManager.appendMessageAndNotify(
                                             ctx = appCtx,

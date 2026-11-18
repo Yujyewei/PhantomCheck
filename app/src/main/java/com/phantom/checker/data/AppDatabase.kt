@@ -322,7 +322,7 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE isStarred = 1 ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
     suspend fun starredPaged(limit: Int, offset: Int): List<MessageEntity>
 
-    @Query("SELECT * FROM messages WHERE riskLabel = 'scam' ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM messages WHERE isOwn = 0 AND riskLabel = 'scam' ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
     suspend fun scamsPaged(limit: Int, offset: Int): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE isFiltered = 1 ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
@@ -358,7 +358,7 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE content LIKE '%' || :q || '%' OR sender LIKE '%' || :q || '%' ORDER BY timestamp DESC LIMIT 200")
     suspend fun search(q: String): List<MessageEntity>
 
-    @Query("SELECT * FROM messages WHERE riskLabel = 'scam' ORDER BY timestamp DESC")
+    @Query("SELECT * FROM messages WHERE isOwn = 0 AND riskLabel = 'scam' ORDER BY timestamp DESC")
     suspend fun scams(): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE isFiltered = 1 ORDER BY timestamp DESC")
@@ -369,7 +369,7 @@ interface MessageDao {
             "COALESCE(SUM(CASE WHEN timestamp >= :startOfDay THEN 1 ELSE 0 END), 0) as today, " +
             "COALESCE(SUM(CASE WHEN isRead = 0 THEN 1 ELSE 0 END), 0) as unread, " +
             "COALESCE(SUM(CASE WHEN riskLabel = 'scam' AND timestamp >= :startOfDay THEN 1 ELSE 0 END), 0) as scam " +
-            "FROM messages"
+            "FROM messages WHERE isOwn = 0"
     )
     suspend fun statsOverview(startOfDay: Long): MessageStatsRow
 
@@ -378,34 +378,34 @@ interface MessageDao {
             "COALESCE(SUM(CASE WHEN timestamp >= :startOfDay THEN 1 ELSE 0 END), 0) as today, " +
             "COALESCE(SUM(CASE WHEN isRead = 0 THEN 1 ELSE 0 END), 0) as unread, " +
             "COALESCE(SUM(CASE WHEN riskLabel = 'scam' AND timestamp >= :startOfDay THEN 1 ELSE 0 END), 0) as scam, " +
-            "(SELECT packageName FROM messages ORDER BY timestamp DESC LIMIT 1) as latestPackageName, " +
+            "(SELECT packageName FROM messages WHERE isOwn = 0 ORDER BY timestamp DESC LIMIT 1) as latestPackageName, " +
             "(SELECT GROUP_CONCAT(packageName, '|') FROM (" +
-            "SELECT packageName FROM messages WHERE timestamp >= :startOfDay " +
+            "SELECT packageName FROM messages WHERE isOwn = 0 AND timestamp >= :startOfDay " +
             "GROUP BY packageName ORDER BY MAX(timestamp) DESC LIMIT 5" +
             ")) as recentPackagesCsv " +
-            "FROM messages"
+            "FROM messages WHERE isOwn = 0"
     )
     suspend fun statsSnapshot(startOfDay: Long): StatsSnapshotRow
 
-    @Query("SELECT COUNT(*) FROM messages WHERE timestamp >= :startOfDay")
+    @Query("SELECT COUNT(*) FROM messages WHERE isOwn = 0 AND timestamp >= :startOfDay")
     suspend fun todayCount(startOfDay: Long): Int
 
-    @Query("SELECT COUNT(*) FROM messages WHERE isRead = 0")
+    @Query("SELECT COUNT(*) FROM messages WHERE isOwn = 0 AND isRead = 0")
     suspend fun unreadCount(): Int
 
-    @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = 'scam' AND timestamp >= :startOfDay")
+    @Query("SELECT COUNT(*) FROM messages WHERE isOwn = 0 AND riskLabel = 'scam' AND timestamp >= :startOfDay")
     suspend fun todayScamCount(startOfDay: Long): Int
 
-    @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = 'scam' AND timestamp >= :sinceTs")
+    @Query("SELECT COUNT(*) FROM messages WHERE isOwn = 0 AND riskLabel = 'scam' AND timestamp >= :sinceTs")
     suspend fun scamCountSince(sinceTs: Long): Int
 
-    @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = 'scam' AND timestamp >= :startTs AND timestamp < :endTs")
+    @Query("SELECT COUNT(*) FROM messages WHERE isOwn = 0 AND riskLabel = 'scam' AND timestamp >= :startTs AND timestamp < :endTs")
     suspend fun scamCountBetween(startTs: Long, endTs: Long): Int
 
-    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs, SUM(CASE WHEN riskLabel = 'scam' THEN 2 WHEN riskLabel = 'suspicious' THEN 1 ELSE 0 END) as riskScore FROM messages WHERE timestamp >= :startOfDay GROUP BY packageName ORDER BY lastTs DESC LIMIT 5")
+    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs, SUM(CASE WHEN riskLabel = 'scam' THEN 2 WHEN riskLabel = 'suspicious' THEN 1 ELSE 0 END) as riskScore FROM messages WHERE isOwn = 0 AND timestamp >= :startOfDay GROUP BY packageName ORDER BY lastTs DESC LIMIT 5")
     suspend fun todayRecentApps(startOfDay: Long): List<AppGroupRow>
 
-    @Query("SELECT packageName FROM messages ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT packageName FROM messages WHERE isOwn = 0 ORDER BY timestamp DESC LIMIT 1")
     suspend fun latestPackageName(): String?
 
     @Query("UPDATE messages SET isRead = 1 WHERE isRead = 0")
@@ -459,35 +459,35 @@ interface MessageDao {
 
     @Query(
         "SELECT strftime('%Y%m%d', timestamp / 1000, 'unixepoch', 'localtime') AS dayKey, COUNT(*) AS cnt " +
-            "FROM messages WHERE timestamp >= :sinceTs GROUP BY dayKey"
+            "FROM messages WHERE isOwn = 0 AND timestamp >= :sinceTs GROUP BY dayKey"
     )
     suspend fun countByDaySince(sinceTs: Long): List<DayCountRow>
 
     @Query(
         "SELECT CAST(strftime('%H', timestamp / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hour, COUNT(*) AS cnt " +
-            "FROM messages WHERE timestamp >= :sinceTs GROUP BY hour"
+            "FROM messages WHERE isOwn = 0 AND timestamp >= :sinceTs GROUP BY hour"
     )
     suspend fun countByHourSince(sinceTs: Long): List<HourCountRow>
 
-    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE timestamp >= :minTs AND timestamp <= :maxTs AND dedupKey = :dedupKey)")
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE isOwn = 0 AND timestamp >= :minTs AND timestamp <= :maxTs AND dedupKey = :dedupKey)")
     suspend fun existsByDedupKeyInWindow(dedupKey: String, minTs: Long, maxTs: Long): Boolean
 
-    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs, SUM(CASE WHEN riskLabel = 'scam' THEN 2 WHEN riskLabel = 'suspicious' THEN 1 ELSE 0 END) as riskScore FROM messages GROUP BY packageName ORDER BY lastTs DESC")
+    @Query("SELECT packageName, appLabel, COUNT(*) as cnt, MAX(timestamp) as lastTs, SUM(CASE WHEN riskLabel = 'scam' THEN 2 WHEN riskLabel = 'suspicious' THEN 1 ELSE 0 END) as riskScore FROM messages WHERE isOwn = 0 GROUP BY packageName ORDER BY lastTs DESC")
     suspend fun groupByApp(): List<AppGroupRow>
 
-    @Query("SELECT packageName, COUNT(*) as cnt FROM messages WHERE timestamp >= :startOfDay GROUP BY packageName")
+    @Query("SELECT packageName, COUNT(*) as cnt FROM messages WHERE isOwn = 0 AND timestamp >= :startOfDay GROUP BY packageName")
     suspend fun todayCountsByApp(startOfDay: Long): List<AppCountRow>
 
-    @Query("SELECT packageName, COUNT(*) as cnt FROM messages WHERE isRead = 0 AND timestamp >= :startOfDay GROUP BY packageName")
+    @Query("SELECT packageName, COUNT(*) as cnt FROM messages WHERE isOwn = 0 AND isRead = 0 AND timestamp >= :startOfDay GROUP BY packageName")
     suspend fun todayUnreadCountsByApp(startOfDay: Long): List<AppCountRow>
 
-    @Query("SELECT packageName, id AS messageId FROM messages WHERE id IN (SELECT MAX(id) FROM messages m1 WHERE timestamp = (SELECT MAX(timestamp) FROM messages m2 WHERE m2.packageName = m1.packageName) GROUP BY packageName)")
+    @Query("SELECT packageName, id AS messageId FROM messages WHERE isOwn = 0 AND id IN (SELECT MAX(id) FROM messages m1 WHERE isOwn = 0 AND timestamp = (SELECT MAX(timestamp) FROM messages m2 WHERE isOwn = 0 AND m2.packageName = m1.packageName) GROUP BY packageName)")
     suspend fun latestMessageIdsByApp(): List<AppLatestMsgRow>
 
     @Query("SELECT * FROM messages WHERE packageName = :packageName ORDER BY timestamp DESC")
     suspend fun byApp(packageName: String): List<MessageEntity>
 
-    @Query("SELECT conversationKey, COUNT(*) as cnt, SUM(CASE WHEN isRead = 0 THEN 1 ELSE 0 END) as unreadCnt, MAX(timestamp) as lastTs FROM messages WHERE packageName = :packageName GROUP BY conversationKey ORDER BY lastTs DESC")
+    @Query("SELECT conversationKey, COUNT(*) as cnt, SUM(CASE WHEN isRead = 0 AND isOwn = 0 THEN 1 ELSE 0 END) as unreadCnt, MAX(timestamp) as lastTs FROM messages WHERE packageName = :packageName GROUP BY conversationKey ORDER BY lastTs DESC")
     suspend fun groupByConversation(packageName: String): List<SenderGroupRow>
 
     @Query("SELECT * FROM messages WHERE packageName = :packageName AND conversationKey = :conversationKey ORDER BY timestamp ASC")
@@ -499,22 +499,22 @@ interface MessageDao {
     @Query("UPDATE messages SET isRead = 1 WHERE packageName = :packageName AND conversationKey = :conversationKey AND isRead = 0")
     suspend fun markConversationRead(packageName: String, conversationKey: String)
 
-    @Query("SELECT * FROM messages WHERE timestamp >= :sinceTs ORDER BY timestamp DESC")
+    @Query("SELECT * FROM messages WHERE isOwn = 0 AND timestamp >= :sinceTs ORDER BY timestamp DESC")
     suspend fun since(sinceTs: Long): List<MessageEntity>
 
-    @Query("SELECT * FROM messages WHERE timestamp >= :startTs AND timestamp < :endTs ORDER BY timestamp DESC")
+    @Query("SELECT * FROM messages WHERE isOwn = 0 AND timestamp >= :startTs AND timestamp < :endTs ORDER BY timestamp DESC")
     suspend fun between(startTs: Long, endTs: Long): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE timestamp >= :startTs AND timestamp <= :endTs AND (:packageName IS NULL OR packageName = :packageName) ORDER BY timestamp DESC LIMIT :limit")
     suspend fun queryRange(startTs: Long, endTs: Long, packageName: String?, limit: Int = 40): List<MessageEntity>
 
-    @Query("SELECT DISTINCT sender FROM messages WHERE sender != '' ORDER BY timestamp DESC LIMIT 200")
+    @Query("SELECT DISTINCT sender FROM messages WHERE isOwn = 0 AND sender != '' ORDER BY timestamp DESC LIMIT 200")
     suspend fun recentSenders(): List<String>
 
-    @Query("SELECT COUNT(*) FROM messages WHERE riskLabel = :label")
+    @Query("SELECT COUNT(*) FROM messages WHERE isOwn = 0 AND riskLabel = :label")
     suspend fun countByRiskLabel(label: String): Int
 
-    @Query("SELECT packageName, appLabel, COUNT(*) as cnt FROM messages WHERE riskLabel IN ('scam', 'suspicious') GROUP BY packageName ORDER BY cnt DESC LIMIT 5")
+    @Query("SELECT packageName, appLabel, COUNT(*) as cnt FROM messages WHERE isOwn = 0 AND riskLabel IN ('scam', 'suspicious') GROUP BY packageName ORDER BY cnt DESC LIMIT 5")
     suspend fun topRiskyApps(): List<AppRiskRow>
 
     @Insert

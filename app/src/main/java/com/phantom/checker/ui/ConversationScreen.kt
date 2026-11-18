@@ -214,11 +214,18 @@ fun ConversationScreen(
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     var replyText by rememberSaveable { mutableStateOf("") }
     var isSendingReply by remember { mutableStateOf(false) }
+    var scrollToBottomPending by remember { mutableStateOf(false) }
 
     val isImeVisible = WindowInsets.isImeVisible
     LaunchedEffect(isImeVisible) {
         if (isImeVisible && messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val totalItems = listState.layoutInfo.totalItemsCount
+            val isNearBottom = !listState.canScrollForward || (totalItems > 0 && lastVisible >= totalItems - 2)
+            if (isNearBottom) {
+                kotlinx.coroutines.delay(80)
+                listState.animateScrollToItem(messages.lastIndex)
+            }
         }
     }
 
@@ -287,7 +294,8 @@ fun ConversationScreen(
         messages = loaded
         hasMoreOlder = loaded.size >= pageSize
         isLoading = false
-        if (loaded.isNotEmpty() && refreshTrigger <= 1) {
+        if (loaded.isNotEmpty() && (refreshTrigger <= 1 || scrollToBottomPending)) {
+            scrollToBottomPending = false
             listState.scrollToItem(loaded.lastIndex)
         }
     }
@@ -841,6 +849,26 @@ fun ConversationScreen(
                                                     originalSnippet = targetSnippet,
                                                     initialReplyText = textToSend
                                                 )
+                                                withContext(Dispatchers.IO) {
+                                                    AppDatabaseHolder.db(appCtx).messageDao().insert(
+                                                        MessageEntity(
+                                                            packageName = packageName,
+                                                            appLabel = appLabel,
+                                                            sender = "我",
+                                                            content = textToSend,
+                                                            timestamp = System.currentTimeMillis(),
+                                                            riskScore = 0,
+                                                            riskLabel = "",
+                                                            riskReason = "",
+                                                            isRead = true,
+                                                            conversationKey = conversationKey,
+                                                            dedupKey = null,
+                                                            isOwn = true
+                                                        )
+                                                    )
+                                                }
+                                                scrollToBottomPending = true
+                                                refreshTrigger++
                                                 replyText = ""
                                                 snackbarHostState.showSnackbar("已送出")
                                             }
@@ -864,6 +892,22 @@ fun ConversationScreen(
                                                                 null,
                                                                 null
                                                             )
+                                                            AppDatabaseHolder.db(appCtx).messageDao().insert(
+                                                                MessageEntity(
+                                                                    packageName = packageName,
+                                                                    appLabel = appLabel,
+                                                                    sender = "我",
+                                                                    content = textToSend,
+                                                                    timestamp = System.currentTimeMillis(),
+                                                                    riskScore = 0,
+                                                                    riskLabel = "",
+                                                                    riskReason = "",
+                                                                    isRead = true,
+                                                                    conversationKey = conversationKey,
+                                                                    dedupKey = null,
+                                                                    isOwn = true
+                                                                )
+                                                            )
                                                         }
                                                         ReplyProxyManager.startOrRefreshSession(
                                                             ctx = appCtx,
@@ -873,6 +917,8 @@ fun ConversationScreen(
                                                             originalSnippet = targetSnippet,
                                                             initialReplyText = textToSend
                                                         )
+                                                        scrollToBottomPending = true
+                                                        refreshTrigger++
                                                         replyText = ""
                                                         snackbarHostState.showSnackbar("已透過簡訊送出")
                                                     } catch (e: Exception) {
@@ -1118,6 +1164,7 @@ private fun ChatBubbleItem(
     glassState: HazeState,
     tags: List<MessageTagRow> = emptyList(),
     showSenderName: Boolean = false,
+    isOwn: Boolean = message.isOwn,
     isMultiSelectMode: Boolean = false,
     isSelected: Boolean = false,
     onToggleSelect: () -> Unit = {},
@@ -1130,7 +1177,7 @@ private fun ChatBubbleItem(
     val timeText = remember(message.timestamp, is24h) {
         PhantomPrefs.formatMessageTime(ctx, message.timestamp, includeDate = false)
     }
-    val riskDotColor: Color? = when (message.riskLabel) {
+    val riskDotColor: Color? = if (isOwn) null else when (message.riskLabel) {
         "scam" -> MaterialTheme.colorScheme.error
         "suspicious" -> Color(0xFFE6A100)
         else -> null
@@ -1138,7 +1185,7 @@ private fun ChatBubbleItem(
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start,
+        horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isMultiSelectMode) {
@@ -1159,16 +1206,17 @@ private fun ChatBubbleItem(
         PhantomGlassCard(
             glassState = glassState,
             modifier = Modifier
-                .fillMaxWidth(if (isMultiSelectMode) 1f else 0.84f)
+                .fillMaxWidth(if (isMultiSelectMode) 1f else if (isOwn) 0.78f else 0.84f)
                 .then(selectionModifier)
                 .combinedClickable(
                     onClick = { if (isMultiSelectMode) onToggleSelect() else onClick() },
                     onLongClick = { if (isMultiSelectMode) onToggleSelect() else onLongClick() }
                 ),
             cornerRadius = 16.dp,
-            contentPadding = if (isCompact) 8.dp else 12.dp
+            contentPadding = if (isCompact) 8.dp else 12.dp,
+            tintColor = if (isOwn) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else null
         ) {
-            if (showSenderName) {
+            if (showSenderName && !isOwn) {
                 Text(
                     text = message.sender,
                     style = MaterialTheme.typography.labelMedium,
@@ -1181,9 +1229,10 @@ private fun ChatBubbleItem(
             }
             Text(
                 text = message.content,
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
             )
-            if (message.riskReason.isNotBlank()) {
+            if (!isOwn && message.riskReason.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 PhantomMarkdownText(
                     markdown = message.riskReason,
@@ -1191,12 +1240,12 @@ private fun ChatBubbleItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (tags.isNotEmpty()) {
+            if (!isOwn && tags.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 MessageTagChipRow(tags = tags)
             }
-            val otpCode = remember(message.content) {
-                com.phantom.checker.util.OtpDetector.extractOtp(message.content)
+            val otpCode = remember(message.content, isOwn) {
+                if (isOwn) null else com.phantom.checker.util.OtpDetector.extractOtp(message.content)
             }
             if (otpCode != null) {
                 Spacer(Modifier.height(6.dp))
@@ -1232,7 +1281,7 @@ private fun ChatBubbleItem(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (message.remindAt != null && message.remindAt > System.currentTimeMillis()) {
+                if (!isOwn && message.remindAt != null && message.remindAt > System.currentTimeMillis()) {
                     Text(
                         text = "⏰ 待辦",
                         style = MaterialTheme.typography.labelSmall,
