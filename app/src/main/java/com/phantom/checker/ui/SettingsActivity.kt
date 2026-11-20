@@ -2954,10 +2954,10 @@ fun FilterSettingsScreen(
                                 isVacuuming = true
                                 val (beforeBytes, afterBytes, updatedStats) = withContext(Dispatchers.IO) {
                                     val before = DbMaintenance.measureDatabaseBytes(appCtx)
-                                    val workId = DbMaintenance.enqueueVacuum(appCtx)
+                                    DbMaintenance.enqueueVacuum(appCtx)
                                     WorkManager.getInstance(appCtx)
-                                        .getWorkInfoByIdFlow(workId)
-                                        .first { it?.state?.isFinished == true }
+                                        .getWorkInfosForUniqueWorkFlow(DbMaintenance.UNIQUE_VACUUM_WORK)
+                                        .first { infos -> infos.isEmpty() || infos.all { it.state.isFinished } }
                                     val after = DbMaintenance.measureDatabaseBytes(appCtx)
                                     val refreshed = DbMaintenance.measureStorageStats(appCtx)
                                     Triple(before, after, refreshed)

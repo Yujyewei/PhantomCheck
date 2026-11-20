@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 object DbMaintenance {
     private const val PREFS_NAME = "db_maintenance_prefs"
     private const val KEY_LAST_VACUUM_AT = "last_vacuum_at"
-    private const val UNIQUE_VACUUM_WORK = "phantom_db_vacuum"
+    internal const val UNIQUE_VACUUM_WORK = "phantom_db_vacuum"
     private const val DB_FILE_NAME = "phantomcheck.db"
     private const val RETENTION_VACUUM_ROW_THRESHOLD = 1000
     private val THROTTLE_MS = TimeUnit.HOURS.toMillis(24)
