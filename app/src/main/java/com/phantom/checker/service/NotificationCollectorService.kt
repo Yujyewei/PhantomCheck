@@ -485,7 +485,10 @@ class NotificationCollectorService : NotificationListenerService() {
                     item = AiClient.BatchAnalyzeItem(
                         messageId = id,
                         sender = title,
-                        content = text
+                        content = text,
+                        packageName = pkg,
+                        appLabel = cachedAppLabel(pkg),
+                        timestampMs = nowMs
                     )
                 )
             }
@@ -1358,6 +1361,17 @@ class NotificationCollectorService : NotificationListenerService() {
                 } catch (_: Exception) {
                     null
                 }
+                if (eventTime != null && ctx != null &&
+                    com.phantom.checker.util.CalendarBridge.isScheduleTypeMessage(msg.content, clean)
+                ) {
+                    com.phantom.checker.util.CalendarBridge.maybeSuggestFromNotification(
+                        ctx = ctx.applicationContext,
+                        messageId = msg.id,
+                        title = clean,
+                        startMs = eventTime,
+                        notes = "來源：$appLabel / ${msg.sender}\n${msg.content.take(120)}"
+                    )
+                }
                 val leadMs = REMINDER_LEAD_MINUTES * 60L * 1000L
                 val minFutureMs = 5L * 60L * 1000L
                 val computedDue: Long? = eventTime?.let { evt ->
@@ -1581,7 +1595,8 @@ object AppDatabaseHolder {
                 AppDatabase.MIGRATION_14_15,
                 AppDatabase.MIGRATION_15_16,
                 AppDatabase.MIGRATION_16_17,
-                AppDatabase.MIGRATION_17_18
+                AppDatabase.MIGRATION_17_18,
+                AppDatabase.MIGRATION_18_19
             ).addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)

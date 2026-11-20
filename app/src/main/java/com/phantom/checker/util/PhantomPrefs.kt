@@ -1307,6 +1307,81 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         prefs(ctx).edit().putBoolean(KEY_HOME_FILTER_CHIPS_COLLAPSED, collapsed).apply()
     }
 
+    /** 記憶頁篩選標籤列收合狀態（避免 9 顆標籤換行佔兩行） */
+    private const val KEY_MEMORY_FILTER_CHIPS_COLLAPSED = "memory_filter_chips_collapsed"
+
+    fun isMemoryFilterChipsCollapsed(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_MEMORY_FILTER_CHIPS_COLLAPSED, false)
+
+    fun setMemoryFilterChipsCollapsed(ctx: Context, collapsed: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_MEMORY_FILTER_CHIPS_COLLAPSED, collapsed).apply()
+    }
+
+    /** #328 記憶×防詐交叉檢查總開關（預設開啟；關閉時風險分析行為與 v3.0.0 完全一致） */
+    private const val KEY_ANTI_FRAUD_CROSS_CHECK = "anti_fraud_cross_check_enabled"
+
+    fun isAntiFraudCrossCheckEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_ANTI_FRAUD_CROSS_CHECK, true)
+
+    fun setAntiFraudCrossCheckEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_ANTI_FRAUD_CROSS_CHECK, enabled).apply()
+    }
+
+    /** #328 每週自動彙總之待確認「防詐免疫」記憶草稿（一律需使用者確認卡核准才寫入 memories） */
+    private const val KEY_PENDING_SCAM_IMMUNITY_SUBJECT = "pending_scam_immunity_subject"
+    private const val KEY_PENDING_SCAM_IMMUNITY_CONTENT = "pending_scam_immunity_content"
+    private const val KEY_PENDING_SCAM_IMMUNITY_UPDATED_AT = "pending_scam_immunity_updated_at"
+
+    data class PendingScamImmunityDraft(
+        val subject: String,
+        val content: String,
+        val updatedAtMs: Long
+    )
+
+    fun getPendingScamImmunityDraft(ctx: Context): PendingScamImmunityDraft? {
+        val p = prefs(ctx)
+        val subj = p.getString(KEY_PENDING_SCAM_IMMUNITY_SUBJECT, null)?.trim().orEmpty()
+        val content = p.getString(KEY_PENDING_SCAM_IMMUNITY_CONTENT, null)?.trim().orEmpty()
+        if (subj.isEmpty() || content.isEmpty()) return null
+        return PendingScamImmunityDraft(
+            subject = subj,
+            content = content,
+            updatedAtMs = p.getLong(KEY_PENDING_SCAM_IMMUNITY_UPDATED_AT, 0L)
+        )
+    }
+
+    fun savePendingScamImmunityDraft(ctx: Context, subject: String, content: String, nowMs: Long = System.currentTimeMillis()) {
+        prefs(ctx).edit()
+            .putString(KEY_PENDING_SCAM_IMMUNITY_SUBJECT, subject.trim())
+            .putString(KEY_PENDING_SCAM_IMMUNITY_CONTENT, content.trim())
+            .putLong(KEY_PENDING_SCAM_IMMUNITY_UPDATED_AT, nowMs)
+            .apply()
+    }
+
+    fun clearPendingScamImmunityDraft(ctx: Context) {
+        prefs(ctx).edit()
+            .remove(KEY_PENDING_SCAM_IMMUNITY_SUBJECT)
+            .remove(KEY_PENDING_SCAM_IMMUNITY_CONTENT)
+            .remove(KEY_PENDING_SCAM_IMMUNITY_UPDATED_AT)
+            .apply()
+    }
+
+    /** #329 本機日曆整合：使用者勾選開放給 AI 查詢／寫入的日曆 ID 清單（預設全不勾） */
+    private const val KEY_CALENDAR_SELECTED_IDS = "calendar_selected_ids"
+
+    fun getSelectedCalendarIds(ctx: Context): Set<Long> {
+        val raw = prefs(ctx).getString(KEY_CALENDAR_SELECTED_IDS, "").orEmpty().trim()
+        if (raw.isEmpty()) return emptySet()
+        return raw.split(',')
+            .mapNotNull { it.trim().toLongOrNull() }
+            .toSet()
+    }
+
+    fun setSelectedCalendarIds(ctx: Context, ids: Set<Long>) {
+        val encoded = ids.sorted().joinToString(",")
+        prefs(ctx).edit().putString(KEY_CALENDAR_SELECTED_IDS, encoded).apply()
+    }
+
     data class StatsCardOption(val key: String, val title: String, val subtitle: String, val defaultVisible: Boolean)
 
     val STATS_CARD_OPTIONS: List<StatsCardOption> = listOf(

@@ -205,7 +205,8 @@ data class ChatMessageEntity(
     val sessionId: Long,
     val role: String,
     val content: String,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val thinkingContent: String? = null
 ) {
     companion object {
         const val ROLE_USER = "user"
@@ -1147,6 +1148,7 @@ data class MemoryEntity(
         const val CATEGORY_PREFERENCE = "preference"
         const val CATEGORY_ROUTINE = "routine"
         const val CATEGORY_RELATIONSHIP = "relationship"
+        const val CATEGORY_SCAM_IMMUNITY = "scam_immunity"
         const val CATEGORY_OTHER = "other"
 
         const val LAYER_LONG_TERM = "long_term"
@@ -1252,7 +1254,7 @@ interface MemoryDao {
         SenderAvatarEntity::class,
         MemoryEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1615,6 +1617,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_memories_category_subject` ON `memories` (`category`, `subject`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_memories_updatedAt` ON `memories` (`updatedAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_memories_privacyTier` ON `memories` (`privacyTier`)")
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `chat_messages` ADD COLUMN `thinkingContent` TEXT")
             }
         }
     }
