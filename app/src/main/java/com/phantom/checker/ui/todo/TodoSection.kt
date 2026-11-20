@@ -338,9 +338,8 @@ internal fun NotesTodoRow(
 }
 
 /**
- * #245 記事卡片內容（供一般條列 / 往下露頂部 / 中央堆疊三種排列模式共用）。
- * 堆疊模式（overlapOpaque = true）啟用不透明深色底防止後卡文字透出，
- * 並以 contentMaxLines 限制內文行數讓焦點卡保持易讀。
+ * #242 待辦事項單列（展開清單與收合精簡顯示共用）。
+ * 到期資訊依智慧排序結果渲染：未逾期近者在上、已逾期下移、已完成殿後。
  */
 @OptIn(ExperimentalFoundationApi::class)
 
