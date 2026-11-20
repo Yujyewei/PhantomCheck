@@ -1367,4 +1367,211 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         val trimmed = name?.trim()?.takeIf { it.isNotEmpty() } ?: return false
         return getMyDisplayNames(ctx).any { it.equals(trimmed, ignoreCase = true) }
     }
+
+    // ==================== #314 / #315 記憶庫與 AI 助手設定 ====================
+
+    private const val KEY_MEMORY_CHAT_CAPTURE_ENABLED = "memory_chat_capture_enabled"
+    private const val KEY_MEMORY_NORMAL_TOP_K = "memory_normal_top_k"
+    private const val KEY_MEMORY_SAVER_TOP_K = "memory_saver_top_k"
+    private const val KEY_MEMORY_NORMAL_PER_ITEM_CHARS = "memory_normal_per_item_chars"
+    private const val KEY_MEMORY_SECTION_COLLAPSED = "memory_section_collapsed"
+
+    const val DEFAULT_MEMORY_NORMAL_TOP_K = 8
+    const val MIN_MEMORY_NORMAL_TOP_K = 1
+    const val MAX_MEMORY_NORMAL_TOP_K = 8
+
+    const val DEFAULT_MEMORY_SAVER_TOP_K = 4
+    const val MIN_MEMORY_SAVER_TOP_K = 1
+    const val MAX_MEMORY_SAVER_TOP_K = 4
+
+    const val DEFAULT_MEMORY_NORMAL_PER_ITEM_CHARS = 70 // 約 50 tokens 中文
+    const val MIN_MEMORY_NORMAL_PER_ITEM_CHARS = 30
+    const val MAX_MEMORY_NORMAL_PER_ITEM_CHARS = 120
+    const val TOKEN_SAVER_MEMORY_PER_ITEM_CHARS = 36    // 約 25 tokens 中文
+
+    const val MEMORY_NORMAL_TOTAL_TOKEN_BUDGET = 250
+    const val MEMORY_SAVER_TOTAL_TOKEN_BUDGET = 120
+
+    /** 聊天記憶擷取開關（預設開；AI 擷取後一律跳確認卡，確認才寫入） */
+    fun isMemoryChatCaptureEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_MEMORY_CHAT_CAPTURE_ENABLED, true)
+
+    fun setMemoryChatCaptureEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_MEMORY_CHAT_CAPTURE_ENABLED, enabled).apply()
+    }
+
+    /** 正常模式記憶注入筆數 Top-K（範圍 1–8，預設 8；與省 token 模式獨立儲存、互不覆寫） */
+    fun getMemoryNormalTopK(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_MEMORY_NORMAL_TOP_K, DEFAULT_MEMORY_NORMAL_TOP_K)
+            .coerceIn(MIN_MEMORY_NORMAL_TOP_K, MAX_MEMORY_NORMAL_TOP_K)
+
+    fun setMemoryNormalTopK(ctx: Context, topK: Int) {
+        val clamped = topK.coerceIn(MIN_MEMORY_NORMAL_TOP_K, MAX_MEMORY_NORMAL_TOP_K)
+        prefs(ctx).edit().putInt(KEY_MEMORY_NORMAL_TOP_K, clamped).apply()
+    }
+
+    /** 省 token 模式記憶注入筆數 Top-K（範圍 1–4，預設 4；與正常模式獨立儲存、互不覆寫） */
+    fun getMemorySaverTopK(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_MEMORY_SAVER_TOP_K, DEFAULT_MEMORY_SAVER_TOP_K)
+            .coerceIn(MIN_MEMORY_SAVER_TOP_K, MAX_MEMORY_SAVER_TOP_K)
+
+    fun setMemorySaverTopK(ctx: Context, topK: Int) {
+        val clamped = topK.coerceIn(MIN_MEMORY_SAVER_TOP_K, MAX_MEMORY_SAVER_TOP_K)
+        prefs(ctx).edit().putInt(KEY_MEMORY_SAVER_TOP_K, clamped).apply()
+    }
+
+    /** 正常模式每筆記憶預覽截斷字數（範圍 30–120 字，預設 70 字 ≈ 50 tokens 中文） */
+    fun getMemoryNormalPerItemChars(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_MEMORY_NORMAL_PER_ITEM_CHARS, DEFAULT_MEMORY_NORMAL_PER_ITEM_CHARS)
+            .coerceIn(MIN_MEMORY_NORMAL_PER_ITEM_CHARS, MAX_MEMORY_NORMAL_PER_ITEM_CHARS)
+
+    fun setMemoryNormalPerItemChars(ctx: Context, chars: Int) {
+        val clamped = chars.coerceIn(MIN_MEMORY_NORMAL_PER_ITEM_CHARS, MAX_MEMORY_NORMAL_PER_ITEM_CHARS)
+        prefs(ctx).edit().putInt(KEY_MEMORY_NORMAL_PER_ITEM_CHARS, clamped).apply()
+    }
+
+    /** 實際生效的記憶注入筆數（依省 token 模式切換對應的獨立設定，絕不覆寫原設定值） */
+    fun getEffectiveMemoryInjectionTopK(ctx: Context): Int =
+        if (isTokenSaverEnabled(ctx)) getMemorySaverTopK(ctx) else getMemoryNormalTopK(ctx)
+
+    /** 實際生效的每筆記憶預覽字數上限（省 token 模式約 25 tokens 中文，正常模式約 50 tokens 中文） */
+    fun getEffectiveMemoryPerItemMaxChars(ctx: Context): Int =
+        if (isTokenSaverEnabled(ctx)) TOKEN_SAVER_MEMORY_PER_ITEM_CHARS else getMemoryNormalPerItemChars(ctx)
+
+    /** 實際生效的記憶注入總 token 預算（正常模式 ≤250 tokens，省 token 模式 ≤120 tokens） */
+    fun getEffectiveMemoryTotalTokenBudget(ctx: Context): Int =
+        if (isTokenSaverEnabled(ctx)) MEMORY_SAVER_TOTAL_TOKEN_BUDGET else MEMORY_NORMAL_TOTAL_TOKEN_BUDGET
+
+    /** 記憶分頁各區塊收合狀態（沿用 settings_collapsed_cards 風格，預設展開） */
+    fun isMemorySectionExpanded(ctx: Context, sectionKey: String): Boolean {
+        val collapsed = prefs(ctx).getStringSet(KEY_MEMORY_SECTION_COLLAPSED, emptySet()) ?: emptySet()
+        return sectionKey !in collapsed
+    }
+
+    fun setMemorySectionExpanded(ctx: Context, sectionKey: String, expanded: Boolean) {
+        val collapsed = (prefs(ctx).getStringSet(KEY_MEMORY_SECTION_COLLAPSED, emptySet()) ?: emptySet()).toMutableSet()
+        if (expanded) collapsed.remove(sectionKey) else collapsed.add(sectionKey)
+        prefs(ctx).edit().putStringSet(KEY_MEMORY_SECTION_COLLAPSED, collapsed).apply()
+    }
+
+    // ==================== #315 B3 自訂 AI 助手（名字／個性 preset／自訂個性／詳細度／頭像） ====================
+
+    enum class AssistantPersonalityPreset(val key: String, val label: String, val promptInstruction: String) {
+        DEFAULT("default", "預設", "語氣平衡自然，兼顧訊息整理與防詐提醒。"),
+        CONCISE_PRO("concise_pro", "簡潔專業", "語氣商務專業、精準俐落，直接給結論與關鍵數據，不寒暄。"),
+        WARM_DETAILED("warm_detailed", "親切詳細", "語氣親切溫和、有耐心，清楚解釋來龍去脈與貼心提醒。"),
+        STRICT_ANTI_SCAM("strict_anti_scam", "嚴謹防詐顧問", "以資安與防詐最高標準審視訊息，主動點出可疑話術、連結與查證步驟。"),
+        CUSTOM("custom", "完全自訂", "");
+
+        companion object {
+            fun fromKey(raw: String?): AssistantPersonalityPreset =
+                entries.firstOrNull { it.key == raw } ?: DEFAULT
+        }
+    }
+
+    enum class AssistantVerbosity(val key: String, val label: String, val promptInstruction: String) {
+        CONCISE("concise", "精簡", "回答極度精簡，控制在 3 句或 3 點以內。"),
+        STANDARD("standard", "適中", "回答條理分明，篇幅適中，重點突出。"),
+        DETAILED("detailed", "詳細", "回答完整深入，提供背景脈絡、分點說明與具體建議。");
+
+        companion object {
+            fun fromKey(raw: String?): AssistantVerbosity =
+                entries.firstOrNull { it.key == raw } ?: STANDARD
+        }
+    }
+
+    private const val KEY_ASSISTANT_NAME = "assistant_custom_name"
+    private const val KEY_ASSISTANT_PERSONALITY_PRESET = "assistant_personality_preset"
+    private const val KEY_ASSISTANT_CUSTOM_PERSONALITY = "assistant_custom_personality_text"
+    private const val KEY_ASSISTANT_VERBOSITY = "assistant_verbosity_mode"
+    private const val KEY_ASSISTANT_HAS_AVATAR = "assistant_has_custom_avatar"
+
+    const val DEFAULT_ASSISTANT_NAME = "幻訊"
+    const val MAX_ASSISTANT_NAME_LENGTH = 20
+    const val MAX_ASSISTANT_CUSTOM_PERSONALITY_CHARS = 120
+    const val MAX_ASSISTANT_PERSONA_TOKEN_BUDGET = 120
+
+    /** AI 助手名字（預設「幻訊」） */
+    fun getAssistantName(ctx: Context): String =
+        prefs(ctx).getString(KEY_ASSISTANT_NAME, DEFAULT_ASSISTANT_NAME)
+            ?.trim()
+            ?.take(MAX_ASSISTANT_NAME_LENGTH)
+            ?.ifEmpty { DEFAULT_ASSISTANT_NAME }
+            ?: DEFAULT_ASSISTANT_NAME
+
+    fun setAssistantName(ctx: Context, name: String) {
+        val clean = name.trim().take(MAX_ASSISTANT_NAME_LENGTH).ifEmpty { DEFAULT_ASSISTANT_NAME }
+        prefs(ctx).edit().putString(KEY_ASSISTANT_NAME, clean).apply()
+    }
+
+    /** AI 助手個性 Preset */
+    fun getAssistantPersonalityPreset(ctx: Context): AssistantPersonalityPreset =
+        AssistantPersonalityPreset.fromKey(prefs(ctx).getString(KEY_ASSISTANT_PERSONALITY_PRESET, null))
+
+    fun setAssistantPersonalityPreset(ctx: Context, preset: AssistantPersonalityPreset) {
+        prefs(ctx).edit().putString(KEY_ASSISTANT_PERSONALITY_PRESET, preset.key).apply()
+    }
+
+    /** AI 助手自訂個性描述（最多 120 字） */
+    fun getAssistantCustomPersonality(ctx: Context): String =
+        prefs(ctx).getString(KEY_ASSISTANT_CUSTOM_PERSONALITY, "")
+            ?.trim()
+            ?.take(MAX_ASSISTANT_CUSTOM_PERSONALITY_CHARS)
+            .orEmpty()
+
+    fun setAssistantCustomPersonality(ctx: Context, text: String) {
+        val clean = text.trim().take(MAX_ASSISTANT_CUSTOM_PERSONALITY_CHARS)
+        prefs(ctx).edit().putString(KEY_ASSISTANT_CUSTOM_PERSONALITY, clean).apply()
+    }
+
+    /** AI 助手回答詳細度 */
+    fun getAssistantVerbosity(ctx: Context): AssistantVerbosity =
+        AssistantVerbosity.fromKey(prefs(ctx).getString(KEY_ASSISTANT_VERBOSITY, null))
+
+    fun setAssistantVerbosity(ctx: Context, verbosity: AssistantVerbosity) {
+        prefs(ctx).edit().putString(KEY_ASSISTANT_VERBOSITY, verbosity.key).apply()
+    }
+
+    /** 是否已設定自訂 AI 助手頭像 */
+    fun hasAssistantAvatar(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_ASSISTANT_HAS_AVATAR, false)
+
+    fun setHasAssistantAvatar(ctx: Context, hasAvatar: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_ASSISTANT_HAS_AVATAR, hasAvatar).apply()
+    }
+
+    /**
+     * 組裝注入 chatAssistant systemPrompt 的【助手設定】區塊（嚴格控管 ≤ 120 tokens，並套用 sanitizeForPrompt 防注入）。
+     */
+    fun buildAssistantPersonaPromptBlock(ctx: Context): String {
+        val name = com.phantom.checker.network.AiClient.sanitizeForPrompt(
+            getAssistantName(ctx).replace("\n", " ").trim()
+        ).take(MAX_ASSISTANT_NAME_LENGTH)
+        val preset = getAssistantPersonalityPreset(ctx)
+        val customText = com.phantom.checker.network.AiClient.sanitizeForPrompt(
+            getAssistantCustomPersonality(ctx).replace("\n", " ").trim()
+        ).take(MAX_ASSISTANT_CUSTOM_PERSONALITY_CHARS)
+        val verbosity = getAssistantVerbosity(ctx)
+
+        val personalityDesc = when {
+            preset == AssistantPersonalityPreset.CUSTOM && customText.isNotEmpty() -> customText
+            customText.isNotEmpty() -> "${preset.promptInstruction}（補充：$customText）"
+            else -> preset.promptInstruction
+        }.take(110)
+
+        val rawBlock = buildString {
+            appendLine("【助手設定】")
+            appendLine("- 你的名字：$name")
+            appendLine("- 個性與風格：$personalityDesc")
+            append("- 回答詳細度（${verbosity.label}）：${verbosity.promptInstruction}")
+        }
+        // 確保總預算 ≤ 120 tokens（約 160 中文字）
+        return if (com.phantom.checker.data.MemoryEngine.estimateMemoryTokens(rawBlock) <= MAX_ASSISTANT_PERSONA_TOKEN_BUDGET) {
+            rawBlock
+        } else {
+            rawBlock.take(160).trimEnd()
+        }
+    }
 }
+
+
