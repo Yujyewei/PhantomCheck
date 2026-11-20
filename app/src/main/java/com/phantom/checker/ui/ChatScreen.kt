@@ -232,6 +232,8 @@ val AutoAwesomeIcon: ImageVector by lazy {
 fun ChatAssistantTab(
     glassState: HazeState,
     onShowMessage: (String) -> Unit,
+    onShowActionMessage: ((String, String, () -> Unit) -> Unit)? = null,
+    onOpenMemoryWithFilter: ((String?) -> Unit)? = null,
     isSearchActive: Boolean = false,
     onToggleSearch: () -> Unit = {},
     onRefresh: () -> Unit = {},
@@ -287,6 +289,8 @@ fun ChatAssistantTab(
     var pendingExtendedActionQueue by remember { mutableStateOf<List<PendingExtendedAction>>(emptyList()) }
     var pendingMemoryWriteQueue by remember { mutableStateOf<List<PendingMemoryWriteState>>(emptyList()) }
     var pendingMemoryDeleteQueue by remember { mutableStateOf<List<PendingMemoryDeleteState>>(emptyList()) }
+    var pendingAliasCandidate by remember { mutableStateOf<com.phantom.checker.util.ContactBridge.AliasCandidate?>(null) }
+    var pendingCrossAppQueue by remember { mutableStateOf<List<com.phantom.checker.util.CrossAppActionProposal>>(emptyList()) }
     var showTodoListSheet by remember { mutableStateOf(false) }
     val rawTodoListItems by remember(appCtx) {
         AppDatabaseHolder.db(appCtx).todoDao().observeAll()
@@ -1275,9 +1279,10 @@ fun ChatAssistantTab(
                                 val filtered = allMemories.filter { m ->
                                     val layerOk = mvp.layer.isNullOrBlank() || mvp.layer == "all" || m.layer.equals(mvp.layer, ignoreCase = true)
                                     val statusOk = mvp.status.isNullOrBlank() || mvp.status == "all" || m.status.equals(mvp.status, ignoreCase = true)
+                                    val isSensitiveMem = m.privacyTier == com.phantom.checker.data.MemoryEntity.PRIVACY_SENSITIVE
                                     val queryOk = mvp.query.isNullOrBlank() ||
                                         m.subject.contains(mvp.query, ignoreCase = true) ||
-                                        m.content.contains(mvp.query, ignoreCase = true) ||
+                                        (!isSensitiveMem && m.content.contains(mvp.query, ignoreCase = true)) ||
                                         com.phantom.checker.data.MemoryEngine.categoryLabel(m.category).contains(mvp.query, ignoreCase = true)
                                     layerOk && statusOk && queryOk
                                 }
@@ -1517,6 +1522,27 @@ fun ChatAssistantTab(
                 if (resolvedMemoryDeletes.isNotEmpty()) {
                     pendingMemoryDeleteQueue = pendingMemoryDeleteQueue + resolvedMemoryDeletes
                 }
+                // #336 純本機暱稱綁定候選偵測（絕不外送通訊錄給 AI）
+                if (pendingAliasCandidate == null && com.phantom.checker.util.ContactBridge.hasReadContactsPermission(appCtx)) {
+                    val detectedAlias = withContext(Dispatchers.IO) {
+                        val db = AppDatabaseHolder.db(appCtx)
+                        val recentSenders = db.messageDao().paged(30, 0)
+                            .filter { it.sender.length >= 2 && query.contains(it.sender, ignoreCase = true) }
+                            .distinctBy { it.sender to it.packageName }
+                            .take(3)
+                        recentSenders.firstNotNullOfOrNull { m ->
+                            com.phantom.checker.util.ContactBridge.findAliasCandidateForSender(
+                                ctx = appCtx,
+                                db = db,
+                                sender = m.sender,
+                                packageName = m.packageName
+                            )
+                        }
+                    }
+                    if (detectedAlias != null) {
+                        pendingAliasCandidate = detectedAlias
+                    }
+                }
                 if (newAppliedSettings.isNotEmpty()) {
                     val updatedKeys = newAppliedSettings.map { it.sessionId to it.item.id }.toSet()
                     appliedSettingCards = appliedSettingCards.filterNot { (it.sessionId to it.item.id) in updatedKeys } + newAppliedSettings
@@ -1529,12 +1555,20 @@ fun ChatAssistantTab(
                 } else if (newAppliedSettings.isNotEmpty() || usedNumericFallback) {
                     pendingSettingCandidates = null
                 }
+                if (parsed.crossAppActions.isNotEmpty()) {
+                    pendingCrossAppQueue = pendingCrossAppQueue + parsed.crossAppActions
+                }
                 pendingOpenSettingItem?.let { targetItem ->
-                    ctx.startActivity(
-                        Intent(ctx, SettingsActivity::class.java).apply {
+                    val targetIntent = when (targetItem.page) {
+                        "PermissionHubActivity" -> Intent(ctx, PermissionHubActivity::class.java)
+                        "AssistantHubActivity" -> Intent(ctx, AssistantHubActivity::class.java)
+                        "LinkedAppsActivity" -> Intent(ctx, LinkedAppsActivity::class.java)
+                        "ApiKeySettingsActivity" -> Intent(ctx, ApiKeySettingsActivity::class.java)
+                        else -> Intent(ctx, SettingsActivity::class.java).apply {
                             putExtra("highlight_card_key", targetItem.cardKey)
                         }
-                    )
+                    }
+                    ctx.startActivity(targetIntent)
                 }
             }.onFailure { err ->
                 lastError = err.message ?: "AI 回覆失敗"
@@ -4132,7 +4166,15 @@ fun ChatAssistantTab(
                                                         )
                                                     }
                                                     loadMessages(sid)
-                                                    onShowMessage("已更新記憶並封存舊版本")
+                                                    if (memWrite.category == com.phantom.checker.data.MemoryEntity.CATEGORY_SCAM_IMMUNITY &&
+                                                        onShowActionMessage != null && onOpenMemoryWithFilter != null
+                                                    ) {
+                                                        onShowActionMessage("已更新防詐免疫記憶", "查看") {
+                                                            onOpenMemoryWithFilter(com.phantom.checker.data.MemoryEntity.CATEGORY_SCAM_IMMUNITY)
+                                                        }
+                                                    } else {
+                                                        onShowMessage("已更新記憶並封存舊版本")
+                                                    }
                                                 }
                                             },
                                             modifier = Modifier.weight(1f)
@@ -4262,12 +4304,126 @@ fun ChatAssistantTab(
                                                         )
                                                     }
                                                     loadMessages(sid)
-                                                    onShowMessage("已寫入記憶庫")
+                                                    if (memWrite.category == com.phantom.checker.data.MemoryEntity.CATEGORY_SCAM_IMMUNITY &&
+                                                        onShowActionMessage != null && onOpenMemoryWithFilter != null
+                                                    ) {
+                                                        onShowActionMessage("已加入防詐免疫記憶", "查看") {
+                                                            onOpenMemoryWithFilter(com.phantom.checker.data.MemoryEntity.CATEGORY_SCAM_IMMUNITY)
+                                                        }
+                                                    } else {
+                                                        onShowMessage("已寫入記憶庫")
+                                                    }
                                                 }
                                             },
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text("確認記住")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    pendingCrossAppQueue.firstOrNull()?.let { crossAct ->
+                        item(key = "pending_cross_app_${crossAct.hashCode()}") {
+                            PhantomGlassCard(
+                                glassState = glassState,
+                                cornerRadius = 16.dp,
+                                contentPadding = 12.dp
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "${crossAct.title()}（確認後執行）",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = crossAct.summary(),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "系統不會自動執行此操作；請確認參數無誤後點擊「執行」。",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                pendingCrossAppQueue = pendingCrossAppQueue.drop(1)
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("取消")
+                                        }
+                                        Button(
+                                            onClick = {
+                                                pendingCrossAppQueue = pendingCrossAppQueue.drop(1)
+                                                com.phantom.checker.util.CrossAppActionExecutor.execute(ctx, crossAct)
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("執行")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    pendingAliasCandidate?.let { aliasCand ->
+                        item(key = "pending_alias_bind_${aliasCand.alias}_${aliasCand.matchedDisplayName}") {
+                            PhantomGlassCard(
+                                glassState = glassState,
+                                cornerRadius = 16.dp,
+                                contentPadding = 12.dp
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "👤 疑似通訊錄聯絡人暱稱（純本機比對）",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "寄件者「${aliasCand.alias}」疑似本機聯絡人「${aliasCand.matchedDisplayName}」。綁定後防詐檢查將視其為熟人寄件者。",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = { pendingAliasCandidate = null },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("略過")
+                                        }
+                                        Button(
+                                            onClick = {
+                                                pendingAliasCandidate = null
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        AppDatabaseHolder.db(appCtx).contactAliasDao().insert(
+                                                            com.phantom.checker.data.ContactAliasEntity(
+                                                                alias = aliasCand.alias,
+                                                                displayName = aliasCand.matchedDisplayName,
+                                                                packageName = aliasCand.packageName,
+                                                                note = "由聊天確認卡綁定"
+                                                            )
+                                                        )
+                                                    }
+                                                    com.phantom.checker.util.ContactContext.invalidateCache()
+                                                    onShowMessage("已綁定暱稱「${aliasCand.alias} → ${aliasCand.matchedDisplayName}」")
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("確認綁定")
                                         }
                                     }
                                 }

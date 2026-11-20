@@ -65,7 +65,8 @@ enum class AiPurpose(val id: String, val label: String, val catalogId: String) {
     WEEKLY_SUMMARY("ai_weekly_summary", "每週摘要", "ai_model_weekly_summary"),
     DEEP_ANALYSIS("ai_deep_analysis", "訊息深度分析", "ai_model_deep_analysis"),
     SETTINGS_SEARCH("ai_settings_search", "設定 AI 語意搜尋", "ai_model_settings_search"),
-    AUTO_MEMO("ai_auto_memo", "自動備忘錄生成", "ai_model_auto_memo")
+    AUTO_MEMO("ai_auto_memo", "自動備忘錄生成", "ai_model_auto_memo"),
+    BRIEFING("ai_briefing", "早晚簡報與畫像卡", "ai_model_briefing")
 }
 
 enum class TabBarDisplayMode(val prefValue: String, val label: String) {
@@ -1382,6 +1383,324 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         prefs(ctx).edit().putString(KEY_CALENDAR_SELECTED_IDS, encoded).apply()
     }
 
+    /** #333 行程類備忘分流：suggest_calendar（預設，優先日曆建議卡不再進待辦/記事）或 legacy_todo_note（沿用 v3.1） */
+    const val SCHEDULE_MEMO_ROUTE_SUGGEST_CALENDAR = "suggest_calendar"
+    const val SCHEDULE_MEMO_ROUTE_LEGACY_TODO_NOTE = "legacy_todo_note"
+    private const val KEY_SCHEDULE_MEMO_ROUTE = "schedule_memo_route"
+
+    fun getScheduleMemoRoute(ctx: Context): String {
+        val raw = prefs(ctx).getString(KEY_SCHEDULE_MEMO_ROUTE, SCHEDULE_MEMO_ROUTE_SUGGEST_CALENDAR)
+        return if (raw == SCHEDULE_MEMO_ROUTE_LEGACY_TODO_NOTE) {
+            SCHEDULE_MEMO_ROUTE_LEGACY_TODO_NOTE
+        } else {
+            SCHEDULE_MEMO_ROUTE_SUGGEST_CALENDAR
+        }
+    }
+
+    fun setScheduleMemoRoute(ctx: Context, route: String) {
+        val safe = if (route == SCHEDULE_MEMO_ROUTE_LEGACY_TODO_NOTE) {
+            SCHEDULE_MEMO_ROUTE_LEGACY_TODO_NOTE
+        } else {
+            SCHEDULE_MEMO_ROUTE_SUGGEST_CALENDAR
+        }
+        prefs(ctx).edit().putString(KEY_SCHEDULE_MEMO_ROUTE, safe).apply()
+    }
+
+    /** #336 通訊錄 VIP 信任圈同步設定（off / starred / group） */
+    const val CONTACTS_VIP_MODE_OFF = "off"
+    const val CONTACTS_VIP_MODE_STARRED = "starred"
+    const val CONTACTS_VIP_MODE_GROUP = "group"
+    private const val KEY_CONTACTS_VIP_MODE = "contacts_vip_mode"
+    private const val KEY_CONTACTS_VIP_GROUP_ID = "contacts_vip_group_id"
+    private const val KEY_CONTACTS_VIP_LAST_SYNC_AT = "contacts_vip_last_sync_at"
+
+    fun getContactsVipMode(ctx: Context): String {
+        return when (prefs(ctx).getString(KEY_CONTACTS_VIP_MODE, CONTACTS_VIP_MODE_OFF)) {
+            CONTACTS_VIP_MODE_STARRED -> CONTACTS_VIP_MODE_STARRED
+            CONTACTS_VIP_MODE_GROUP -> CONTACTS_VIP_MODE_GROUP
+            else -> CONTACTS_VIP_MODE_OFF
+        }
+    }
+
+    fun setContactsVipMode(ctx: Context, mode: String) {
+        val safe = when (mode) {
+            CONTACTS_VIP_MODE_STARRED -> CONTACTS_VIP_MODE_STARRED
+            CONTACTS_VIP_MODE_GROUP -> CONTACTS_VIP_MODE_GROUP
+            else -> CONTACTS_VIP_MODE_OFF
+        }
+        prefs(ctx).edit().putString(KEY_CONTACTS_VIP_MODE, safe).apply()
+    }
+
+    fun getContactsVipGroupId(ctx: Context): Long? {
+        val v = prefs(ctx).getLong(KEY_CONTACTS_VIP_GROUP_ID, -1L)
+        return if (v > 0L) v else null
+    }
+
+    fun setContactsVipGroupId(ctx: Context, groupId: Long?) {
+        prefs(ctx).edit().putLong(KEY_CONTACTS_VIP_GROUP_ID, groupId ?: -1L).apply()
+    }
+
+    fun getContactsVipLastSyncAt(ctx: Context): Long =
+        prefs(ctx).getLong(KEY_CONTACTS_VIP_LAST_SYNC_AT, 0L)
+
+    fun setContactsVipLastSyncAt(ctx: Context, ts: Long) {
+        prefs(ctx).edit().putLong(KEY_CONTACTS_VIP_LAST_SYNC_AT, ts).apply()
+    }
+
+    // ==================== #337 主動式推播與個人簡報引擎 ====================
+
+    const val BRIEFING_CONTENT_SCHEDULE = "schedule"
+    const val BRIEFING_CONTENT_TODO = "todo"
+    const val BRIEFING_CONTENT_IMPORTANT_NOTIFS = "important_notifs"
+    val DEFAULT_BRIEFING_CONTENT = setOf(
+        BRIEFING_CONTENT_SCHEDULE,
+        BRIEFING_CONTENT_TODO,
+        BRIEFING_CONTENT_IMPORTANT_NOTIFS
+    )
+
+    const val PROACTIVE_TOPIC_SCHEDULE = "schedule"
+    const val PROACTIVE_TOPIC_TODO = "todo"
+    const val PROACTIVE_TOPIC_CONFLICT = "conflict"
+    const val PROACTIVE_TOPIC_INTEREST = "interest"
+    const val PROACTIVE_TOPIC_REGION = "region"
+    const val PROACTIVE_TOPIC_EXTERNAL_SEARCH = "external_search"
+    val DEFAULT_PROACTIVE_TOPICS = setOf(
+        PROACTIVE_TOPIC_SCHEDULE,
+        PROACTIVE_TOPIC_TODO,
+        PROACTIVE_TOPIC_CONFLICT
+    )
+
+    fun isMorningBriefingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("briefing_morning_enabled", true)
+
+    fun setMorningBriefingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("briefing_morning_enabled", enabled).apply()
+    }
+
+    fun getMorningBriefingTime(ctx: Context): String =
+        prefs(ctx).getString("briefing_morning_time", "08:45").orEmpty().ifBlank { "08:45" }
+
+    fun setMorningBriefingTime(ctx: Context, hhmm: String) {
+        prefs(ctx).edit().putString("briefing_morning_time", hhmm.trim()).apply()
+    }
+
+    fun isEveningBriefingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("briefing_evening_enabled", true)
+
+    fun setEveningBriefingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("briefing_evening_enabled", enabled).apply()
+    }
+
+    fun getEveningBriefingTime(ctx: Context): String =
+        prefs(ctx).getString("briefing_evening_time", "22:25").orEmpty().ifBlank { "22:25" }
+
+    fun setEveningBriefingTime(ctx: Context, hhmm: String) {
+        prefs(ctx).edit().putString("briefing_evening_time", hhmm.trim()).apply()
+    }
+
+    fun getMorningBriefingContents(ctx: Context): Set<String> =
+        prefs(ctx).getStringSet("briefing_morning_contents", DEFAULT_BRIEFING_CONTENT) ?: DEFAULT_BRIEFING_CONTENT
+
+    fun setMorningBriefingContents(ctx: Context, items: Set<String>) {
+        prefs(ctx).edit().putStringSet("briefing_morning_contents", items.toSet()).apply()
+    }
+
+    fun getEveningBriefingContents(ctx: Context): Set<String> =
+        prefs(ctx).getStringSet("briefing_evening_contents", DEFAULT_BRIEFING_CONTENT) ?: DEFAULT_BRIEFING_CONTENT
+
+    fun setEveningBriefingContents(ctx: Context, items: Set<String>) {
+        prefs(ctx).edit().putStringSet("briefing_evening_contents", items.toSet()).apply()
+    }
+
+    fun getProactiveTopics(ctx: Context): Set<String> =
+        prefs(ctx).getStringSet("proactive_topics", DEFAULT_PROACTIVE_TOPICS) ?: DEFAULT_PROACTIVE_TOPICS
+
+    fun isProactiveTopicEnabled(ctx: Context, topic: String): Boolean {
+        if (isTokenSaverEnabled(ctx) &&
+            (topic == PROACTIVE_TOPIC_EXTERNAL_SEARCH || topic == PROACTIVE_TOPIC_INTEREST || topic == PROACTIVE_TOPIC_REGION)
+        ) {
+            return false
+        }
+        return topic in getProactiveTopics(ctx)
+    }
+
+    fun setProactiveTopicEnabled(ctx: Context, topic: String, enabled: Boolean) {
+        val current = getProactiveTopics(ctx).toMutableSet()
+        if (enabled) current.add(topic) else current.remove(topic)
+        prefs(ctx).edit().putStringSet("proactive_topics", current).apply()
+    }
+
+    fun getProactiveDailyCap(ctx: Context): Int =
+        prefs(ctx).getInt("proactive_daily_cap", 6).coerceIn(1, 20)
+
+    fun setProactiveDailyCap(ctx: Context, cap: Int) {
+        prefs(ctx).edit().putInt("proactive_daily_cap", cap.coerceIn(1, 20)).apply()
+    }
+
+    fun isProactiveDndEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_dnd_enabled", true)
+
+    fun setProactiveDndEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_dnd_enabled", enabled).apply()
+    }
+
+    fun getProactiveDndStart(ctx: Context): String =
+        prefs(ctx).getString("proactive_dnd_start", "00:00").orEmpty().ifBlank { "00:00" }
+
+    fun setProactiveDndStart(ctx: Context, hhmm: String) {
+        prefs(ctx).edit().putString("proactive_dnd_start", hhmm.trim()).apply()
+    }
+
+    fun getProactiveDndEnd(ctx: Context): String =
+        prefs(ctx).getString("proactive_dnd_end", "07:00").orEmpty().ifBlank { "07:00" }
+
+    fun setProactiveDndEnd(ctx: Context, hhmm: String) {
+        prefs(ctx).edit().putString("proactive_dnd_end", hhmm.trim()).apply()
+    }
+
+    fun getProactiveRegionKeyword(ctx: Context): String =
+        prefs(ctx).getString("proactive_region_keyword", "").orEmpty().trim()
+
+    fun setProactiveRegionKeyword(ctx: Context, region: String) {
+        prefs(ctx).edit().putString("proactive_region_keyword", region.trim().take(32)).apply()
+    }
+
+    fun getProactiveLastFingerprint(ctx: Context): String =
+        prefs(ctx).getString("proactive_last_fingerprint", "").orEmpty()
+
+    fun setProactiveLastFingerprint(ctx: Context, sha: String) {
+        prefs(ctx).edit().putString("proactive_last_fingerprint", sha).apply()
+    }
+
+    fun isProactiveDirty(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_dirty_flag", true)
+
+    fun setProactiveDirty(ctx: Context, dirty: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_dirty_flag", dirty).apply()
+    }
+
+    fun getProactiveDailySentCount(ctx: Context, todayKey: String): Int {
+        val p = prefs(ctx)
+        if (p.getString("proactive_daily_date", "") != todayKey) return 0
+        return p.getInt("proactive_daily_count", 0)
+    }
+
+    fun incrementProactiveDailySentCount(ctx: Context, todayKey: String) {
+        val p = prefs(ctx)
+        val prev = if (p.getString("proactive_daily_date", "") == todayKey) p.getInt("proactive_daily_count", 0) else 0
+        val total7d = p.getInt("proactive_push_total_count", 0) + 1
+        p.edit()
+            .putString("proactive_daily_date", todayKey)
+            .putInt("proactive_daily_count", prev + 1)
+            .putInt("proactive_push_total_count", total7d)
+            .apply()
+    }
+
+    fun getProactivePushTotalCount(ctx: Context): Int =
+        prefs(ctx).getInt("proactive_push_total_count", 0)
+
+    fun getLastBriefingDay(ctx: Context, isMorning: Boolean): String =
+        prefs(ctx).getString(if (isMorning) "briefing_last_morning_day" else "briefing_last_evening_day", "").orEmpty()
+
+    fun setLastBriefingDay(ctx: Context, isMorning: Boolean, dayKey: String) {
+        prefs(ctx).edit()
+            .putString(if (isMorning) "briefing_last_morning_day" else "briefing_last_evening_day", dayKey)
+            .apply()
+    }
+
+    fun getLastBriefingSummary(ctx: Context): String =
+        prefs(ctx).getString("briefing_last_summary", "").orEmpty()
+
+    fun getLastBriefingTimestamp(ctx: Context): Long =
+        prefs(ctx).getLong("briefing_last_ts", 0L)
+
+    fun saveLastBriefingMeta(ctx: Context, summary: String, ts: Long, messageId: Long) {
+        prefs(ctx).edit()
+            .putString("briefing_last_summary", summary.take(200))
+            .putLong("briefing_last_ts", ts)
+            .putLong("briefing_last_msg_id", messageId)
+            .apply()
+    }
+
+    fun getBriefingReadCount(ctx: Context): Int =
+        prefs(ctx).getInt("briefing_read_count", 0)
+
+    fun incrementBriefingReadCount(ctx: Context) {
+        val p = prefs(ctx)
+        p.edit().putInt("briefing_read_count", p.getInt("briefing_read_count", 0) + 1).apply()
+    }
+
+    // ---- #337 「我對你的瞭解」畫像卡 ----
+
+    fun getPortraitCardText(ctx: Context): String =
+        prefs(ctx).getString("memory_portrait_text", "").orEmpty().trim()
+
+    fun getPortraitCardUpdatedAt(ctx: Context): Long =
+        prefs(ctx).getLong("memory_portrait_updated_at", 0L)
+
+    fun getPortraitConfirmedCountAtGen(ctx: Context): Int =
+        prefs(ctx).getInt("memory_portrait_confirmed_count", 0)
+
+    fun savePortraitCard(ctx: Context, text: String, updatedAt: Long, confirmedCount: Int) {
+        prefs(ctx).edit()
+            .putString("memory_portrait_text", text.trim().take(420))
+            .putLong("memory_portrait_updated_at", updatedAt)
+            .putInt("memory_portrait_confirmed_count", confirmedCount)
+            .apply()
+    }
+
+    fun getPortraitDailyGenCount(ctx: Context, todayKey: String): Int {
+        val p = prefs(ctx)
+        if (p.getString("memory_portrait_gen_date", "") != todayKey) return 0
+        return p.getInt("memory_portrait_gen_count", 0)
+    }
+
+    fun incrementPortraitDailyGenCount(ctx: Context, todayKey: String) {
+        val p = prefs(ctx)
+        val prev = if (p.getString("memory_portrait_gen_date", "") == todayKey) p.getInt("memory_portrait_gen_count", 0) else 0
+        p.edit()
+            .putString("memory_portrait_gen_date", todayKey)
+            .putInt("memory_portrait_gen_count", prev + 1)
+            .apply()
+    }
+
+    // ---- #339 連結應用程式中心：GitHub 監控與 Discord 轉發開關 ----
+
+    fun isGitHubMonitorEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("cloud_github_monitor_enabled", false)
+
+    fun setGitHubMonitorEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("cloud_github_monitor_enabled", enabled).apply()
+    }
+
+    fun getGitHubPollIntervalMinutes(ctx: Context): Int =
+        prefs(ctx).getInt("cloud_github_poll_interval_min", 15).coerceIn(15, 180)
+
+    fun setGitHubPollIntervalMinutes(ctx: Context, minutes: Int) {
+        prefs(ctx).edit().putInt("cloud_github_poll_interval_min", minutes.coerceIn(15, 180)).apply()
+    }
+
+    fun getLastGitHubAlertKey(ctx: Context): String =
+        prefs(ctx).getString("cloud_github_last_alert_key", "").orEmpty()
+
+    fun setLastGitHubAlertKey(ctx: Context, key: String) {
+        prefs(ctx).edit().putString("cloud_github_last_alert_key", key).apply()
+    }
+
+    fun getLastGitHubPrKey(ctx: Context): String =
+        prefs(ctx).getString("cloud_github_last_pr_key", "").orEmpty()
+
+    fun setLastGitHubPrKey(ctx: Context, key: String) {
+        prefs(ctx).edit().putString("cloud_github_last_pr_key", key).apply()
+    }
+
+    fun isDiscordForwardEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("cloud_discord_forward_enabled", false)
+
+    fun setDiscordForwardEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("cloud_discord_forward_enabled", enabled).apply()
+    }
+
     data class StatsCardOption(val key: String, val title: String, val subtitle: String, val defaultVisible: Boolean)
 
     val STATS_CARD_OPTIONS: List<StatsCardOption> = listOf(
@@ -1577,6 +1896,29 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun setAssistantName(ctx: Context, name: String) {
         val clean = name.trim().take(MAX_ASSISTANT_NAME_LENGTH).ifEmpty { DEFAULT_ASSISTANT_NAME }
         prefs(ctx).edit().putString(KEY_ASSISTANT_NAME, clean).apply()
+        ensurePartnerFirstActivatedAt(ctx)
+    }
+
+    /** #338 AI 夥伴分頁標籤文字：未自訂時 fallback「夥伴」，截斷 ≤6 字元避免破版 */
+    fun getPartnerTabLabel(ctx: Context): String {
+        val raw = prefs(ctx).getString(KEY_ASSISTANT_NAME, null)?.trim().orEmpty()
+        if (raw.isEmpty()) return "夥伴"
+        return raw.take(6)
+    }
+
+    /** #338 陪伴天數起算時間（首次開啟夥伴分頁或首次自訂助手名時記錄） */
+    fun ensurePartnerFirstActivatedAt(ctx: Context, nowMs: Long = System.currentTimeMillis()): Long {
+        val p = prefs(ctx)
+        val existing = p.getLong("partner_first_activated_at", 0L)
+        if (existing > 0L) return existing
+        p.edit().putLong("partner_first_activated_at", nowMs).apply()
+        return nowMs
+    }
+
+    fun getPartnerCompanionDays(ctx: Context, nowMs: Long = System.currentTimeMillis()): Int {
+        val start = ensurePartnerFirstActivatedAt(ctx, nowMs)
+        val diffDays = ((nowMs - start).coerceAtLeast(0L) / (24L * 60L * 60L * 1000L)).toInt()
+        return (diffDays + 1).coerceAtLeast(1)
     }
 
     /** AI 助手個性 Preset */

@@ -73,6 +73,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -328,6 +329,12 @@ class MainActivity : ComponentActivity() {
             DailySummaryPolicy.TAB_STATS -> requestedTabState.value = MainTab.STATS
             com.phantom.checker.widget.ReminderWidgetProvider.TAB_NOTES -> requestedTabState.value = MainTab.NOTES
             "memory" -> requestedTabState.value = MainTab.MEMORY
+            com.phantom.checker.service.BriefingScheduler.TAB_ASSISTANT -> requestedTabState.value = MainTab.ASSISTANT
+        }
+        val briefingMsgId = intent?.getLongExtra(com.phantom.checker.service.BriefingScheduler.EXTRA_BRIEFING_MSG_ID, -1L) ?: -1L
+        if (briefingMsgId > 0L) {
+            requestedTabState.value = MainTab.ASSISTANT
+            PhantomPrefs.incrementBriefingReadCount(applicationContext)
         }
         val todoId = intent?.getLongExtra(com.phantom.checker.widget.ReminderWidgetProvider.EXTRA_EDIT_TODO_ID, -1L) ?: -1L
         if (todoId > 0L) {
@@ -358,7 +365,8 @@ private enum class MainTab(val title: String) {
     ASSISTANT("AI 助手"),
     MEMORY("記憶"),
     NOTES("記事"),
-    STATS("統計")
+    STATS("統計"),
+    PARTNER("夥伴")
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -376,6 +384,7 @@ private fun PhantomCheckApp(
     val assistantSnackbarHostState = remember { SnackbarHostState() }
 
     var selectedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(MainTab.MESSAGES) }
+    var requestedMemoryFilter by remember { mutableStateOf<String?>(null) }
     val saveableStateHolder = rememberSaveableStateHolder()
     var showSearchBar by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -481,10 +490,14 @@ private fun PhantomCheckApp(
         if (!onboardingCompleted && postNotificationPromptDone) {
             selectedTab = when (onboardingStep) {
                 OnboardingStep.AI_ASSISTANT -> MainTab.ASSISTANT
+                OnboardingStep.MEMORY_TAB,
+                OnboardingStep.SCAM_IMMUNITY,
+                OnboardingStep.CONTACTS_BINDING -> MainTab.MEMORY
                 OnboardingStep.NOTES_TAB,
-                OnboardingStep.MEMO_RULES,
-                OnboardingStep.TODO_AND_BATCH -> MainTab.NOTES
-                OnboardingStep.STATS_AND_SUMMARY -> MainTab.STATS
+                OnboardingStep.TODO_AND_BATCH,
+                OnboardingStep.CALENDAR_SUGGESTION -> MainTab.NOTES
+                OnboardingStep.PARTNER_TAB,
+                OnboardingStep.BRIEFING_PROACTIVE -> MainTab.PARTNER
                 else -> MainTab.MESSAGES
             }
         }
@@ -511,6 +524,12 @@ private fun PhantomCheckApp(
     var tabBarDisplayMode by remember { mutableStateOf(PhantomPrefs.getTabBarDisplayMode(appCtx)) }
     var visibleStatsCards by remember { mutableStateOf(PhantomPrefs.getVisibleStatsCards(appCtx)) }
     val settingsVersion by PhantomSettingsBus.version.collectAsState()
+    var partnerTabLabel by remember(settingsVersion) { mutableStateOf(PhantomPrefs.getPartnerTabLabel(appCtx)) }
+    var partnerAvatarBitmap by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(settingsVersion) {
+        partnerTabLabel = PhantomPrefs.getPartnerTabLabel(appCtx)
+        partnerAvatarBitmap = com.phantom.checker.util.AssistantAvatarHelper.loadAvatarBitmap(appCtx)
+    }
     LaunchedEffect(settingsVersion) {
         if (settingsVersion > 0L) {
             favoritePackages = PhantomPrefs.getFavoriteApps(appCtx)
@@ -704,6 +723,7 @@ private fun PhantomCheckApp(
                     MainTab.ASSISTANT -> Unit
                     MainTab.MEMORY -> Unit
                     MainTab.NOTES -> Unit
+                    MainTab.PARTNER -> Unit
                     MainTab.STATS -> {
                         val summary = db.aiSummaryDao().latest()
                         val cal = Calendar.getInstance().apply {
@@ -1460,12 +1480,16 @@ private fun PhantomCheckApp(
                                         MainTab.MEMORY -> MemoryIcon
                                         MainTab.NOTES -> Icons.Default.Edit
                                         MainTab.STATS -> Icons.Default.Info
+                                        MainTab.PARTNER -> Icons.Default.Person
                                     }
+                                    val tabLabel = if (tab == MainTab.PARTNER) partnerTabLabel else tab.title
                                     val targetKey = when (tab) {
                                         MainTab.ASSISTANT -> OnboardingTargets.AI_ASSISTANT_TAB
+                                        MainTab.MEMORY -> OnboardingTargets.MEMORY_TAB
                                         MainTab.NOTES -> OnboardingTargets.NOTES_TAB
                                         MainTab.STATS -> OnboardingTargets.STATS_TAB
-                                        MainTab.MESSAGES, MainTab.MEMORY -> null
+                                        MainTab.PARTNER -> OnboardingTargets.PARTNER_TAB
+                                        MainTab.MESSAGES -> null
                                     }
                                     val itemModifier = if (targetKey != null) {
                                         Modifier
@@ -1476,6 +1500,15 @@ private fun PhantomCheckApp(
                                     } else {
                                         Modifier.weight(1f)
                                     }
+                                    val customIcon: (@Composable () -> Unit)? = if (tab == MainTab.PARTNER && partnerAvatarBitmap != null) {
+                                        {
+                                            com.phantom.checker.util.AssistantAvatarCircle(
+                                                avatarBitmap = partnerAvatarBitmap,
+                                                assistantName = partnerTabLabel,
+                                                size = if (isCompactTabBar) 20.dp else 22.dp
+                                            )
+                                        }
+                                    } else null
                                     LiquidGlassTabBarItem(
                                         selected = selectedTab == tab,
                                         onClick = {
@@ -1483,9 +1516,10 @@ private fun PhantomCheckApp(
                                             selectedTab = tab
                                         },
                                         icon = icon,
-                                        label = tab.title,
+                                        label = tabLabel,
                                         modifier = itemModifier,
-                                        compact = isCompactTabBar
+                                        compact = isCompactTabBar,
+                                        customIcon = customIcon
                                     )
                                 }
                             }
@@ -1692,6 +1726,23 @@ private fun PhantomCheckApp(
                                         )
                                     }
                                 },
+                                onShowActionMessage = { msg, actionLabel, onAction ->
+                                    scope.launch {
+                                        val res = assistantSnackbarHostState.showSnackbar(
+                                            message = msg,
+                                            actionLabel = actionLabel,
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Short
+                                        )
+                                        if (res == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                            onAction()
+                                        }
+                                    }
+                                },
+                                onOpenMemoryWithFilter = { filterKey ->
+                                    requestedMemoryFilter = filterKey
+                                    selectedTab = MainTab.MEMORY
+                                },
                                 isSearchActive = showSearchBar,
                                 onToggleSearch = {
                                     showSearchBar = !showSearchBar
@@ -1721,7 +1772,9 @@ private fun PhantomCheckApp(
                         },
                         onShowMessage = { msg ->
                             scope.launch { snackbarHostState.showSnackbar(msg) }
-                        }
+                        },
+                        initialFilterKey = requestedMemoryFilter,
+                        onConsumedInitialFilter = { requestedMemoryFilter = null }
                     )
                     MainTab.NOTES -> NotesTab(
                         glassState = glassState,
@@ -1742,6 +1795,20 @@ private fun PhantomCheckApp(
                         glassState = glassState,
                         visibleCards = visibleStatsCards,
                         onSummaryGenerated = { refreshTrigger++ },
+                        onShowMessage = { msg ->
+                            scope.launch { snackbarHostState.showSnackbar(msg) }
+                        }
+                    )
+                    MainTab.PARTNER -> com.phantom.checker.ui.partner.PartnerTab(
+                        glassState = glassState,
+                        onStartChat = { selectedTab = MainTab.ASSISTANT },
+                        onOpenPersonaSettings = {
+                            ctx.startActivity(
+                                Intent(ctx, SettingsActivity::class.java).apply {
+                                    putExtra("highlight_card_key", "memory_assistant")
+                                }
+                            )
+                        },
                         onShowMessage = { msg ->
                             scope.launch { snackbarHostState.showSnackbar(msg) }
                         }
@@ -1888,17 +1955,19 @@ private fun PhantomCheckApp(
                         OnboardingStep.SWIPE_DELETE -> OnboardingStep.QUICK_REPLY
                         OnboardingStep.QUICK_REPLY -> OnboardingStep.MULTI_SELECT
                         OnboardingStep.MULTI_SELECT -> OnboardingStep.FILTER_CHIPS
-                        OnboardingStep.FILTER_CHIPS -> OnboardingStep.AI_ASSISTANT
-                        OnboardingStep.AI_ASSISTANT -> OnboardingStep.NOTES_TAB
-                        OnboardingStep.NOTES_TAB -> OnboardingStep.MEMO_RULES
-                        OnboardingStep.MEMO_RULES -> OnboardingStep.NOTED_TODOED_SOURCE
-                        OnboardingStep.NOTED_TODOED_SOURCE -> OnboardingStep.STATS_AND_SUMMARY
-                        OnboardingStep.STATS_AND_SUMMARY -> OnboardingStep.TAGS_AND_RULES
-                        OnboardingStep.TAGS_AND_RULES -> OnboardingStep.TODO_AND_BATCH
-                        OnboardingStep.TODO_AND_BATCH -> OnboardingStep.APPEARANCE_AND_BG
-                        OnboardingStep.APPEARANCE_AND_BG -> OnboardingStep.KEEP_ALIVE
-                        OnboardingStep.KEEP_ALIVE -> OnboardingStep.SEARCH_PILL
-                        OnboardingStep.SEARCH_PILL -> OnboardingStep.DONE
+                        OnboardingStep.FILTER_CHIPS -> OnboardingStep.SEARCH_PILL
+                        OnboardingStep.SEARCH_PILL -> OnboardingStep.AI_ASSISTANT
+                        OnboardingStep.AI_ASSISTANT -> OnboardingStep.MEMORY_TAB
+                        OnboardingStep.MEMORY_TAB -> OnboardingStep.SCAM_IMMUNITY
+                        OnboardingStep.SCAM_IMMUNITY -> OnboardingStep.CONTACTS_BINDING
+                        OnboardingStep.CONTACTS_BINDING -> OnboardingStep.NOTES_TAB
+                        OnboardingStep.NOTES_TAB -> OnboardingStep.TODO_AND_BATCH
+                        OnboardingStep.TODO_AND_BATCH -> OnboardingStep.CALENDAR_SUGGESTION
+                        OnboardingStep.CALENDAR_SUGGESTION -> OnboardingStep.TAGS_AND_RULES
+                        OnboardingStep.TAGS_AND_RULES -> OnboardingStep.PARTNER_TAB
+                        OnboardingStep.PARTNER_TAB -> OnboardingStep.BRIEFING_PROACTIVE
+                        OnboardingStep.BRIEFING_PROACTIVE -> OnboardingStep.KEEP_ALIVE
+                        OnboardingStep.KEEP_ALIVE -> OnboardingStep.DONE
                         OnboardingStep.DONE -> {
                             PhantomPrefs.setOnboardingCompleted(appCtx, true)
                             onboardingCompleted = true
