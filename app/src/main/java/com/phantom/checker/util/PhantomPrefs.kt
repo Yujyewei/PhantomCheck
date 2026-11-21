@@ -125,6 +125,7 @@ object PhantomPrefs {
     private const val KEY_DEFAULT_AI_TAGS_SEEDED = "default_ai_tags_seeded_v1"
     private const val KEY_DEFAULT_APP_CAT_SEEDED = "default_app_cat_seeded_v1"
     private const val KEY_PRESET_AI_RULES_PURGED = "preset_ai_rules_purged_v1"
+    private const val KEY_WHITELIST_DEDUP_DONE_V1 = "whitelist_dedup_done_v1"
     private const val KEY_QUIET_HOURS_ENABLED = "quiet_hours_enabled"
     private const val KEY_QUIET_START_MIN = "quiet_hours_start_minute"
     private const val KEY_QUIET_END_MIN = "quiet_hours_end_minute"
@@ -693,6 +694,14 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     fun setPresetAiRulesPurged(ctx: Context, purged: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_PRESET_AI_RULES_PURGED, purged).apply()
+    }
+
+    /** #362 一次性重複白名單合併修復是否已執行 */
+    fun isWhitelistDedupDoneV1(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_WHITELIST_DEDUP_DONE_V1, false)
+
+    fun setWhitelistDedupDoneV1(ctx: Context, done: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_WHITELIST_DEDUP_DONE_V1, done).apply()
     }
 
     /** 省 token 模式（override 層，不覆寫原開關值，預設關閉） */
@@ -2047,6 +2056,141 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         } else {
             rawBlock.take(160).trimEnd()
         }
+    }
+
+    // ---- #365 CalendarInsightEngine：定時日曆情報與主動發言設定（全預設開） ----
+
+    fun isProactiveCalendarInsightEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_calendar_insight_enabled", true)
+
+    fun setProactiveCalendarInsightEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_calendar_insight_enabled", enabled).apply()
+    }
+
+    fun isProactiveCalendarInsightNotifEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_calendar_insight_notif_enabled", true)
+
+    fun setProactiveCalendarInsightNotifEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_calendar_insight_notif_enabled", enabled).apply()
+    }
+
+    fun isProactiveCalendarWebSearchEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_calendar_web_search_enabled", true)
+
+    fun setProactiveCalendarWebSearchEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_calendar_web_search_enabled", enabled).apply()
+    }
+
+    /** 日曆情報檢查頻率（分鐘）：30 / 60 / 120 / 180，預設 60 */
+    fun getCalendarInsightIntervalMinutes(ctx: Context): Int =
+        prefs(ctx).getInt("calendar_insight_interval_minutes", 60).let { v ->
+            if (v in listOf(30, 60, 120, 180)) v else 60
+        }
+
+    fun setCalendarInsightIntervalMinutes(ctx: Context, minutes: Int) {
+        val safe = if (minutes in listOf(30, 60, 120, 180)) minutes else 60
+        prefs(ctx).edit().putInt("calendar_insight_interval_minutes", safe).apply()
+    }
+
+    fun hasCalendarInsightSeenKey(ctx: Context, key: String): Boolean {
+        val raw = prefs(ctx).getString("calendar_insight_seen_keys_v1", "").orEmpty()
+        if (raw.isEmpty()) return false
+        return raw.split('\n').any { it == key }
+    }
+
+    fun markCalendarInsightSeenKey(ctx: Context, key: String) {
+        val raw = prefs(ctx).getString("calendar_insight_seen_keys_v1", "").orEmpty()
+        val list = raw.split('\n').filter { it.isNotBlank() }.toMutableList()
+        if (key in list) return
+        list.add(key)
+        val trimmed = if (list.size > 200) list.takeLast(200) else list
+        prefs(ctx).edit().putString("calendar_insight_seen_keys_v1", trimmed.joinToString("\n")).apply()
+    }
+
+    // ---- #366 主動訊息聊天室、對話自動記憶擷取、未決事項膠囊列與壓縮錨點 ----
+
+    fun getProactiveChatLastReadAt(ctx: Context): Long =
+        prefs(ctx).getLong("proactive_chat_last_read_at", 0L)
+
+    fun setProactiveChatLastReadAt(ctx: Context, ts: Long) {
+        prefs(ctx).edit().putLong("proactive_chat_last_read_at", ts).apply()
+    }
+
+    fun isMemoryAutoExtractEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("memory_auto_extract_enabled", true)
+
+    fun setMemoryAutoExtractEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("memory_auto_extract_enabled", enabled).apply()
+    }
+
+    fun isChatPendingCapsulesEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("chat_pending_capsules_enabled", true)
+
+    fun setChatPendingCapsulesEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("chat_pending_capsules_enabled", enabled).apply()
+    }
+
+    fun saveChatContinuityAnchor(ctx: Context, text: String, nowMs: Long = System.currentTimeMillis()) {
+        prefs(ctx).edit()
+            .putString("chat_continuity_anchor_text", text.trim().take(80))
+            .putLong("chat_continuity_anchor_at", nowMs)
+            .putBoolean("chat_continuity_anchor_dismissed", false)
+            .apply()
+    }
+
+    /** 取得未過期（7 天內）且未手動關閉的壓縮錨點，過期則回傳 null */
+    fun getActiveChatContinuityAnchor(ctx: Context, nowMs: Long = System.currentTimeMillis()): String? {
+        val p = prefs(ctx)
+        if (p.getBoolean("chat_continuity_anchor_dismissed", false)) return null
+        val text = p.getString("chat_continuity_anchor_text", "").orEmpty().trim()
+        if (text.isEmpty()) return null
+        val createdAt = p.getLong("chat_continuity_anchor_at", 0L)
+        val sevenDaysMs = 7L * 24L * 60L * 60L * 1000L
+        if (createdAt <= 0L || (nowMs - createdAt) > sevenDaysMs) return null
+        return text
+    }
+
+    fun dismissChatContinuityAnchor(ctx: Context) {
+        prefs(ctx).edit().putBoolean("chat_continuity_anchor_dismissed", true).apply()
+    }
+
+    // ---- #367 雙門檻自動決策閾值與判錯回饋統計 ----
+
+    fun getDecisionConfirmThreshold(ctx: Context): Int =
+        prefs(ctx).getInt("decision_confirm_threshold", DecisionEngine.DEFAULT_CONFIRM_BELOW_SCORE).coerceIn(40, 85)
+
+    fun setDecisionConfirmThreshold(ctx: Context, threshold: Int) {
+        prefs(ctx).edit().putInt("decision_confirm_threshold", threshold.coerceIn(40, 85)).apply()
+    }
+
+    fun recordDecisionFeedback(ctx: Context, errorType: String) {
+        val p = prefs(ctx)
+        val total = p.getInt("decision_feedback_total", 0) + 1
+        val typeKey = "decision_feedback_type_$errorType"
+        val typeCount = p.getInt(typeKey, 0) + 1
+        p.edit()
+            .putInt("decision_feedback_total", total)
+            .putInt(typeKey, typeCount)
+            .apply()
+    }
+
+    fun getDecisionFeedbackTotalCount(ctx: Context): Int =
+        prefs(ctx).getInt("decision_feedback_total", 0)
+
+    // ---- #368 連結應用中心動作登錄檔：同步時間與靜默錯誤狀態 ----
+
+    fun getLinkedAppLastSyncAt(ctx: Context, connectorId: String): Long =
+        prefs(ctx).getLong("linked_app_last_sync_$connectorId", 0L)
+
+    fun setLinkedAppLastSyncAt(ctx: Context, connectorId: String, ts: Long) {
+        prefs(ctx).edit().putLong("linked_app_last_sync_$connectorId", ts).apply()
+    }
+
+    fun getLinkedAppLastError(ctx: Context, connectorId: String): String =
+        prefs(ctx).getString("linked_app_last_err_$connectorId", "").orEmpty()
+
+    fun setLinkedAppLastError(ctx: Context, connectorId: String, err: String) {
+        prefs(ctx).edit().putString("linked_app_last_err_$connectorId", err.take(120)).apply()
     }
 }
 

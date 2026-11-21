@@ -293,15 +293,79 @@ object ProactiveEngine {
         true
     }
 
+    const val PROACTIVE_SESSION_TITLE = "AI 助手簡報與主動提醒"
+
+    /** 取得或建立專屬「主動訊息」聊天室（不再誤寫入一般對話第一筆 session） */
+    suspend fun getOrCreateProactiveSessionId(
+        db: com.phantom.checker.data.AppDatabase,
+        nowMs: Long = System.currentTimeMillis()
+    ): Long {
+        val sessions = db.chatDao().allSessions()
+        return sessions.firstOrNull { it.title == PROACTIVE_SESSION_TITLE }?.id
+            ?: db.chatDao().insertSession(
+                ChatSessionEntity(title = PROACTIVE_SESSION_TITLE, createdAt = nowMs)
+            )
+    }
+
+    /** 統一投遞主動訊息（寫入專屬主動訊息聊天室＋可選通知；遵守每日上限與獨立勿擾） */
+    suspend fun deliverProactiveMessage(
+        ctx: Context,
+        title: String,
+        body: String,
+        notifId: Int = NotifIds.PROACTIVE_PUSH,
+        sendNotif: Boolean = true,
+        respectDailyCap: Boolean = true,
+        nowMs: Long = System.currentTimeMillis()
+    ): Long? = withContext(Dispatchers.IO) {
+        val appCtx = ctx.applicationContext
+        val dayKey = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        if (respectDailyCap &&
+            PhantomPrefs.getProactiveDailySentCount(appCtx, dayKey) >= PhantomPrefs.getProactiveDailyCap(appCtx)
+        ) {
+            return@withContext null
+        }
+        val db = AppDatabaseHolder.db(appCtx)
+        val msgId = writeAssistantMessage(db, body, nowMs)
+        PhantomPrefs.incrementProactiveDailySentCount(appCtx, dayKey)
+        if (sendNotif && !isInDndWindow(appCtx, nowMs)) {
+            postBriefingNotification(
+                ctx = appCtx,
+                notifId = notifId,
+                title = title,
+                preview = body.replace("**", "").replace("\n", " ").take(90),
+                messageId = msgId
+            )
+        }
+        msgId
+    }
+
+    /** #366 跨分頁事件系統訊息（零 AI 呼叫，寫入當前或主動對話 session，標記系統事件 provenance） */
+    suspend fun appendSystemEventToCurrentSession(
+        ctx: Context,
+        summary: String,
+        targetSessionId: Long? = null,
+        nowMs: Long = System.currentTimeMillis()
+    ): Long = withContext(Dispatchers.IO) {
+        val db = AppDatabaseHolder.db(ctx.applicationContext)
+        val sid = targetSessionId
+            ?: db.chatDao().allSessions().firstOrNull { it.title != PROACTIVE_SESSION_TITLE }?.id
+            ?: getOrCreateProactiveSessionId(db, nowMs)
+        db.chatDao().insertMessage(
+            ChatMessageEntity(
+                sessionId = sid,
+                role = ChatMessageEntity.ROLE_ASSISTANT,
+                content = "📌 [系統事件] ${summary.trim()}",
+                createdAt = nowMs
+            )
+        )
+    }
+
     private suspend fun writeAssistantMessage(
         db: com.phantom.checker.data.AppDatabase,
         content: String,
         nowMs: Long
     ): Long {
-        val sessions = db.chatDao().allSessions()
-        val sessionId = sessions.firstOrNull()?.id ?: db.chatDao().insertSession(
-            ChatSessionEntity(title = BRIEFING_SESSION_TITLE, createdAt = nowMs)
-        )
+        val sessionId = getOrCreateProactiveSessionId(db, nowMs)
         return db.chatDao().insertMessage(
             ChatMessageEntity(
                 sessionId = sessionId,

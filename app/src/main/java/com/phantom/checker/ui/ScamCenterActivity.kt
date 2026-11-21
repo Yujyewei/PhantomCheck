@@ -68,6 +68,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.phantom.checker.data.AiRuleEntity
+import com.phantom.checker.data.WhitelistRuleHelper
 import com.phantom.checker.data.IntelResultEntity
 import com.phantom.checker.data.MessageEntity
 import com.phantom.checker.service.AppDatabaseHolder
@@ -455,6 +456,18 @@ private fun ScamDetailDialog(
     var showSuspendConfirm by remember { mutableStateOf(false) }
     var showWhitelistFlow by remember { mutableStateOf(false) }
     var showImmunityConfirm by remember { mutableStateOf(false) }
+    var showDecisionFeedback by remember { mutableStateOf(false) }
+    if (showDecisionFeedback) {
+        DecisionFeedbackDialog(
+            message = message,
+            onDismiss = { showDecisionFeedback = false },
+            onFeedbackApplied = { _, toastMsg ->
+                showDecisionFeedback = false
+                Toast.makeText(ctx, toastMsg, Toast.LENGTH_SHORT).show()
+                onWhitelistAdded()
+            }
+        )
+    }
     val initialImmunityDraft = remember(message.id) {
         com.phantom.checker.data.MemoryEngine.buildScamImmunityDraftFromMessage(message)
     }
@@ -542,33 +555,34 @@ private fun ScamDetailDialog(
             onDismiss = { showWhitelistFlow = false },
             onConfirm = { isSenderScope ->
                 scope.launch {
-                    withContext(Dispatchers.IO) {
+                    val upsertRes = withContext(Dispatchers.IO) {
                         val db = AppDatabaseHolder.db(appCtx)
                         val ruleText = if (isSenderScope) {
                             "白名單寄件者：${message.sender}（${message.appLabel}）"
                         } else {
                             message.content.trim().take(120).ifBlank { "白名單訊息（${message.sender}）" }
                         }
-                        db.aiRuleDao().insert(
-                            AiRuleEntity(
-                                ruleText = ruleText,
-                                kind = AiRuleEntity.KIND_WHITELIST,
-                                sender = if (isSenderScope) message.sender.trim() else null,
-                                packageName = message.packageName
-                            )
+                        val res = WhitelistRuleHelper.upsertWhitelist(
+                            dao = db.aiRuleDao(),
+                            ruleText = ruleText,
+                            sender = if (isSenderScope) message.sender.trim() else null,
+                            packageName = message.packageName,
+                            onCacheInvalidate = { com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches() }
                         )
-                        com.phantom.checker.service.NotificationCollectorService.invalidateRuleCaches()
-                        db.messageDao().update(
-                            message.copy(
-                                riskScore = 10,
-                                riskLabel = "safe",
-                                riskReason = "使用者手動加入白名單"
+                        if (res.isSuccess) {
+                            db.messageDao().update(
+                                message.copy(
+                                    riskScore = 10,
+                                    riskLabel = "safe",
+                                    riskReason = "使用者手動加入白名單"
+                                )
                             )
-                        )
+                        }
+                        res
                     }
                     showWhitelistFlow = false
-                    Toast.makeText(ctx, "已加入白名單", Toast.LENGTH_SHORT).show()
-                    onWhitelistAdded()
+                    Toast.makeText(ctx, upsertRes.message, Toast.LENGTH_SHORT).show()
+                    if (upsertRes.isSuccess) onWhitelistAdded()
                 }
             }
         )
@@ -747,6 +761,12 @@ private fun ScamDetailDialog(
                             Text("凍結 App", color = MaterialTheme.colorScheme.error)
                         }
                     }
+                }
+                OutlinedButton(
+                    onClick = { showDecisionFeedback = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("此判斷有誤（回饋寫回規則庫）")
                 }
             }
         },

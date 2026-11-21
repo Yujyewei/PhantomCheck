@@ -751,6 +751,10 @@ interface AiRuleDao {
     @Query("SELECT * FROM ai_rules WHERE isEnabled = 1 ORDER BY createdAt ASC, id ASC LIMIT 20")
     suspend fun active(): List<AiRuleEntity>
 
+    /** 全量啟用白名單查詢（不設 LIMIT，專供正確性比對路徑使用，避免第 21 筆以後白名單靜默失效） */
+    @Query("SELECT * FROM ai_rules WHERE isEnabled = 1 AND kind = 'whitelist' ORDER BY createdAt ASC, id ASC")
+    suspend fun activeWhitelistAll(): List<AiRuleEntity>
+
     @Query("SELECT * FROM ai_rules WHERE kind = :kind AND isEnabled = 1 ORDER BY packageName ASC, id ASC")
     suspend fun activeByKind(kind: String): List<AiRuleEntity>
 
@@ -765,6 +769,78 @@ interface AiRuleDao {
 
     @Query("DELETE FROM ai_rules WHERE id = :id")
     suspend fun deleteById(id: Long)
+}
+
+/**
+ * 統一白名單寫入與去重 helper（#362）：
+ * - 以 (sender, packageName) 或 (ruleText, packageName) 去重（忽略大小寫；null/blank packageName 視為「全部 App」）
+ * - 若已存在且 isEnabled=false → 重新啟用並回饋「已重新啟用既有規則」
+ * - 若已存在且 isEnabled=true → 不重複插入並回饋「重複，已存在」
+ * - 寫入或重新啟用後一律呼叫 invalidateRuleCaches()
+ */
+object WhitelistRuleHelper {
+    enum class Status { INSERTED, REACTIVATED, DUPLICATE, FAILED }
+
+    data class UpsertResult(
+        val status: Status,
+        val rule: AiRuleEntity?,
+        val message: String
+    ) {
+        val isSuccess: Boolean get() = status == Status.INSERTED || status == Status.REACTIVATED || status == Status.DUPLICATE
+    }
+
+    suspend fun upsertWhitelist(
+        dao: AiRuleDao,
+        ruleText: String,
+        sender: String?,
+        packageName: String?,
+        onCacheInvalidate: (() -> Unit)? = null
+    ): UpsertResult {
+        val normRuleText = ruleText.trim()
+        val normSender = sender?.trim()?.takeIf { it.isNotEmpty() }
+        val normPkg = packageName?.trim()?.takeIf { it.isNotEmpty() }
+        if (normRuleText.isEmpty() && normSender == null) {
+            return UpsertResult(Status.FAILED, null, "白名單規則內容不可為空")
+        }
+        val effectiveRuleText = normRuleText.ifEmpty { "白名單寄件者：$normSender" }
+        val existingList = dao.all().filter { it.kind == AiRuleEntity.KIND_WHITELIST }
+        val matched = existingList.firstOrNull { r ->
+            val rPkg = r.packageName?.trim()?.takeIf { it.isNotEmpty() }
+            val samePkg = (rPkg == null && normPkg == null) ||
+                (rPkg != null && normPkg != null && rPkg.equals(normPkg, ignoreCase = true))
+            if (!samePkg) return@firstOrNull false
+            val rSender = r.sender?.trim()?.takeIf { it.isNotEmpty() }
+            val sameSender = normSender != null && rSender != null && rSender.equals(normSender, ignoreCase = true)
+            val sameText = r.ruleText.trim().equals(effectiveRuleText, ignoreCase = true)
+            sameSender || (normSender == null && rSender == null && sameText)
+        }
+        if (matched != null) {
+            return if (!matched.isEnabled) {
+                val reactivated = matched.copy(isEnabled = true)
+                dao.update(reactivated)
+                onCacheInvalidate?.invoke()
+                UpsertResult(Status.REACTIVATED, reactivated, "已重新啟用既有規則")
+            } else {
+                UpsertResult(Status.DUPLICATE, matched, "重複，已存在")
+            }
+        }
+        val entity = AiRuleEntity(
+            ruleText = effectiveRuleText,
+            kind = AiRuleEntity.KIND_WHITELIST,
+            isEnabled = true,
+            createdAt = System.currentTimeMillis(),
+            sender = normSender,
+            packageName = normPkg
+        )
+        val insertedId = dao.insert(entity)
+        val verified = dao.byId(insertedId)
+        onCacheInvalidate?.invoke()
+        return if (insertedId > 0L && verified != null) {
+            UpsertResult(Status.INSERTED, verified, "已加入白名單")
+        } else {
+            UpsertResult(Status.FAILED, null, "新增白名單失敗")
+        }
+    }
 }
 
 @Dao
@@ -804,6 +880,28 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_sessions")
     suspend fun deleteAllSessions()
+
+    @Query(
+        "SELECT COUNT(*) FROM chat_messages cm " +
+            "INNER JOIN chat_sessions cs ON cm.sessionId = cs.id " +
+            "WHERE cs.title = :proactiveTitle AND cm.role = 'assistant' AND cm.createdAt > :lastReadAt"
+    )
+    fun observeProactiveUnreadCount(proactiveTitle: String, lastReadAt: Long): Flow<Int>
+
+    @Query(
+        "DELETE FROM chat_messages WHERE sessionId IN " +
+            "(SELECT id FROM chat_sessions WHERE title != :proactiveTitle)"
+    )
+    suspend fun deleteNonProactiveMessages(proactiveTitle: String)
+
+    @Query("DELETE FROM chat_sessions WHERE title != :proactiveTitle")
+    suspend fun deleteNonProactiveSessions(proactiveTitle: String)
+
+    @Transaction
+    suspend fun clearAllNonProactiveSessions(proactiveTitle: String) {
+        deleteNonProactiveMessages(proactiveTitle)
+        deleteNonProactiveSessions(proactiveTitle)
+    }
 
     @Transaction
     suspend fun clearAllSessions() {
@@ -1276,6 +1374,75 @@ interface MemoryDao {
     suspend fun deleteByIds(ids: List<Long>)
 }
 
+/**
+ * #368 定時任務模板（資料表驅動，聚合段本地零 token 與 AI 潤飾段分離）
+ */
+@Entity(
+    tableName = "task_template",
+    indices = [Index(value = ["isEnabled", "triggerType"])]
+)
+data class TaskTemplateEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val isEnabled: Boolean = true,
+    val triggerType: String = TRIGGER_DAILY, // "daily" | "weekly" | "interval"
+    val triggerTime: String = "09:00", // HH:mm
+    val intervalMinutes: Int = 60,
+    val queryKey: String = QUERY_MESSAGES_DIGEST, // messages_digest | notes_digest | todos_digest | antifraud_digest
+    val polishEnabled: Boolean = true,
+    val deliverTo: String = DELIVER_PROACTIVE_AND_NOTIF, // proactive_chat | proactive_and_notif
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastRunAt: Long = 0L
+) {
+    companion object {
+        const val TRIGGER_DAILY = "daily"
+        const val TRIGGER_WEEKLY = "weekly"
+        const val TRIGGER_INTERVAL = "interval"
+
+        const val QUERY_MESSAGES_DIGEST = "messages_digest"
+        const val QUERY_NOTES_DIGEST = "notes_digest"
+        const val QUERY_TODOS_DIGEST = "todos_digest"
+        const val QUERY_ANTIFRAUD_DIGEST = "antifraud_digest"
+
+        const val DELIVER_PROACTIVE_CHAT = "proactive_chat"
+        const val DELIVER_PROACTIVE_AND_NOTIF = "proactive_and_notif"
+
+        val ALLOWED_QUERY_KEYS: List<String> = listOf(
+            QUERY_MESSAGES_DIGEST,
+            QUERY_NOTES_DIGEST,
+            QUERY_TODOS_DIGEST,
+            QUERY_ANTIFRAUD_DIGEST
+        )
+    }
+}
+
+@Dao
+interface TaskTemplateDao {
+    @Query("SELECT * FROM task_template ORDER BY createdAt DESC, id DESC")
+    fun observeAll(): Flow<List<TaskTemplateEntity>>
+
+    @Query("SELECT * FROM task_template ORDER BY createdAt DESC, id DESC")
+    suspend fun all(): List<TaskTemplateEntity>
+
+    @Query("SELECT * FROM task_template WHERE isEnabled = 1 ORDER BY id ASC")
+    suspend fun enabled(): List<TaskTemplateEntity>
+
+    @Query("SELECT * FROM task_template WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): TaskTemplateEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entity: TaskTemplateEntity): Long
+
+    @Update
+    suspend fun update(entity: TaskTemplateEntity)
+
+    @Query("UPDATE task_template SET lastRunAt = :ts WHERE id = :id")
+    suspend fun markLastRun(id: Long, ts: Long)
+
+    @Query("DELETE FROM task_template WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
 @Database(
     entities = [
         MessageEntity::class,
@@ -1297,9 +1464,10 @@ interface MemoryDao {
         OwnReplyEchoEntity::class,
         SenderAvatarEntity::class,
         MemoryEntity::class,
-        ContactAliasEntity::class
+        ContactAliasEntity::class,
+        TaskTemplateEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1315,6 +1483,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun todoDao(): TodoDao
     abstract fun pendingAiAnalysisDao(): PendingAiAnalysisDao
     abstract fun noteDao(): NoteDao
+    abstract fun taskTemplateDao(): TaskTemplateDao
     abstract fun memoRuleDao(): MemoRuleDao
     abstract fun ownReplyEchoDao(): OwnReplyEchoDao
     abstract fun senderAvatarDao(): SenderAvatarDao
@@ -1687,6 +1856,31 @@ abstract class AppDatabase : RoomDatabase() {
                     """.trimIndent()
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_contact_aliases_alias_packageName` ON `contact_aliases` (`alias`, `packageName`)")
+            }
+        }
+
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `task_template` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `isEnabled` INTEGER NOT NULL,
+                        `triggerType` TEXT NOT NULL,
+                        `triggerTime` TEXT NOT NULL,
+                        `intervalMinutes` INTEGER NOT NULL,
+                        `queryKey` TEXT NOT NULL,
+                        `polishEnabled` INTEGER NOT NULL,
+                        `deliverTo` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `lastRunAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_task_template_isEnabled_triggerType` ON `task_template` (`isEnabled`, `triggerType`)"
+                )
             }
         }
     }
