@@ -1,7 +1,6 @@
 package com.phantom.checker.ui
 
 import android.content.Context
-import com.phantom.checker.service.DailySummaryPolicy
 import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.StatsForegroundService
 import com.phantom.checker.util.PhantomPrefs
@@ -23,9 +22,9 @@ data class SettingSearchItem(
 object SettingsCatalog {
 
     val ITEMS: List<SettingSearchItem> = listOf(
-        SettingSearchItem("quick_token_saver", "quick", "省 token 模式", "暫停每則 AI 掃描與每日摘要排程，僅命中可疑特徵才分析", listOf("省電", "省錢", "節流", "api", "token", "額度")),
+        SettingSearchItem("quick_token_saver", "quick", "省 token 模式", "暫停每則 AI 掃描並降載對話注入，僅命中可疑特徵才分析", listOf("省電", "省錢", "節流", "api", "token", "額度")),
         SettingSearchItem("quick_persistent_notif", "quick", "常駐統計通知", "通知欄即時統計與 App 圖示列", listOf("通知", "常駐", "狀態列", "統計通知", "背景")),
-        SettingSearchItem("quick_ai_risk", "quick", "AI 風險分析", "內文達觸發字數門檻且未命中過濾規則時自動評估風險（門檻可於 ai_min_trigger_length 調整）", listOf("防詐", "風險", "偵測", "分析", "ai", "掃描")),
+        SettingSearchItem("quick_ai_risk", "quick", "AI 風險分析", "內文達觸發字數門檻且未命中過濾規則時自動評估風險（門檻可於「AI 分析觸發字數門檻」調整）", listOf("防詐", "風險", "偵測", "分析", "ai", "掃描")),
         SettingSearchItem("quick_scam_popup", "quick", "詐騙警示彈出通知", "高風險訊息即時彈出警示通知", listOf("詐騙", "警示", "推播", "高風險", "alert")),
         SettingSearchItem("ai_auto_tag", "quick", "每則訊息 AI 智慧掃描", "AI 分析時自動指派「必看／行銷／垃圾通知」等標籤", listOf("標籤", "自動分類", "智慧掃描", "tag")),
         SettingSearchItem("ai_providers", "ai", "多 Provider AI 設定", "管理 OpenAI / Gemini / Groq / 自訂端點與 API Key", listOf("key", "apikey", "模型", "openai", "gemini", "provider", "金鑰"), page = "ApiKeySettingsActivity"),
@@ -35,8 +34,6 @@ object SettingsCatalog {
         SettingSearchItem("ai_quick_commands", "ai", "AI 助手常用指令與預設模式", "管理自訂常用指令，設定點擊後「直接執行」或「預輸入」", listOf("常用指令", "快捷指令", "直接執行", "預輸入", "指令", "command")),
         SettingSearchItem("ai_daily_limit", "ai", "每日 AI 額度上限", "限制每日 AI 呼叫次數", listOf("額度", "上限", "次數", "quota", "limit", "每日額度", "每日ai額度", "每日上限")),
         SettingSearchItem("ai_chat_rag_limit", "ai", "AI 助手單次閱讀訊息數", "調整 AI 助手每次讀取的歷史訊息上限（50–800 則；省 token 模式降為 100）", listOf("閱讀", "筆數", "訊息數", "rag", "context", "上下文", "400", "上限", "單次閱讀訊息數", "單次載入訊息數", "載入筆數", "閱讀訊息數", "載入訊息數")),
-        SettingSearchItem("ai_daily_summary", "quick", "每日 AI 摘要", "排程每日自動生成訊息摘要", listOf("摘要", "日報", "每日", "summary")),
-        SettingSearchItem("ai_daily_summary_notif", "ai", "每日摘要排程時間與完成推播", "調整每日摘要排程時間與生成後低干擾通知", listOf("摘要", "推播", "排程", "時間", "每日摘要")),
         SettingSearchItem("ai_auto_reply", "ai", "SMS 自動回覆設定", "開啟 SMS 自動回覆設定頁：啟用開關、回覆時段與回覆範本", listOf("自動回覆", "sms", "簡訊", "回覆", "時段", "reply"), page = "AutoReplySettingsActivity"),
         SettingSearchItem("ai_scam_center", "ai", "詐騙警示中心", "檢視高風險詐騙記錄與處置（可由訊息頁風險卡或統計頁進入）", listOf("詐騙", "警示", "中心", "高風險", "封鎖"), page = "ScamCenterActivity"),
         SettingSearchItem("ai_alert_keywords", "ai", "即時提醒關鍵字", "設定自訂即時提醒關鍵字，命中時觸發通知提醒", listOf("關鍵字", "提醒", "keyword")),
@@ -48,19 +45,18 @@ object SettingsCatalog {
         SettingSearchItem("ai_dual_model_routing_model", "ai", "雙模型路由輕量模型", "設定信心路由第一關使用的輕量模型名稱（預設 mistral-small-2603）", listOf("路由模型", "輕量模型", "mistral-small-2603", "routing")),
         SettingSearchItem("ai_model_chat", "ai", "分用途模型：AI 助手對話", "為 AI 助手對話（含圖片）獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "對話模型", "切換模型", "chat"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_message_analysis", "ai", "分用途模型：每則訊息風險分析", "為新訊息自動風險分析獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "分析模型", "風險分析", "message"), page = "ApiKeySettingsActivity"),
-        SettingSearchItem("ai_model_daily_summary", "ai", "分用途模型：每日摘要", "為每日 AI 摘要獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "摘要模型", "每日摘要", "daily"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_weekly_summary", "ai", "分用途模型：每週摘要", "為每週 AI 摘要獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "摘要模型", "每週摘要", "weekly"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_deep_analysis", "ai", "分用途模型：訊息深度分析", "為訊息深度分析獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "深度分析模型", "deep"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_settings_search", "ai", "分用途模型：設定 AI 語意搜尋", "為設定頁 AI 語意搜尋獨立選擇 Provider 模型或跟隨預設", listOf("模型", "分用途", "搜尋模型", "設定搜尋", "search"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("notif_style", "notif", "常駐通知樣式", "控制常駐通知為精簡或詳細樣式", listOf("常駐通知", "精簡", "詳細", "樣式")),
         SettingSearchItem("notif_persistent_icons", "notif", "常駐通知顯示 App 圖示條", "於常駐統計通知內顯示最近收到訊息的 App 圖示", listOf("常駐通知", "圖示列", "圖示條", "icon")),
-        SettingSearchItem("notif_ongoing", "notif", "記錄持續性通知", "是否記錄媒體播放、下載進度等 ongoing 通知", listOf("持續性", "ongoing", "音樂", "下載")),
+        SettingSearchItem("notif_ongoing", "notif", "記錄持續性通知", "是否記錄音樂播放、下載進度等持續顯示中的通知", listOf("持續性", "ongoing", "音樂", "下載")),
         SettingSearchItem("notif_quiet_hours", "notif", "勿擾時段", "指定時段內暫停詐騙警示與關鍵字推播", listOf("勿擾", "靜音", "夜間", "睡覺", "quiet")),
         SettingSearchItem("notif_filter_rules", "notif", "過濾關鍵字規則與命中動作", "新增過濾關鍵字並選擇命中後標記已過濾、不記錄或詐騙警示", listOf("過濾", "關鍵字", "黑名單", "filter")),
         SettingSearchItem("notif_interaction", "notif", "通知點擊行為", "調整點擊通知開啟幻訊或原 App", listOf("點擊", "開啟", "通知行為")),
         SettingSearchItem("notif_swipe_delete", "notif", "對話頁滑動刪除", "在對話訊息氣泡向左滑動快速刪除", listOf("左滑", "滑動刪除", "swipe")),
-        SettingSearchItem("notif_throttle", "notif", "同 key 重複節流與個別 App 覆寫", "相同通知節流秒數與個別 App 節流覆寫", listOf("節流", "同 key", "重複通知", "漏訊", "覆寫", "節流秒數", "重複節流")),
-        SettingSearchItem("notif_digit_variance", "notif", "數字微變視為同一則更新", "對監控類通知將僅數字變動視為同 key 更新並節流", listOf("數字微變", "節流", "電量", "流量")),
+        SettingSearchItem("notif_throttle", "notif", "重複通知節流與個別 App 覆寫", "避免相同通知短時間重複記錄，可自訂節流秒數與單一 App 例外", listOf("節流", "同 key", "重複通知", "漏訊", "覆寫", "節流秒數", "重複節流")),
+        SettingSearchItem("notif_digit_variance", "notif", "數字微變視為同一則更新", "對電量、流量等監控通知，僅數字變動時視為同一則更新並節流", listOf("數字微變", "節流", "電量", "流量")),
         SettingSearchItem("notif_reply_proxy", "notif", "通知欄連續快速回覆", "透過 AI 助手回覆後於通知欄保留對話輸入框，可連續回覆多則", listOf("連續回覆", "快速回覆", "代理回覆", "通知欄回覆", "reply")),
         SettingSearchItem("notif_reply_proxy_timeout", "notif", "回覆通知閒置自動收起", "設定代理回覆通知閒置多久後自動收起（15 / 30 / 60 分鐘或不自動收起）", listOf("連續回覆", "逾時", "自動收起", "閒置", "回覆通知")),
         SettingSearchItem("notif_my_display_names", "notif", "我的名稱（自我身分偵測）", "設定自己在群組通知中的顯示名稱，命中時標記為自己傳送且不計入統計", listOf("我的名稱", "自我身分", "我的顯示名稱", "自己回覆", "群組名稱", "isOwn")),
@@ -82,7 +78,7 @@ object SettingsCatalog {
         SettingSearchItem("personal_density", "personalization", "卡片密度（舒適 / 緊湊）", "調整首頁訊息卡片與對話氣泡的間距與行數密度", listOf("個人化", "密度", "緊湊", "舒適", "間距", "compact")),
         SettingSearchItem("personal_sort", "personalization", "首頁 App 排序", "切換首頁 App 清單依時間新→舊、未讀多→少或風險高→低排序", listOf("個人化", "排序", "未讀", "風險", "時間", "sort")),
         SettingSearchItem("personal_filters", "personalization", "首頁篩選欄顯示項目", "自訂首頁篩選欄是否顯示星標、詐騙、已過濾與標籤按鈕", listOf("個人化", "篩選", "filter", "星標", "標籤", "隱藏")),
-        SettingSearchItem("personal_summary_collapse", "personalization", "摘要卡預設收合", "控制每日與本週 AI 摘要卡是否預設收合為單行預覽", listOf("個人化", "摘要", "收合", "展開", "折疊")),
+        SettingSearchItem("personal_summary_collapse", "personalization", "摘要卡預設收合", "控制本週 AI 摘要與早晚簡報卡是否預設收合為單行預覽", listOf("個人化", "摘要", "收合", "展開", "折疊")),
         SettingSearchItem("personal_home_card_layout", "personalization", "首頁卡片排列模式", "切換首頁 App 卡片為一般條列或中央堆疊（焦點卡片在正中央、上下對稱縮小堆疊的垂直滾輪）", listOf("堆疊", "條列", "卡片排列", "中央堆疊", "滾輪", "重疊", "個人化")),
         SettingSearchItem("personal_notes_card_layout", "personalization", "記事卡片排列模式", "獨立設定記事分頁卡片排列：一般條列或中央堆疊滾輪（不影響首頁）", listOf("記事", "備忘錄", "卡片排列", "堆疊", "滾輪", "中央堆疊")),
         SettingSearchItem("personal_notes_todo_collapsed", "personalization", "記事分頁待辦事項收合", "收起記事分頁上方的待辦事項區，僅顯示最快到期的未完成待辦以節省空間", listOf("待辦", "收合", "收起", "展開", "待辦事項")),
@@ -91,7 +87,7 @@ object SettingsCatalog {
         SettingSearchItem("bg_global", "personalization", "全域背景圖片", "設定套用於訊息中心、統計、AI 助手與對話頁的全域底圖", listOf("個人化", "背景", "桌布", "wallpaper", "圖片", "全域")),
         SettingSearchItem("bg_chat", "personalization", "AI 聊天背景圖片", "自訂 AI 助手分頁背景圖片（未設定時沿用全域背景）", listOf("個人化", "背景", "桌布", "wallpaper", "AI", "聊天")),
         SettingSearchItem("stats_card_visibility", "stats", "統計頁卡片顯示自訂", "勾選要在統計分頁顯示的圖表與統計卡片", listOf("統計", "圖表", "排行榜", "自訂", "卡片", "折線圖", "環形圖")),
-        SettingSearchItem("stats_summary", "stats", "統計卡：每日 AI 摘要", "控制統計頁是否顯示每日 AI 摘要卡片", listOf("統計", "每日摘要", "ai摘要", "stats")),
+        SettingSearchItem("stats_briefing", "stats", "統計卡：早晚簡報", "控制統計頁是否顯示最近一次早晚簡報卡片", listOf("統計", "早晚簡報", "簡報", "briefing", "stats")),
         SettingSearchItem("stats_weekly_bar", "stats", "統計卡：本週 7 日訊息量", "控制統計頁是否顯示本週 7 日訊息量長條圖", listOf("統計", "本週", "7日", "長條圖", "訊息量")),
         SettingSearchItem("stats_risk_dist", "stats", "統計卡：風險分布三色", "控制統計頁是否顯示風險分布三色計數卡", listOf("統計", "風險分布", "安全", "疑似", "詐騙")),
         SettingSearchItem("stats_hourly", "stats", "統計卡：今日每小時分布", "控制統計頁是否顯示今日 24 小時訊息分布圖", listOf("統計", "每小時", "時段", "分布")),
@@ -107,7 +103,8 @@ object SettingsCatalog {
         SettingSearchItem("bg_scrim", "personalization", "背景暗色遮罩強度", "調整背景圖片上的暗色遮罩透明度以確保文字可讀性", listOf("個人化", "背景", "遮罩", "scrim", "暗度", "對比")),
         SettingSearchItem("glass_strength", "personalization", "玻璃卡片強度", "調整液態玻璃卡片的表面不透明度與視覺強度", listOf("個人化", "玻璃", "強度", "毛玻璃", "透明", "glass")),
         SettingSearchItem("appearance_card_bg", "appearance", "卡片底色模式", "選擇跟隨玻璃強度、透明模式（0–100% 滑桿）或深色底", listOf("卡片", "底色", "背景", "透明", "深色", "黑底", "外觀")),
-        SettingSearchItem("memory_chat_capture", "memory_assistant", "聊天記憶擷取", "允許 AI 在對話中擷取個人事實、人物、行程與偏好並彈出確認卡（確認後才寫入，衝突時提供雙版本裁定）", listOf("記憶", "記憶庫", "擷取", "聊天記憶", "自動記憶", "memory", "確認卡")),
+        SettingSearchItem("memory_chat_capture", "memory_assistant", "聊天記憶擷取", "允許 AI 在對話中擷取個人事實、人物、行程與偏好", listOf("記憶", "記憶庫", "擷取", "聊天記憶", "自動記憶", "memory", "確認卡")),
+        SettingSearchItem("memory_write_confirm", "memory_assistant", "記憶寫入前先顯示確認卡", "開啟時，AI 產生的新記憶會先在 AI 助手對話中顯示確認卡，由您選擇寫入／保留；關閉時直接寫入（敏感記憶與衝突仍必經確認）。您隨時可在記憶頁手動新增、編輯或刪除記憶。", listOf("確認卡", "記憶確認", "寫入確認", "AI 記憶")),
         SettingSearchItem("memory_normal_top_k", "memory_assistant", "記憶注入筆數（正常模式）", "設定正常模式下每次 AI 對話注入的相關記憶筆數上限（1–8 筆，預設 8 筆，總預算 ≤250 tokens）", listOf("記憶", "注入", "筆數", "topk", "正常模式", "記憶預算", "記憶筆數")),
         SettingSearchItem("memory_normal_per_item_chars", "memory_assistant", "記憶單筆截斷字數（正常模式）", "設定正常模式下每筆注入記憶的預覽截斷字數（30–120 字，預設 70 字 ≈ 50 tokens）", listOf("記憶", "字數", "截斷", "單筆", "token", "記憶長度")),
         SettingSearchItem("memory_saver_top_k", "memory_assistant", "記憶注入筆數（省 token 模式）", "獨立設定省 token 模式下每次 AI 對話注入的記憶筆數上限（1–4 筆，預設 4 筆，總預算 ≤120 tokens，與正常模式互不覆寫）", listOf("記憶", "省 token", "省電", "注入", "筆數", "省token記憶")),
@@ -118,16 +115,17 @@ object SettingsCatalog {
         SettingSearchItem("memory_privacy_tier_info", "memory_assistant", "記憶庫隱私分級說明", "一般記憶可參與本地檢索注入；標為「🔒 敏感」的記憶在任何對外 AI 請求皆由程式碼硬性排除，100% 僅留存本機", listOf("隱私", "敏感", "分級", "外送", "安全", "sensitive", "記憶隱私")),
         SettingSearchItem("ai_anti_fraud_cross_check", "memory_assistant", "記憶 × 防詐交叉檢查", "結合本機通訊錄與一般記憶做離線矛盾比對（熟人冒充、情境破綻、防詐免疫），絕不外送原始通訊錄或敏感記憶", listOf("防詐", "交叉檢查", "熟人冒充", "通訊錄", "矛盾", "免疫", "記憶防詐")),
         SettingSearchItem("calendar_integration", "memory_assistant", "本機日曆整合", "勾選開放給 AI 助手查詢空檔與寫入行程的本機日曆帳號（預設全不勾，日曆資料僅留存本機絕不外送）", listOf("日曆", "行事曆", "行程", "空檔", "撞期", "calendar")),
+        SettingSearchItem("calendar_write_confirm", "memory_assistant", "日曆寫入前先顯示確認卡", "開啟時，寫入行程前會在 AI 助手對話中顯示行程確認卡並檢查撞期；關閉時仍會執行撞期檢查，無撞期且已授權寫入權限則直接寫入。", listOf("日曆確認", "行程確認", "寫入同意", "日曆", "確認卡")),
         SettingSearchItem("schedule_memo_route", "memory_assistant", "行程類通知分流", "行程類通知優先提示加入日曆，不再自動建立待辦/記事", listOf("行程", "分流", "日曆", "待辦", "記事", "建議卡", "schedule", "calendar")),
-        SettingSearchItem("permission_hub", "permission_hub", "權限授予中心", "集中檢視並快速授予通知、簡訊、通訊錄、日曆、精確鬧鐘、電池優化與使用情況權限（Shizuku 保留於獨立卡片）", listOf("權限", "授權", "通知存取", "精確鬧鐘", "電池優化", "受限制的設定", "permission", "hub"), page = "PermissionHubActivity"),
-        SettingSearchItem("assistant_hub", "assistant_hub", "AI 夥伴與主動推播", "集中管理早晚簡報、主動推播主題、每日上限、勿擾時段、畫像卡、外部搜尋端點與通訊錄整合", listOf("夥伴", "主動推播", "簡報", "畫像卡", "勿擾", "外部搜尋", "通訊錄", "assistant", "hub"), page = "AssistantHubActivity"),
-        SettingSearchItem("contacts_integration", "assistant_hub", "通訊錄整合（暱稱／匯入／VIP）", "管理通訊軟體暱稱綁定本名、零 token 關係單位匯入與 VIP 信任圈白名單同步（原始通訊錄絕不外送 AI）", listOf("通訊錄", "聯絡人", "暱稱", "綁定", "匯入", "vip", "信任圈", "contacts"), page = "AssistantHubActivity"),
-        SettingSearchItem("briefing_morning_enabled", "assistant_hub", "早間個人簡報", "每日定時（預設 08:45）整理今日行程、待辦與重點通知寫入 AI 助手並發送通知", listOf("早間簡報", "早報", "簡報", "主動推播", "briefing"), page = "AssistantHubActivity"),
-        SettingSearchItem("briefing_evening_enabled", "assistant_hub", "晚間個人簡報", "每日定時（預設 22:25）回顧今日重點並預覽明日行程與待辦", listOf("晚間簡報", "晚報", "簡報", "主動推播", "briefing"), page = "AssistantHubActivity"),
-        SettingSearchItem("proactive_daily_cap", "assistant_hub", "每日主動推播上限", "限制 AI 助手每日主動簡報與提醒則數上限（預設 6 則，1–20 可調）", listOf("主動推播", "上限", "節流", "cap", "簡報"), page = "AssistantHubActivity"),
-        SettingSearchItem("proactive_dnd_enabled", "assistant_hub", "主動推播獨立勿擾時段", "設定主動推播的獨立勿擾時段（預設 00:00–07:00，期間仍寫入聊天但不發通知）", listOf("勿擾", "主動推播", "靜音", "dnd"), page = "AssistantHubActivity"),
-        SettingSearchItem("ai_model_briefing", "ai", "簡報與畫像卡模型", "為早晚簡報與「我對你的瞭解」畫像卡指定獨立 AI 模型", listOf("簡報模型", "畫像卡模型", "briefing", "模型")),
-        SettingSearchItem("linked_apps_center", "assistant_hub", "連結應用程式中心", "集中檢視日曆、通訊錄、通知、鬧鐘、電池優化狀態與 GitHub／Discord BYOK 雲端擴充", listOf("連結應用", "github", "discord", "webhook", "鬧鐘", "gmail", "地圖", "跨app", "linked"), page = "LinkedAppsActivity"),
+        SettingSearchItem("permission_hub", "hub", "權限授予中心", "集中檢視並快速授予通知、簡訊、通訊錄、日曆、精確鬧鐘、電池優化與使用情況權限（Shizuku 保留於獨立卡片）", listOf("權限", "授權", "通知存取", "精確鬧鐘", "電池優化", "受限制的設定", "permission", "hub"), page = "PermissionHubActivity"),
+        SettingSearchItem("assistant_hub", "hub", "AI 夥伴與主動推播", "集中管理早晚簡報、主動推播主題、每日上限、勿擾時段、畫像卡、自訂外部搜尋服務與通訊錄整合", listOf("夥伴", "主動推播", "簡報", "畫像卡", "勿擾", "外部搜尋", "通訊錄", "assistant", "hub"), page = "AssistantHubActivity"),
+        SettingSearchItem("contacts_integration", "hub", "通訊錄整合（暱稱／匯入／VIP）", "管理通訊軟體暱稱綁定本名、免 AI 額度關係匯入與 VIP 信任圈白名單同步（原始通訊錄絕不外送 AI）", listOf("通訊錄", "聯絡人", "暱稱", "綁定", "匯入", "vip", "信任圈", "contacts"), page = "AssistantHubActivity"),
+        SettingSearchItem("briefing_morning_enabled", "hub", "早間個人簡報", "每日定時（預設 08:45）整理今日行程、待辦與重點通知寫入 AI 助手並發送通知", listOf("早間簡報", "早報", "簡報", "主動推播", "briefing"), page = "AssistantHubActivity"),
+        SettingSearchItem("briefing_evening_enabled", "hub", "晚間個人簡報", "每日定時（預設 22:25）回顧今日重點並預覽明日行程與待辦", listOf("晚間簡報", "晚報", "簡報", "主動推播", "briefing"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_daily_cap", "hub", "每日主動推播上限", "限制 AI 助手每日主動簡報與提醒則數上限（預設 6 則，1–20 可調）", listOf("主動推播", "上限", "節流", "cap", "簡報"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_dnd_enabled", "hub", "主動推播獨立勿擾時段", "設定主動推播的獨立勿擾時段（預設 00:00–07:00，期間仍寫入聊天但不發通知）", listOf("勿擾", "主動推播", "靜音", "dnd"), page = "AssistantHubActivity"),
+        SettingSearchItem("ai_model_briefing", "ai", "簡報與畫像卡模型", "為早晚簡報與「我對你的瞭解」畫像卡指定獨立 AI 模型", listOf("簡報模型", "畫像卡模型", "briefing", "模型"), page = "ApiKeySettingsActivity"),
+        SettingSearchItem("linked_apps_center", "hub", "連結應用程式中心", "集中檢視日曆、通訊錄、通知、鬧鐘、電池優化狀態與自填金鑰雲端擴充（GitHub／Discord）", listOf("連結應用", "github", "discord", "webhook", "鬧鐘", "gmail", "地圖", "跨app", "linked"), page = "LinkedAppsActivity"),
         SettingSearchItem("update_auto_check", "about", "自動檢查更新", "每次開啟 App 時自動檢查 GitHub 最新版本並提示；通知欄提醒每天最多一次", listOf("檢查更新", "更新", "版本", "自動更新", "update")),
         SettingSearchItem("about_section", "about", "關於", "應用程式名稱、版本號、作者、GitHub 倉庫、第三方元件與隱私說明", listOf("版本", "作者", "關於", "about", "version", "檢查更新", "更新", "update", "下載"))
     )
@@ -145,9 +143,9 @@ object SettingsCatalog {
         "ai_dual_model_routing",
         "ai_chat_suggestions",
         "ai_chat_tab_behavior",
-        "ai_daily_summary",
-        "ai_daily_summary_notif",
         "memory_chat_capture",
+        "memory_write_confirm",
+        "calendar_write_confirm",
         "ai_anti_fraud_cross_check",
         "briefing_morning_enabled",
         "briefing_evening_enabled",
@@ -162,7 +160,7 @@ object SettingsCatalog {
         "appearance_haptic",
         "intel_enabled",
         "personal_summary_collapse",
-        "stats_summary",
+        "stats_briefing",
         "stats_weekly_bar",
         "stats_risk_dist",
         "stats_hourly",
@@ -195,9 +193,9 @@ object SettingsCatalog {
             "ai_dual_model_routing" -> PhantomPrefs.isDualModelRoutingEnabled(appCtx)
             "ai_chat_suggestions" -> PhantomPrefs.isChatSuggestionsEnabled(appCtx)
             "ai_chat_tab_behavior" -> PhantomPrefs.isAiChatTabContinue(appCtx)
-            "ai_daily_summary" -> PhantomPrefs.isDailySummaryEnabled(appCtx)
-            "ai_daily_summary_notif" -> PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
             "memory_chat_capture" -> PhantomPrefs.isMemoryChatCaptureEnabled(appCtx)
+            "memory_write_confirm" -> PhantomPrefs.isMemoryWriteConfirmEnabled(appCtx)
+            "calendar_write_confirm" -> PhantomPrefs.isCalendarWriteConfirmEnabled(appCtx)
             "ai_anti_fraud_cross_check" -> PhantomPrefs.isAntiFraudCrossCheckEnabled(appCtx)
             "briefing_morning_enabled" -> PhantomPrefs.isMorningBriefingEnabled(appCtx)
             "briefing_evening_enabled" -> PhantomPrefs.isEveningBriefingEnabled(appCtx)
@@ -212,7 +210,7 @@ object SettingsCatalog {
             "appearance_haptic" -> PhantomPrefs.isHapticFeedbackEnabled(appCtx)
             "intel_enabled" -> PhantomPrefs.isIntelEnabled(appCtx)
             "personal_summary_collapse" -> PhantomPrefs.isSummaryDefaultCollapsed(appCtx)
-            "stats_summary",
+            "stats_briefing",
             "stats_weekly_bar",
             "stats_risk_dist",
             "stats_hourly",
@@ -238,10 +236,7 @@ object SettingsCatalog {
         val appCtx = ctx.applicationContext
         val before = getBooleanState(appCtx, id) ?: return null
         when (id) {
-            "quick_token_saver" -> {
-                PhantomPrefs.setTokenSaverEnabled(appCtx, enabled)
-                DailySummaryPolicy.schedule(appCtx)
-            }
+            "quick_token_saver" -> PhantomPrefs.setTokenSaverEnabled(appCtx, enabled)
             "quick_persistent_notif" -> {
                 PhantomPrefs.setPersistentStatsEnabled(appCtx, enabled)
                 if (enabled) {
@@ -270,12 +265,9 @@ object SettingsCatalog {
                 appCtx,
                 if (enabled) PhantomPrefs.AI_CHAT_TAB_CONTINUE else PhantomPrefs.AI_CHAT_TAB_NEW
             )
-            "ai_daily_summary" -> {
-                PhantomPrefs.setDailySummaryEnabled(appCtx, enabled)
-                DailySummaryPolicy.schedule(appCtx)
-            }
-            "ai_daily_summary_notif" -> PhantomPrefs.setDailySummaryNotifEnabled(appCtx, enabled)
             "memory_chat_capture" -> PhantomPrefs.setMemoryChatCaptureEnabled(appCtx, enabled)
+            "memory_write_confirm" -> PhantomPrefs.setMemoryWriteConfirmEnabled(appCtx, enabled)
+            "calendar_write_confirm" -> PhantomPrefs.setCalendarWriteConfirmEnabled(appCtx, enabled)
             "ai_anti_fraud_cross_check" -> PhantomPrefs.setAntiFraudCrossCheckEnabled(appCtx, enabled)
             "briefing_morning_enabled" -> {
                 PhantomPrefs.setMorningBriefingEnabled(appCtx, enabled)
@@ -299,7 +291,7 @@ object SettingsCatalog {
             "appearance_haptic" -> PhantomPrefs.setHapticFeedbackEnabled(appCtx, enabled)
             "intel_enabled" -> PhantomPrefs.setIntelEnabled(appCtx, enabled)
             "personal_summary_collapse" -> PhantomPrefs.setSummaryDefaultCollapsed(appCtx, enabled)
-            "stats_summary",
+            "stats_briefing",
             "stats_weekly_bar",
             "stats_risk_dist",
             "stats_hourly",

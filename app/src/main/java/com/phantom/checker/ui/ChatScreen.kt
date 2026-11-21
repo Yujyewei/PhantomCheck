@@ -1312,14 +1312,68 @@ fun ChatAssistantTab(
                             }
                         }
 
-                        // 9. #314 A2/A4 memory_add & memory_update（一律進確認卡，含衝突預覽）
+                        // 9. #314 / #347 memory_add & memory_update（依開關決定確認卡或直接寫入；敏感記憶與衝突一律進確認卡）
                         val sourceRefNow = com.phantom.checker.data.MemoryEngine.formatChatSourceRef(
                             sessionId = sessionId,
                             userSnippet = query,
                             timeFormatted = formatChatTime(nowMs)
                         )
                         if (PhantomPrefs.isMemoryChatCaptureEnabled(appCtx)) {
-                            parsed.memoryAddProposals.forEach { map ->
+                            val confirmRequired = PhantomPrefs.isMemoryWriteConfirmEnabled(appCtx)
+                            val handleWriteCandidate: suspend (PendingMemoryWriteState) -> Unit = { candidate ->
+                                val isSensitive = candidate.privacyTier == com.phantom.checker.data.MemoryEntity.PRIVACY_SENSITIVE
+                                val hasConflict = candidate.conflictingMemory != null
+                                if (confirmRequired || isSensitive || hasConflict) {
+                                    resolvedMemoryWrites.add(candidate)
+                                } else {
+                                    val outcome = com.phantom.checker.data.MemoryEngine.writeMemoryWithConflictDetection(
+                                        db = db,
+                                        category = candidate.category,
+                                        subject = candidate.subject,
+                                        content = candidate.content,
+                                        layer = candidate.layer,
+                                        expiresAt = candidate.expiresAt,
+                                        privacyTier = candidate.privacyTier,
+                                        confidence = com.phantom.checker.data.MemoryEntity.CONFIDENCE_INFERRED,
+                                        sourceType = com.phantom.checker.data.MemoryEntity.SOURCE_CHAT,
+                                        sourceRef = candidate.sourceRef,
+                                        forceReplaceConflict = false
+                                    )
+                                    val catLbl = com.phantom.checker.data.MemoryEngine.categoryLabel(candidate.category)
+                                    val layerLbl = com.phantom.checker.data.MemoryEngine.layerLabel(candidate.layer)
+                                    when (outcome) {
+                                        is com.phantom.checker.data.MemoryEngine.WriteOutcome.Inserted -> {
+                                            val report = "✓ 已記住 #${outcome.memory.id} [$catLbl/$layerLbl] ${outcome.memory.subject}：${outcome.memory.content}"
+                                            db.chatDao().insertMessage(
+                                                ChatMessageEntity(
+                                                    sessionId = sessionId,
+                                                    role = ChatMessageEntity.ROLE_ASSISTANT,
+                                                    content = report,
+                                                    createdAt = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                        is com.phantom.checker.data.MemoryEngine.WriteOutcome.Deduplicated -> {
+                                            val report = "✓ 記憶庫已有相同內容 #${outcome.memory.id} [$catLbl/$layerLbl] ${outcome.memory.subject}，已更新時間。"
+                                            db.chatDao().insertMessage(
+                                                ChatMessageEntity(
+                                                    sessionId = sessionId,
+                                                    role = ChatMessageEntity.ROLE_ASSISTANT,
+                                                    content = report,
+                                                    createdAt = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                        is com.phantom.checker.data.MemoryEngine.WriteOutcome.ConflictDetected -> {
+                                            resolvedMemoryWrites.add(
+                                                candidate.copy(conflictingMemory = outcome.existingMemory)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            for (map in parsed.memoryAddProposals) {
                                 val expiresAt = if (map.layer == com.phantom.checker.data.MemoryEntity.LAYER_SHORT_TERM) {
                                     val days = (map.expiresDays ?: 7).coerceIn(1, 365)
                                     nowMs + java.util.concurrent.TimeUnit.DAYS.toMillis(days.toLong())
@@ -1331,7 +1385,7 @@ fun ChatAssistantTab(
                                     proposedContent = map.content,
                                     nowMs = nowMs
                                 )
-                                resolvedMemoryWrites.add(
+                                handleWriteCandidate(
                                     PendingMemoryWriteState(
                                         sessionId = sessionId,
                                         isUpdate = false,
@@ -1348,7 +1402,7 @@ fun ChatAssistantTab(
                                 )
                             }
 
-                            parsed.memoryUpdateProposals.forEach { mup ->
+                            for (mup in parsed.memoryUpdateProposals) {
                                 val existingById = mup.memoryId?.let { db.memoryDao().byId(it) }
                                 val existingBySubj = if (existingById == null && !mup.subject.isNullOrBlank()) {
                                     val normKey = com.phantom.checker.data.MemoryEngine.normalizeSubjectKey(mup.subject)
@@ -1374,7 +1428,7 @@ fun ChatAssistantTab(
                                         nowMs = nowMs
                                     )
                                 }
-                                resolvedMemoryWrites.add(
+                                handleWriteCandidate(
                                     PendingMemoryWriteState(
                                         sessionId = sessionId,
                                         isUpdate = true,
@@ -1453,9 +1507,11 @@ fun ChatAssistantTab(
                             }
                         }
 
-                        // #329 本機日曆新增行程（組裝確認卡並先做重疊撞期檢查）
+                        // #329 / #348 本機日曆新增行程（一律先做重疊撞期檢查；依開關決定直接寫入或彈出確認卡）
                         if (parsed.calendarAddProposals.isNotEmpty()) {
                             val writableCals = com.phantom.checker.util.CalendarBridge.listSelectedWritableCalendars(appCtx)
+                            val confirmRequired = PhantomPrefs.isCalendarWriteConfirmEnabled(appCtx)
+                            val hasWritePerm = com.phantom.checker.util.CalendarBridge.hasWritePermission(appCtx)
                             parsed.calendarAddProposals.forEach { cap ->
                                 val parsedStart = com.phantom.checker.util.ClientTimeParser.parseStructuredDueAt(cap.startRaw)
                                     ?: (com.phantom.checker.util.ClientTimeParser.parseNaturalReminderTime(null, cap.startRaw) as? com.phantom.checker.util.NaturalTimeParseResult.Success)?.epochMillis
@@ -1471,19 +1527,42 @@ fun ChatAssistantTab(
                                         startMs = parsedStart,
                                         endMs = parsedEnd
                                     )
-                                    resolvedCalendarAdds.add(
-                                        PendingCalendarAddition(
-                                            sessionId = sessionId,
+                                    if (!confirmRequired && hasWritePerm && writableCals.isNotEmpty() && conflicts.isEmpty()) {
+                                        val targetCal = writableCals.first()
+                                        val res = com.phantom.checker.util.CalendarBridge.insertEvent(
+                                            ctx = appCtx,
+                                            calendarId = targetCal.id,
                                             title = cap.title,
                                             startMs = parsedStart,
                                             endMs = parsedEnd,
                                             allDay = cap.allDay,
                                             location = cap.location,
-                                            notes = cap.notes,
-                                            writableCalendars = writableCals,
-                                            conflicts = conflicts
+                                            description = cap.notes
                                         )
-                                    )
+                                        val startFormatted = formatChatTime(parsedStart)
+                                        res.fold(
+                                            onSuccess = {
+                                                immediateExtraReplies.add("📅 已直接寫入本機日曆（${targetCal.displayName}）：「${cap.title}」（$startFormatted）。")
+                                            },
+                                            onFailure = { err ->
+                                                immediateExtraReplies.add("寫入日曆失敗：${err.localizedMessage ?: "未知錯誤"}。")
+                                            }
+                                        )
+                                    } else {
+                                        resolvedCalendarAdds.add(
+                                            PendingCalendarAddition(
+                                                sessionId = sessionId,
+                                                title = cap.title,
+                                                startMs = parsedStart,
+                                                endMs = parsedEnd,
+                                                allDay = cap.allDay,
+                                                location = cap.location,
+                                                notes = cap.notes,
+                                                writableCalendars = writableCals,
+                                                conflicts = conflicts
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2231,9 +2310,6 @@ fun ChatAssistantTab(
                         val next = !tokenSaverEnabled
                         tokenSaverEnabled = next
                         SettingsCatalog.applyBooleanSetting(appCtx, "quick_token_saver", next)
-                        if (!next) {
-                            com.phantom.checker.service.DailySummaryPolicy.maybeCatchUp(appCtx)
-                        }
                         onShowMessage(if (next) "已開啟省 token 模式" else "已關閉省 token 模式（已還原設定預算）")
                     },
                     label = {
@@ -2311,19 +2387,15 @@ fun ChatAssistantTab(
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = "3. 每日 AI 摘要排程與完成推播：暫停每日定時自動生成摘要與推播通知（isEffectiveDailySummaryEnabled = false；仍可手動生成，每週摘要不受影響）。",
+                            text = "3. AI 助手單次閱讀訊息上限（RAG）：由原設定值（目前設定 $normalRag 則）暫時降載為 100 則（getEffectiveChatRagMessageLimit = 100），不覆寫原設定值。",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = "4. AI 助手單次閱讀訊息上限（RAG）：由原設定值（目前設定 $normalRag 則）暫時降載為 100 則（getEffectiveChatRagMessageLimit = 100），不覆寫原設定值。",
+                            text = "4. 記憶庫對話注入預算：由正常模式（設定 $normalMemTopK 筆／每筆約 50 tokens／總預算 ≤250 tokens）切換為省 token 預算（設定 $saverMemTopK 筆／每筆約 25 tokens／總預算 ≤120 tokens），兩組設定獨立保存。",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = "5. 記憶庫對話注入預算：由正常模式（設定 $normalMemTopK 筆／每筆約 50 tokens／總預算 ≤250 tokens）切換為省 token 預算（設定 $saverMemTopK 筆／每筆約 25 tokens／總預算 ≤120 tokens），兩組設定獨立保存。",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            text = "6. 聊天附加圖片壓縮：上傳圖片邊長上限由 768px 降至 512px、JPEG 品質由 72 降至 65，減少視覺模型圖片 token 消耗。",
+                            text = "5. 聊天附加圖片壓縮：上傳圖片邊長上限由 768px 降至 512px、JPEG 品質由 72 降至 65，減少視覺模型圖片 token 消耗。",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -2334,9 +2406,6 @@ fun ChatAssistantTab(
                             val next = !tokenSaverEnabled
                             tokenSaverEnabled = next
                             SettingsCatalog.applyBooleanSetting(appCtx, "quick_token_saver", next)
-                            if (!next) {
-                                com.phantom.checker.service.DailySummaryPolicy.maybeCatchUp(appCtx)
-                            }
                             showTokenSaverInfoDialog = false
                             onShowMessage(if (next) "已開啟省 token 模式" else "已關閉省 token 模式")
                         }
@@ -2426,6 +2495,16 @@ fun ChatAssistantTab(
                                     )
                                 }
                             } else {
+                                val isBriefingMsg = msg.id > 0L && (
+                                    msg.id == PhantomPrefs.getLastBriefingMessageId(appCtx) ||
+                                        ((msg.content.startsWith("**☀️ ") || msg.content.startsWith("**🌙 ")) &&
+                                            msg.content.contains("簡報"))
+                                )
+                                if (isBriefingMsg) {
+                                    LaunchedEffect(msg.id) {
+                                        PhantomPrefs.markBriefingReadOnce(appCtx, msg.id)
+                                    }
+                                }
                                 Column(
                                     modifier = Modifier.widthIn(max = assistantBubbleMaxWidth),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)

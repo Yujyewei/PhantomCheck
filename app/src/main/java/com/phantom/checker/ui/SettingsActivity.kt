@@ -156,7 +156,6 @@ import com.phantom.checker.network.AiClient
 import com.phantom.checker.network.ApiKeySource
 import com.phantom.checker.network.IntelClient
 import com.phantom.checker.service.AppDatabaseHolder
-import com.phantom.checker.service.DailySummaryPolicy
 import com.phantom.checker.service.HeartbeatPolicy
 import com.phantom.checker.service.RetentionConfig
 import com.phantom.checker.service.RetentionPolicy
@@ -297,7 +296,9 @@ private fun isStatsForegroundServiceRunning(ctx: Context): Boolean {
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val initialCardKey = intent?.getStringExtra("highlight_card_key")
+        val initialCardKey = intent?.getStringExtra("highlight_card_key")?.let { raw ->
+            if (raw == "permission_hub" || raw == "assistant_hub") "hub" else raw
+        }
         setContent {
             PhantomCheckTheme {
                 FilterSettingsScreen(
@@ -310,7 +311,7 @@ class SettingsActivity : ComponentActivity() {
 }
 
 private val SETTINGS_CARD_ORDER = listOf(
-    "quick", "permission_hub", "assistant_hub", "personalization", "stats", "ai", "memory_assistant", "notif", "data", "appearance", "shizuku", "intel", "about"
+    "quick", "hub", "personalization", "stats", "ai", "memory_assistant", "notif", "data", "appearance", "shizuku", "intel", "about"
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
@@ -370,13 +371,11 @@ fun FilterSettingsScreen(
     var chatRagLimit by remember { mutableIntStateOf(PhantomPrefs.getChatRagMessageLimit(appCtx)) }
     var aiMinTriggerLength by remember { mutableIntStateOf(PhantomPrefs.getAiMinTriggerLength(appCtx)) }
     var todayAiUsage by remember { mutableIntStateOf(PhantomPrefs.getTodayAiUsage(appCtx)) }
-    var dailySummaryEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryEnabled(appCtx)) }
-    var dailySummaryNotifEnabled by remember { mutableStateOf(PhantomPrefs.isDailySummaryNotifEnabled(appCtx)) }
-    var summaryHour by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryHour(appCtx)) }
-    var summaryMinute by remember { mutableIntStateOf(PhantomPrefs.getDailySummaryMinute(appCtx)) }
+
 
     // #315 B4 記憶庫與 AI 助手設定
     var memoryChatCaptureEnabled by remember { mutableStateOf(PhantomPrefs.isMemoryChatCaptureEnabled(appCtx)) }
+    var memoryWriteConfirmEnabled by remember { mutableStateOf(PhantomPrefs.isMemoryWriteConfirmEnabled(appCtx)) }
     var antiFraudCrossCheckEnabled by remember { mutableStateOf(PhantomPrefs.isAntiFraudCrossCheckEnabled(appCtx)) }
     var contactsPermissionGranted by remember { mutableStateOf(com.phantom.checker.util.ContactContext.hasContactsPermission(appCtx)) }
     val contactsPermLauncher = rememberLauncherForActivityResult(
@@ -394,6 +393,8 @@ fun FilterSettingsScreen(
     var calendarWriteGranted by remember { mutableStateOf(com.phantom.checker.util.CalendarBridge.hasWritePermission(appCtx)) }
     var deviceCalendars by remember { mutableStateOf<List<com.phantom.checker.util.CalendarBridge.CalendarAccountInfo>>(emptyList()) }
     var selectedCalendarIds by remember { mutableStateOf(PhantomPrefs.getSelectedCalendarIds(appCtx)) }
+    var calendarWriteConfirmEnabled by remember { mutableStateOf(PhantomPrefs.isCalendarWriteConfirmEnabled(appCtx)) }
+    var calendarListExpanded by remember { mutableStateOf(PhantomPrefs.isCalendarListExpanded(appCtx)) }
     var scheduleMemoRoute by remember { mutableStateOf(PhantomPrefs.getScheduleMemoRoute(appCtx)) }
     val calendarPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -469,6 +470,7 @@ fun FilterSettingsScreen(
     var expandNotif by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "notif")) }
     var expandData by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "data")) }
     var expandAppearance by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "appearance")) }
+    var expandHub by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "hub")) }
     var expandShizuku by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "shizuku_advanced")) }
     var expandIntel by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "intel")) }
     var expandPersonalization by remember { mutableStateOf(PhantomPrefs.isSettingsCardExpanded(appCtx, "personalization")) }
@@ -512,8 +514,10 @@ fun FilterSettingsScreen(
                     expandQuick = true
                     PhantomPrefs.setSettingsCardExpanded(appCtx, "quick", true)
                 }
-                SettingsTourStep.PERMISSION_HUB,
-                SettingsTourStep.ASSISTANT_HUB -> Unit
+                SettingsTourStep.HUB -> {
+                    expandHub = true
+                    PhantomPrefs.setSettingsCardExpanded(appCtx, "hub", true)
+                }
                 SettingsTourStep.PERSONALIZATION -> {
                     expandPersonalization = true
                     PhantomPrefs.setSettingsCardExpanded(appCtx, "personalization", true)
@@ -611,16 +615,16 @@ fun FilterSettingsScreen(
             chatRagLimit = PhantomPrefs.getChatRagMessageLimit(appCtx)
             aiMinTriggerLength = PhantomPrefs.getAiMinTriggerLength(appCtx)
             todayAiUsage = PhantomPrefs.getTodayAiUsage(appCtx)
-            dailySummaryEnabled = PhantomPrefs.isDailySummaryEnabled(appCtx)
-            dailySummaryNotifEnabled = PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
-            summaryHour = PhantomPrefs.getDailySummaryHour(appCtx)
-            summaryMinute = PhantomPrefs.getDailySummaryMinute(appCtx)
+
             memoryChatCaptureEnabled = PhantomPrefs.isMemoryChatCaptureEnabled(appCtx)
+            memoryWriteConfirmEnabled = PhantomPrefs.isMemoryWriteConfirmEnabled(appCtx)
             antiFraudCrossCheckEnabled = PhantomPrefs.isAntiFraudCrossCheckEnabled(appCtx)
             contactsPermissionGranted = com.phantom.checker.util.ContactContext.hasContactsPermission(appCtx)
             calendarReadGranted = com.phantom.checker.util.CalendarBridge.hasReadPermission(appCtx)
             calendarWriteGranted = com.phantom.checker.util.CalendarBridge.hasWritePermission(appCtx)
             selectedCalendarIds = PhantomPrefs.getSelectedCalendarIds(appCtx)
+            calendarWriteConfirmEnabled = PhantomPrefs.isCalendarWriteConfirmEnabled(appCtx)
+            calendarListExpanded = PhantomPrefs.isCalendarListExpanded(appCtx)
             scheduleMemoRoute = PhantomPrefs.getScheduleMemoRoute(appCtx)
             memoryNormalTopK = PhantomPrefs.getMemoryNormalTopK(appCtx)
             memoryNormalPerItemChars = PhantomPrefs.getMemoryNormalPerItemChars(appCtx)
@@ -677,9 +681,12 @@ fun FilterSettingsScreen(
                 quickCommandDefaultMode = PhantomPrefs.getQuickCommandDefaultMode(appCtx)
                 quickChatCommands = PhantomPrefs.getQuickChatCommands(appCtx)
                 chatRagLimit = PhantomPrefs.getChatRagMessageLimit(appCtx)
-                dailySummaryEnabled = PhantomPrefs.isDailySummaryEnabled(appCtx)
-                dailySummaryNotifEnabled = PhantomPrefs.isDailySummaryNotifEnabled(appCtx)
+
                 memoryChatCaptureEnabled = PhantomPrefs.isMemoryChatCaptureEnabled(appCtx)
+                memoryWriteConfirmEnabled = PhantomPrefs.isMemoryWriteConfirmEnabled(appCtx)
+                calendarWriteConfirmEnabled = PhantomPrefs.isCalendarWriteConfirmEnabled(appCtx)
+                calendarListExpanded = PhantomPrefs.isCalendarListExpanded(appCtx)
+                selectedCalendarIds = PhantomPrefs.getSelectedCalendarIds(appCtx)
                 antiFraudCrossCheckEnabled = PhantomPrefs.isAntiFraudCrossCheckEnabled(appCtx)
                 memoryNormalTopK = PhantomPrefs.getMemoryNormalTopK(appCtx)
                 memoryNormalPerItemChars = PhantomPrefs.getMemoryNormalPerItemChars(appCtx)
@@ -1218,13 +1225,11 @@ fun FilterSettingsScreen(
                             ) {
                     SettingSwitchRow(
                         title = "省 token 模式",
-                        subtitle = "暫停每則 AI 掃描與每日摘要排程，僅命中可疑特徵才分析；關閉即恢復原設定",
+                        subtitle = "暫停每則 AI 掃描並降載對話注入，僅命中可疑特徵才分析；關閉即恢復原設定",
                         checked = tokenSaverEnabled,
                         onCheckedChange = { checked ->
                             tokenSaverEnabled = checked
                             PhantomPrefs.setTokenSaverEnabled(appCtx, checked)
-                            DailySummaryPolicy.schedule(appCtx)
-                            DailySummaryPolicy.maybeCatchUp(appCtx)
                         }
                     )
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -1278,22 +1283,6 @@ fun FilterSettingsScreen(
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     SettingSwitchRow(
-                        title = "每日 AI 摘要",
-                        subtitle = buildString {
-                            append(String.format(Locale.getDefault(), "排程時間：每日 %02d:%02d", summaryHour, summaryMinute))
-                            if (tokenSaverEnabled) append("；省 token 模式生效中：已暫停")
-                        },
-                        checked = dailySummaryEnabled,
-                        onCheckedChange = { checked ->
-                            dailySummaryEnabled = checked
-                            PhantomPrefs.setDailySummaryEnabled(appCtx, checked)
-                            DailySummaryPolicy.schedule(appCtx)
-                            DailySummaryPolicy.maybeCatchUp(appCtx)
-                        }
-                    )
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                    SettingSwitchRow(
                         title = "詐騙警示彈出通知",
                         subtitle = "偵測到 scam 高風險訊息時立即推送通知",
                         checked = scamAlertNotif,
@@ -1306,72 +1295,81 @@ fun FilterSettingsScreen(
             }
             }
 
-            // 1.2 #340 權限授予中心樞紐卡（集中全部權限，Shizuku 除外）
-            if ("permission_hub" in visibleCardKeys) {
-                item(key = "card_permission_hub") {
-                    PhantomGlassCard(
+            // 1.2 #354 權限與 AI 夥伴整併樞紐卡（可展開收合，收合顯示權限數＋簡報摘要）
+            if ("hub" in visibleCardKeys) {
+                item(key = "card_hub") {
+                    val notifPostOk = com.phantom.checker.service.ProactiveEngine.areNotificationsEnabled(appCtx)
+                    val smsOk = androidx.core.content.ContextCompat.checkSelfPermission(
+                        appCtx, android.Manifest.permission.RECEIVE_SMS
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    val exactAlarmOk = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        (appCtx.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == true)
+                    } else true
+                    val grantedCount = listOf(
+                        listenerEnabled,
+                        notifPostOk,
+                        smsOk,
+                        contactsPermissionGranted,
+                        calendarReadGranted,
+                        exactAlarmOk,
+                        batteryWhitelisted
+                    ).count { it }
+                    val morningOn = PhantomPrefs.isMorningBriefingEnabled(appCtx)
+                    val eveningOn = PhantomPrefs.isEveningBriefingEnabled(appCtx)
+                    val briefingStatus = when {
+                        morningOn && eveningOn -> "早 ${PhantomPrefs.getMorningBriefingTime(appCtx)}／晚 ${PhantomPrefs.getEveningBriefingTime(appCtx)}"
+                        morningOn -> "早間 ${PhantomPrefs.getMorningBriefingTime(appCtx)}"
+                        eveningOn -> "晚間 ${PhantomPrefs.getEveningBriefingTime(appCtx)}"
+                        else -> "已關閉"
+                    }
+                    CollapsibleSettingsCard(
+                        title = "權限與 AI 夥伴",
+                        collapsedSummary = "權限已授予 $grantedCount/7 項 · 早晚簡報：$briefingStatus",
+                        expanded = expandHub || ("hub" in highlightedCardKeys),
+                        highlighted = "hub" in highlightedCardKeys,
+                        onToggle = {
+                            expandHub = !expandHub
+                            PhantomPrefs.setSettingsCardExpanded(appCtx, "hub", expandHub)
+                        },
                         glassState = glassState,
-                        cornerRadius = 20.dp,
-                        contentPadding = 16.dp,
                         modifier = Modifier.onGloballyPositioned { coords ->
-                            cardBounds["permission_hub"] = coords.boundsInRoot()
+                            cardBounds["hub"] = coords.boundsInRoot()
                         }
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                text = "🔐 權限授予中心",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "集中檢視並快速授予通知存取、簡訊、通訊錄、日曆、精確鬧鐘、電池優化與使用情況權限（Shizuku 維持獨立卡片）。",
+                                text = "集中管理系統權限（通知存取、簡訊、通訊錄、日曆、精確鬧鐘、電池優化、使用情況）、早晚簡報、主動推播、畫像卡與外部連結應用。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (!notifPostOk) {
+                                Text(
+                                    text = "⚠️ 主動通知未開啟，簡報將不會出現在系統通知欄。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                OutlinedButton(
+                                    onClick = { com.phantom.checker.service.ProactiveEngine.openAppNotificationSettings(ctx) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("前往系統通知設定")
+                                }
+                            }
                             Button(
                                 onClick = { ctx.startActivity(Intent(ctx, PermissionHubActivity::class.java)) },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("開啟權限授予中心")
+                                Text("🔐 權限授予中心（已授予 $grantedCount/7 項）")
                             }
-                        }
-                    }
-                }
-            }
-
-            // 1.3 #340 AI 夥伴與主動推播樞紐卡（收納本批全部新設定）
-            if ("assistant_hub" in visibleCardKeys) {
-                item(key = "card_assistant_hub") {
-                    PhantomGlassCard(
-                        glassState = glassState,
-                        cornerRadius = 20.dp,
-                        contentPadding = 16.dp,
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            cardBounds["assistant_hub"] = coords.boundsInRoot()
-                        }
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "✨ AI 夥伴與主動推播",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "早晚個人簡報、主動推播主題與上限勿擾、畫像卡、外部搜尋端點 BYOK、通訊錄整合與連結應用程式中心。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Button(
+                                OutlinedButton(
                                     onClick = { ctx.startActivity(Intent(ctx, AssistantHubActivity::class.java)) },
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("夥伴與簡報設定", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("AI 夥伴與簡報", maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 OutlinedButton(
                                     onClick = { ctx.startActivity(Intent(ctx, LinkedAppsActivity::class.java)) },
@@ -2350,40 +2348,6 @@ fun FilterSettingsScreen(
                         }
                     )
 
-                    if (dailySummaryEnabled) {
-                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                TimePickerDialog(
-                                    ctx,
-                                    { _, h, m ->
-                                        summaryHour = h
-                                        summaryMinute = m
-                                        PhantomPrefs.setDailySummaryTime(appCtx, h, m)
-                                        DailySummaryPolicy.schedule(appCtx)
-                            DailySummaryPolicy.maybeCatchUp(appCtx)
-                                    },
-                                    summaryHour,
-                                    summaryMinute,
-                                    true
-                                ).show()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(String.format(Locale.getDefault(), "調整摘要排程時間（%02d:%02d）", summaryHour, summaryMinute))
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        SettingSwitchRow(
-                            title = "每日摘要完成推播",
-                            subtitle = "摘要生成後發送低干擾通知，點擊直達統計頁",
-                            checked = dailySummaryNotifEnabled,
-                            onCheckedChange = { checked ->
-                                dailySummaryNotifEnabled = checked
-                                PhantomPrefs.setDailySummaryNotifEnabled(appCtx, checked)
-                            }
-                        )
-                    }
-
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     Text(
@@ -2486,12 +2450,22 @@ fun FilterSettingsScreen(
                     Spacer(Modifier.height(4.dp))
                     SettingSwitchRow(
                         title = "聊天記憶擷取",
-                        subtitle = "允許 AI 在對話中提議記住人物、地點、行程、偏好與關係；一律先彈出確認卡，確認後才寫入",
+                        subtitle = "允許 AI 在對話中提議記住人物、地點、行程、偏好與關係",
                         checked = memoryChatCaptureEnabled,
                         onCheckedChange = { checked ->
                             memoryChatCaptureEnabled = checked
                             PhantomPrefs.setMemoryChatCaptureEnabled(appCtx, checked)
                             PhantomSettingsBus.notifyChanged()
+                        }
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SettingSwitchRow(
+                        title = "記憶寫入前先顯示確認卡",
+                        subtitle = "開啟時，AI 產生的新記憶會先在 AI 助手對話中顯示確認卡，由您選擇寫入／保留；關閉時直接寫入（🔒 敏感記憶與衝突仍必經確認）。您隨時可在記憶頁手動新增、編輯或刪除記憶。",
+                        checked = memoryWriteConfirmEnabled,
+                        onCheckedChange = { checked ->
+                            memoryWriteConfirmEnabled = checked
+                            PhantomPrefs.setMemoryWriteConfirmEnabled(appCtx, checked)
                         }
                     )
                     Spacer(Modifier.height(6.dp))
@@ -2535,14 +2509,14 @@ fun FilterSettingsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "• 確認卡保護：所有 AI 記憶寫入皆標示為「AI 推測（inferred）」，必須經您點擊確認卡才會寫入；若與同主題（subject）既有記憶衝突，絕不自動覆蓋，會提供「更新記憶／保留原樣」雙選項或移至「記憶」分頁衝突區裁定。\n• 刪除安全保護：任何記憶刪除動作一律彈出勾選確認卡，絕不自動執行。",
+                        text = "• 確認保護：開啟「記憶寫入前先顯示確認卡」時，AI 產生的新記憶會先在 AI 助手對話中由您確認；即使關閉，標為「🔒 敏感」的記憶、與既有記憶衝突的項目，以及任何刪除動作，仍一律彈出確認卡保護。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
-                    // #329 本機日曆整合（多日曆勾選，預設全不勾，日曆資料絕不外送 API）
+                    // #329 / #348 本機日曆整合（多日曆勾選，預設全不勾，日曆資料絕不外送 API）
                     Text(
                         text = "本機日曆整合（僅本機存取，絕不外送 API）",
                         style = MaterialTheme.typography.titleSmall,
@@ -2551,9 +2525,19 @@ fun FilterSettingsScreen(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "僅會查詢與寫入您明確勾選的本機日曆（預設全不勾）；AI 助手空檔查詢由本機直接計算，寫入前自動檢查撞期並彈出確認卡。",
+                        text = "僅會查詢與寫入您明確勾選的本機日曆（預設全不勾）；AI 助手空檔查詢由本機直接計算，寫入前自動檢查撞期。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SettingSwitchRow(
+                        title = "日曆寫入前先顯示確認卡",
+                        subtitle = "開啟時，寫入行程前會在 AI 助手對話中顯示行程確認卡；關閉時仍會檢查撞期，無撞期且已授權寫入權限則直接寫入已勾選日曆。",
+                        checked = calendarWriteConfirmEnabled,
+                        onCheckedChange = { checked ->
+                            calendarWriteConfirmEnabled = checked
+                            PhantomPrefs.setCalendarWriteConfirmEnabled(appCtx, checked)
+                        }
                     )
                     Spacer(Modifier.height(6.dp))
                     if (!calendarReadGranted) {
@@ -2615,45 +2599,72 @@ fun FilterSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                deviceCalendars.forEach { cal ->
-                                    val checked = cal.id in selectedCalendarIds
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                val next = if (checked) selectedCalendarIds - cal.id else selectedCalendarIds + cal.id
-                                                selectedCalendarIds = next
-                                                PhantomPrefs.setSelectedCalendarIds(appCtx, next)
-                                                PhantomSettingsBus.notifyChanged()
-                                            }
-                                            .padding(vertical = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Checkbox(
-                                            checked = checked,
-                                            onCheckedChange = { isChecked ->
-                                                val next = if (isChecked) selectedCalendarIds + cal.id else selectedCalendarIds - cal.id
-                                                selectedCalendarIds = next
-                                                PhantomPrefs.setSelectedCalendarIds(appCtx, next)
-                                                PhantomSettingsBus.notifyChanged()
-                                            }
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = cal.displayName + if (cal.isWritable) "（可讀寫）" else "（唯讀）",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                            val selectedCount = deviceCalendars.count { it.id in selectedCalendarIds }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val next = !calendarListExpanded
+                                        calendarListExpanded = next
+                                        PhantomPrefs.setCalendarListExpanded(appCtx, next)
+                                    }
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "已勾選 $selectedCount / ${deviceCalendars.size} 個日曆",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Icon(
+                                    imageVector = if (calendarListExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    contentDescription = if (calendarListExpanded) "收合日曆清單" else "展開日曆清單",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            AnimatedVisibility(visible = calendarListExpanded) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    deviceCalendars.forEach { cal ->
+                                        val checked = cal.id in selectedCalendarIds
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    val next = if (checked) selectedCalendarIds - cal.id else selectedCalendarIds + cal.id
+                                                    selectedCalendarIds = next
+                                                    PhantomPrefs.setSelectedCalendarIds(appCtx, next)
+                                                    PhantomSettingsBus.notifyChanged()
+                                                }
+                                                .padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = checked,
+                                                onCheckedChange = { isChecked ->
+                                                    val next = if (isChecked) selectedCalendarIds + cal.id else selectedCalendarIds - cal.id
+                                                    selectedCalendarIds = next
+                                                    PhantomPrefs.setSelectedCalendarIds(appCtx, next)
+                                                    PhantomSettingsBus.notifyChanged()
+                                                }
                                             )
-                                            if (cal.accountName.isNotBlank()) {
+                                            Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = cal.accountName,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    text = cal.displayName + if (cal.isWritable) "（可讀寫）" else "（唯讀）",
+                                                    style = MaterialTheme.typography.bodyMedium,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
+                                                if (cal.accountName.isNotBlank()) {
+                                                    Text(
+                                                        text = cal.accountName,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -4920,6 +4931,7 @@ private fun CollapsibleSettingsCard(
     glassState: HazeState,
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
+    collapsedSummary: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     PhantomGlassCard(
@@ -4944,28 +4956,42 @@ private fun CollapsibleSettingsCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                if (highlighted) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = "符合",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (highlighted) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "符合",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
+                }
+                if (!expanded && !collapsedSummary.isNullOrBlank()) {
+                    Text(
+                        text = collapsedSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
             Icon(
@@ -5273,64 +5299,57 @@ private enum class SettingsTourStep(
         title = "快速設定與省 Token",
         description = "最常用的核心開關都集中於此，包含「省 token 模式」、常駐統計通知與快速操作；你可以直接點擊洞內開關立即試用。"
     ),
-    PERMISSION_HUB(
+    HUB(
         index = 2,
-        cardKey = "permission_hub",
-        scrollCardKey = "permission_hub",
-        title = "權限授予中心（除 Shizuku）",
-        description = "集中檢視並快速授予通知存取、簡訊、通訊錄、日曆、精確鬧鐘、電池優化與使用情況權限；返回自動即時刷新狀態。"
-    ),
-    ASSISTANT_HUB(
-        index = 3,
-        cardKey = "assistant_hub",
-        scrollCardKey = "assistant_hub",
-        title = "AI 夥伴與主動推播中心",
-        description = "獨立設定頁集中收納早晚簡報、主動推播主題與上限勿擾、畫像卡、外部搜尋端點 BYOK、通訊錄整合與連結應用程式中心。"
+        cardKey = "hub",
+        scrollCardKey = "hub",
+        title = "權限與 AI 夥伴中心",
+        description = "收合時一眼查看已授予權限數與早晚簡報時間；展開後可直達權限授予中心、AI 夥伴與主動推播及連結應用程式中心。"
     ),
     PERSONALIZATION(
-        index = 4,
+        index = 3,
         cardKey = "personalization",
         scrollCardKey = "personalization",
         title = "個人化、玻璃強度與背景圖片",
         description = "調整卡片密度、時間格式、首頁排序與篩選欄，並可自訂全域／AI 聊天／對話頁三層背景圖片與液態玻璃強度。"
     ),
     AI(
-        index = 5,
+        index = 4,
         cardKey = "ai",
         scrollCardKey = "ai",
         title = "AI 用途模型與雙模型路由",
         description = "管理多 Provider API Key 與各用途模型（含簡報與畫像卡），並可開啟「雙模型信心路由」進一步省 token。"
     ),
     NOTIF(
-        index = 6,
+        index = 5,
         cardKey = "notif",
         scrollCardKey = "notif",
         title = "訊息與通知",
         description = "設定勿擾時段、即時關鍵字提醒、重複通知節流秒數、滑動刪除與點擊開啟行為，並可使用「清除已讀訊息」。"
     ),
     DATA(
-        index = 7,
+        index = 6,
         cardKey = "data",
         scrollCardKey = "data",
         title = "資料管理與自訂標籤",
         description = "管理 App 靜音清單、自訂標籤規則、訊息保留天數與則數上限、CSV 匯出，也可隨時重播新手或設定教學。"
     ),
     WHITELIST(
-        index = 8,
+        index = 7,
         cardKey = "whitelist",
         scrollCardKey = "data",
         title = "白名單管理卡",
         description = "依 App 分組收合檢視所有寄件者／內容白名單，支援手動新增（防重複）、開關啟停與確認刪除；AI 助手也會同步讀取這份清單。"
     ),
     APPEARANCE(
-        index = 9,
+        index = 8,
         cardKey = "appearance",
         scrollCardKey = "appearance",
         title = "外觀、卡片底色與保活",
         description = "切換深淺主題、Material You 動態取色、分頁欄模式，以及「卡片底色模式」（跟隨玻璃強度／透明模式滑桿／深色底），並檢查電池最佳化與前景保活狀態。"
     ),
     SHIZUKU(
-        index = 10,
+        index = 9,
         cardKey = "shizuku",
         scrollCardKey = "shizuku",
         title = "Shizuku 進階",

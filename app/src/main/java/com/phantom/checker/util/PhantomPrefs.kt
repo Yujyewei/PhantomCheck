@@ -61,7 +61,6 @@ enum class CardDensity(val prefValue: String, val label: String) {
 enum class AiPurpose(val id: String, val label: String, val catalogId: String) {
     CHAT("ai_chat", "AI 助手對話", "ai_model_chat"),
     MESSAGE_ANALYSIS("ai_message_analysis", "每則訊息風險分析", "ai_model_message_analysis"),
-    DAILY_SUMMARY("ai_daily_summary", "每日摘要", "ai_model_daily_summary"),
     WEEKLY_SUMMARY("ai_weekly_summary", "每週摘要", "ai_model_weekly_summary"),
     DEEP_ANALYSIS("ai_deep_analysis", "訊息深度分析", "ai_model_deep_analysis"),
     SETTINGS_SEARCH("ai_settings_search", "設定 AI 語意搜尋", "ai_model_settings_search"),
@@ -1369,6 +1368,8 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     /** #329 本機日曆整合：使用者勾選開放給 AI 查詢／寫入的日曆 ID 清單（預設全不勾） */
     private const val KEY_CALENDAR_SELECTED_IDS = "calendar_selected_ids"
+    private const val KEY_CALENDAR_WRITE_CONFIRM_ENABLED = "calendar_write_confirm_enabled"
+    private const val KEY_CALENDAR_LIST_EXPANDED = "calendar_list_expanded"
 
     fun getSelectedCalendarIds(ctx: Context): Set<Long> {
         val raw = prefs(ctx).getString(KEY_CALENDAR_SELECTED_IDS, "").orEmpty().trim()
@@ -1381,6 +1382,24 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun setSelectedCalendarIds(ctx: Context, ids: Set<Long>) {
         val encoded = ids.sorted().joinToString(",")
         prefs(ctx).edit().putString(KEY_CALENDAR_SELECTED_IDS, encoded).apply()
+    }
+
+    /** #348 日曆寫入前是否顯示確認卡（預設開） */
+    fun isCalendarWriteConfirmEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_CALENDAR_WRITE_CONFIRM_ENABLED, true)
+
+    fun setCalendarWriteConfirmEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_CALENDAR_WRITE_CONFIRM_ENABLED, enabled).apply()
+        PhantomSettingsBus.notifyChanged()
+    }
+
+    /** #348 本機日曆勾選清單展開狀態（預設收合） */
+    fun isCalendarListExpanded(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_CALENDAR_LIST_EXPANDED, false)
+
+    fun setCalendarListExpanded(ctx: Context, expanded: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_CALENDAR_LIST_EXPANDED, expanded).apply()
+        PhantomSettingsBus.notifyChanged()
     }
 
     /** #333 行程類備忘分流：suggest_calendar（預設，優先日曆建議卡不再進待辦/記事）或 legacy_todo_note（沿用 v3.1） */
@@ -1614,6 +1633,9 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun getLastBriefingTimestamp(ctx: Context): Long =
         prefs(ctx).getLong("briefing_last_ts", 0L)
 
+    fun getLastBriefingMessageId(ctx: Context): Long =
+        prefs(ctx).getLong("briefing_last_msg_id", -1L)
+
     fun saveLastBriefingMeta(ctx: Context, summary: String, ts: Long, messageId: Long) {
         prefs(ctx).edit()
             .putString("briefing_last_summary", summary.take(200))
@@ -1628,6 +1650,27 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun incrementBriefingReadCount(ctx: Context) {
         val p = prefs(ctx)
         p.edit().putInt("briefing_read_count", p.getInt("briefing_read_count", 0) + 1).apply()
+        PhantomSettingsBus.notifyChanged()
+    }
+
+    /**
+     * #349 以 messageId 去重計入「簡報點閱」親密值；同則簡報在聊天與統計頁僅計一次。
+     * 回傳 true 表示本次為首次點閱並已計分。
+     */
+    fun markBriefingReadOnce(ctx: Context, messageId: Long): Boolean {
+        if (messageId <= 0L) return false
+        val p = prefs(ctx)
+        val raw = p.getString("briefing_counted_msg_ids", "").orEmpty()
+        val ids = raw.split(',').mapNotNull { it.trim().toLongOrNull() }.toMutableList()
+        if (messageId in ids) return false
+        ids.add(messageId)
+        val trimmed = if (ids.size > 30) ids.takeLast(30) else ids
+        p.edit()
+            .putString("briefing_counted_msg_ids", trimmed.joinToString(","))
+            .putInt("briefing_read_count", p.getInt("briefing_read_count", 0) + 1)
+            .apply()
+        PhantomSettingsBus.notifyChanged()
+        return true
     }
 
     // ---- #337 「我對你的瞭解」畫像卡 ----
@@ -1704,7 +1747,7 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     data class StatsCardOption(val key: String, val title: String, val subtitle: String, val defaultVisible: Boolean)
 
     val STATS_CARD_OPTIONS: List<StatsCardOption> = listOf(
-        StatsCardOption("stats_summary", "每日 AI 摘要", "顯示今日 AI 重點摘要卡片", true),
+        StatsCardOption("stats_briefing", "早晚簡報", "顯示最近一次早間／晚間個人簡報，點擊可展開閱讀", true),
         StatsCardOption("stats_weekly_bar", "本週 7 日訊息量", "顯示近 7 日每日訊息長條圖", true),
         StatsCardOption("stats_risk_dist", "風險分布三色", "顯示安全／疑似／詐騙計數卡", true),
         StatsCardOption("stats_hourly", "今日每小時分布", "顯示今日 24 小時訊息分布圖", true),
@@ -1721,9 +1764,15 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     val DEFAULT_VISIBLE_STATS_CARDS: Set<String> =
         STATS_CARD_OPTIONS.filter { it.defaultVisible }.map { it.key }.toSet()
 
-    fun getVisibleStatsCards(ctx: Context): Set<String> =
-        prefs(ctx).getStringSet("visible_stats_cards", DEFAULT_VISIBLE_STATS_CARDS)
+    fun getVisibleStatsCards(ctx: Context): Set<String> {
+        val raw = prefs(ctx).getStringSet("visible_stats_cards", DEFAULT_VISIBLE_STATS_CARDS)
             ?: DEFAULT_VISIBLE_STATS_CARDS
+        return if ("stats_summary" in raw && "stats_briefing" !in raw) {
+            (raw - "stats_summary") + "stats_briefing"
+        } else {
+            raw - "stats_summary"
+        }
+    }
 
     fun setVisibleStatsCards(ctx: Context, cards: Set<String>) {
         prefs(ctx).edit().putStringSet("visible_stats_cards", cards.toSet()).apply()
@@ -1765,6 +1814,7 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     // ==================== #314 / #315 記憶庫與 AI 助手設定 ====================
 
     private const val KEY_MEMORY_CHAT_CAPTURE_ENABLED = "memory_chat_capture_enabled"
+    private const val KEY_MEMORY_WRITE_CONFIRM_ENABLED = "memory_write_confirm_enabled"
     private const val KEY_MEMORY_NORMAL_TOP_K = "memory_normal_top_k"
     private const val KEY_MEMORY_SAVER_TOP_K = "memory_saver_top_k"
     private const val KEY_MEMORY_NORMAL_PER_ITEM_CHARS = "memory_normal_per_item_chars"
@@ -1786,12 +1836,21 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     const val MEMORY_NORMAL_TOTAL_TOKEN_BUDGET = 250
     const val MEMORY_SAVER_TOTAL_TOKEN_BUDGET = 120
 
-    /** 聊天記憶擷取開關（預設開；AI 擷取後一律跳確認卡，確認才寫入） */
+    /** 聊天記憶擷取開關（預設開） */
     fun isMemoryChatCaptureEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_MEMORY_CHAT_CAPTURE_ENABLED, true)
 
     fun setMemoryChatCaptureEnabled(ctx: Context, enabled: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_MEMORY_CHAT_CAPTURE_ENABLED, enabled).apply()
+    }
+
+    /** 記憶寫入前是否顯示確認卡（預設開；敏感記憶與衝突仍一律確認） */
+    fun isMemoryWriteConfirmEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_MEMORY_WRITE_CONFIRM_ENABLED, true)
+
+    fun setMemoryWriteConfirmEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_MEMORY_WRITE_CONFIRM_ENABLED, enabled).apply()
+        PhantomSettingsBus.notifyChanged()
     }
 
     /** 正常模式記憶注入筆數 Top-K（範圍 1–8，預設 8；與省 token 模式獨立儲存、互不覆寫） */
