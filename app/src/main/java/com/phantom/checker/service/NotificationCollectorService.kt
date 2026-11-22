@@ -472,7 +472,8 @@ class NotificationCollectorService : NotificationListenerService() {
             // AI 風險分析與智慧標記：省 token 模式下僅命中可疑特徵才分析
             val tokenSaver = PhantomPrefs.isTokenSaverEnabled(applicationContext)
             val shouldRunAi = if (tokenSaver) {
-                hasSuspiciousFeature(text, isRuleFiltered)
+                val benignHosts = com.phantom.checker.util.EncryptedByokStore.getBenignUrlHosts(applicationContext)
+                IndicatorExtractor.hasSuspiciousFeature(text, isRuleFiltered, benignHosts)
             } else {
                 !isRuleFiltered
             }
@@ -642,13 +643,32 @@ class NotificationCollectorService : NotificationListenerService() {
             } catch (_: Exception) {
                 false
             }
+            val intelRecord = try {
+                db.intelDao().getResult(msgId)
+            } catch (_: Exception) {
+                null
+            }
+            val benignHosts = com.phantom.checker.util.EncryptedByokStore.getBenignUrlHosts(applicationContext)
+            val nonBenignUrls = indicators.urls.filter { u ->
+                val h = IndicatorExtractor.extractHost(u)
+                h == null || h !in benignHosts
+            }
+            val trustedHistory = PhantomPrefs.isTrustedSenderHistory(
+                ctx = applicationContext,
+                packageName = msg.packageName,
+                sender = msg.sender,
+                hasKnownAvatar = hasAvatar
+            )
             val localSignals = com.phantom.checker.util.DecisionEngine.DeterministicSignals(
                 whitelisted = isWl,
                 isKnownContactOrVip = isKnownContact,
                 hasOtp = com.phantom.checker.util.OtpDetector.extractOtp(msg.content) != null,
-                hasUrlOrCrypto = indicators.isNotEmpty(),
+                urlPresent = nonBenignUrls.isNotEmpty(),
+                cryptoAddressPresent = indicators.cryptoAddresses.isNotEmpty(),
+                intelHit = intelRecord?.isHit == true,
                 hasAmountCue = com.phantom.checker.util.DecisionEngine.hasAmountOrFraudCue(msg.content),
-                hasKnownAvatar = hasAvatar
+                hasKnownAvatar = hasAvatar,
+                trustedSenderHistory = trustedHistory
             )
             val decision = com.phantom.checker.util.DecisionEngine.evaluateRisk(
                 messageId = msgId,
@@ -661,6 +681,9 @@ class NotificationCollectorService : NotificationListenerService() {
                 ),
                 confirmThreshold = confirmThreshold
             )
+            if (decision.finalLabel == "safe" && decision.finalScore < 40) {
+                PhantomPrefs.recordSenderLowRiskMessage(applicationContext, msg.packageName, msg.sender)
+            }
             db.messageDao().update(
                 msg.copy(
                     riskScore = decision.finalScore,

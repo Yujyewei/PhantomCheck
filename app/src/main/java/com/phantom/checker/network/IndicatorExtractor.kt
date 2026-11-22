@@ -47,9 +47,14 @@ object IndicatorExtractor {
         RegexOption.IGNORE_CASE
     )
 
+    /**
+     * #375 強可疑關鍵字（可單獨觸發省 token 模式之 AI 分析）：
+     * 已移除「$」「元」「客服」「投資」「獲利」「領取」「扣款」「刷卡」「中獎」「帳號」「急件」等日常高頻單字，
+     * 避免朋友玩笑、家人領取包裹、銀行扣款、購物促銷誤觸發 AI 分析。
+     */
     val SUSPICIOUS_KEYWORDS = listOf(
-        "轉帳", "匯款", "帳號", "密碼", "驗證碼", "OTP", "中獎", "領取",
-        "凍結", "急件", "超商代碼", "ATM", "客服", "投資", "獲利", "刷卡", "扣款", "$", "元"
+        "轉帳", "匯款", "密碼", "驗證碼", "OTP",
+        "凍結", "超商代碼", "ATM", "解除分期", "投資群", "飆股", "保證金", "帳戶異常"
     )
 
     private val FULL_URL_REGEX = Regex(
@@ -63,10 +68,31 @@ object IndicatorExtractor {
 
     private val TRAILING_PUNCTUATION = charArrayOf('.', ',', ')', ']', '}', '!', '?', ';', ':', '。', '，', '！', '？', '；', '：', '」', '』', '）')
 
-    fun hasSuspiciousFeature(content: String, isRuleFiltered: Boolean): Boolean {
+    fun hasSuspiciousFeature(
+        content: String,
+        isRuleFiltered: Boolean,
+        benignHosts: Set<String> = emptySet()
+    ): Boolean {
         if (isRuleFiltered) return true
-        if (SUSPICIOUS_URL_REGEX.containsMatchIn(content)) return true
+        val extracted = extract(content)
+        if (extracted.cryptoAddresses.isNotEmpty()) return true
+        if (extracted.urls.isNotEmpty()) {
+            val hasNonBenignUrl = extracted.urls.any { url ->
+                val host = extractHost(url)
+                host == null || host !in benignHosts
+            }
+            if (hasNonBenignUrl) return true
+        }
         return SUSPICIOUS_KEYWORDS.any { content.contains(it, ignoreCase = true) }
+    }
+
+    fun extractHost(url: String): String? {
+        return try {
+            val normalized = if (url.startsWith("http://", true) || url.startsWith("https://", true)) url else "https://$url"
+            java.net.URI(normalized).host?.lowercase(java.util.Locale.ROOT)?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun extract(content: String): ExtractedIndicators {

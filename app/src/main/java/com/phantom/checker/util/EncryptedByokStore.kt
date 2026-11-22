@@ -99,4 +99,35 @@ object EncryptedByokStore {
 
     fun isDiscordConfigured(ctx: Context): Boolean =
         getDiscordWebhookUrl(ctx).startsWith("https://")
+
+    // ---- #375 本地良性 URL Host 清單（EncryptedSharedPreferences，容量上限 100，LRU 淘汰） ----
+
+    private const val KEY_BENIGN_URL_HOSTS = "benign_url_hosts_lru"
+    private const val MAX_BENIGN_URL_HOSTS = 100
+
+    fun getBenignUrlHosts(ctx: Context): Set<String> {
+        val raw = securePrefs(ctx)?.getString(KEY_BENIGN_URL_HOSTS, "").orEmpty()
+        if (raw.isBlank()) return emptySet()
+        return raw.split('\n').mapNotNull { it.trim().lowercase(java.util.Locale.ROOT).takeIf { s -> s.isNotEmpty() } }.toSet()
+    }
+
+    fun isBenignUrlHost(ctx: Context, host: String): Boolean {
+        val norm = host.trim().lowercase(java.util.Locale.ROOT).removePrefix("www.")
+        if (norm.isBlank()) return false
+        return norm in getBenignUrlHosts(ctx)
+    }
+
+    fun addBenignUrlHost(ctx: Context, host: String) {
+        val norm = host.trim().lowercase(java.util.Locale.ROOT).removePrefix("www.")
+        if (norm.isBlank()) return
+        val prefs = securePrefs(ctx) ?: return
+        val list = prefs.getString(KEY_BENIGN_URL_HOSTS, "").orEmpty()
+            .split('\n')
+            .map { it.trim().lowercase(java.util.Locale.ROOT) }
+            .filter { it.isNotEmpty() && it != norm }
+            .toMutableList()
+        list.add(norm)
+        val trimmed = if (list.size > MAX_BENIGN_URL_HOSTS) list.takeLast(MAX_BENIGN_URL_HOSTS) else list
+        prefs.edit().putString(KEY_BENIGN_URL_HOSTS, trimmed.joinToString("\n")).apply()
+    }
 }

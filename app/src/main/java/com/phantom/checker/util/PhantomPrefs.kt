@@ -2267,6 +2267,88 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun getDecisionFeedbackTotalCount(ctx: Context): Int =
         prefs(ctx).getInt("decision_feedback_total", 0)
 
+    // ---- #375 發送者 30 天輕量信譽統計（零 DB migration，自動淘汰逾 30 天與超過 200 筆） ----
+
+    private const val KEY_SENDER_REPUTATION_30D = "sender_reputation_30d"
+    private const val SENDER_REPUTATION_WINDOW_MS = 30L * 24L * 60L * 60L * 1000L
+    private const val SENDER_REPUTATION_TRUST_THRESHOLD = 10
+    private const val MAX_SENDER_REPUTATION_ENTRIES = 200
+
+    private fun senderReputationKey(packageName: String, sender: String): String =
+        "${packageName.trim().lowercase(Locale.ROOT)}|${sender.trim().lowercase(Locale.ROOT)}"
+            .replace("\n", " ")
+            .replace("=", "_")
+
+    fun recordSenderLowRiskMessage(
+        ctx: Context,
+        packageName: String,
+        sender: String,
+        nowMs: Long = System.currentTimeMillis(),
+        bonus: Int = 1
+    ) {
+        if (sender.isBlank()) return
+        val k = senderReputationKey(packageName, sender)
+        val cutoff = nowMs - SENDER_REPUTATION_WINDOW_MS
+        val p = prefs(ctx)
+        val map = LinkedHashMap<String, Pair<Int, Long>>()
+        p.getString(KEY_SENDER_REPUTATION_30D, "").orEmpty().lineSequence().forEach { line ->
+            val eq = line.lastIndexOf('=')
+            if (eq <= 0) return@forEach
+            val keyPart = line.substring(0, eq)
+            val valParts = line.substring(eq + 1).split(':')
+            val count = valParts.getOrNull(0)?.toIntOrNull() ?: return@forEach
+            val ts = valParts.getOrNull(1)?.toLongOrNull() ?: return@forEach
+            if (ts >= cutoff) {
+                map[keyPart] = count to ts
+            }
+        }
+        val prev = map.remove(k)?.first ?: 0
+        map[k] = (prev + bonus.coerceAtLeast(1)).coerceAtMost(9999) to nowMs
+        val entries = map.entries.toList()
+        val trimmed = if (entries.size > MAX_SENDER_REPUTATION_ENTRIES) {
+            entries.takeLast(MAX_SENDER_REPUTATION_ENTRIES)
+        } else {
+            entries
+        }
+        val encoded = trimmed.joinToString("\n") { (key, v) -> "$key=${v.first}:${v.second}" }
+        p.edit().putString(KEY_SENDER_REPUTATION_30D, encoded).apply()
+    }
+
+    fun getSenderLowRiskCount30d(
+        ctx: Context,
+        packageName: String,
+        sender: String,
+        nowMs: Long = System.currentTimeMillis()
+    ): Int {
+        if (sender.isBlank()) return 0
+        val k = senderReputationKey(packageName, sender)
+        val cutoff = nowMs - SENDER_REPUTATION_WINDOW_MS
+        val raw = prefs(ctx).getString(KEY_SENDER_REPUTATION_30D, "").orEmpty()
+        if (raw.isBlank()) return 0
+        raw.lineSequence().forEach { line ->
+            val eq = line.lastIndexOf('=')
+            if (eq <= 0) return@forEach
+            if (line.substring(0, eq) == k) {
+                val valParts = line.substring(eq + 1).split(':')
+                val count = valParts.getOrNull(0)?.toIntOrNull() ?: 0
+                val ts = valParts.getOrNull(1)?.toLongOrNull() ?: 0L
+                return if (ts >= cutoff) count else 0
+            }
+        }
+        return 0
+    }
+
+    fun isTrustedSenderHistory(
+        ctx: Context,
+        packageName: String,
+        sender: String,
+        hasKnownAvatar: Boolean,
+        nowMs: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (hasKnownAvatar) return true
+        return getSenderLowRiskCount30d(ctx, packageName, sender, nowMs) >= SENDER_REPUTATION_TRUST_THRESHOLD
+    }
+
     // ---- #368 連結應用中心動作登錄檔：同步時間與靜默錯誤狀態 ----
 
     fun getLinkedAppLastSyncAt(ctx: Context, connectorId: String): Long =

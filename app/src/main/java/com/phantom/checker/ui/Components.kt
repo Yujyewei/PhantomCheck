@@ -2001,6 +2001,19 @@ fun DecisionFeedbackDialog(
                                     )
                                     db.messageDao().update(safeMsg)
                                     com.phantom.checker.util.PhantomPrefs.recordDecisionFeedback(appCtx, "false_positive")
+                                    // #375 誤判回饋寫回發送者信譽與本地良性 URL host 清單（EncryptedSharedPreferences LRU 100）
+                                    com.phantom.checker.util.PhantomPrefs.recordSenderLowRiskMessage(
+                                        ctx = appCtx,
+                                        packageName = message.packageName,
+                                        sender = message.sender,
+                                        bonus = 10
+                                    )
+                                    val extractedUrls = com.phantom.checker.network.IndicatorExtractor.extract(message.content).urls
+                                    extractedUrls.forEach { u ->
+                                        com.phantom.checker.network.IndicatorExtractor.extractHost(u)?.let { host ->
+                                            com.phantom.checker.util.EncryptedByokStore.addBenignUrlHost(appCtx, host)
+                                        }
+                                    }
                                     safeMsg to "已回饋假陽性：${wlRes.message}"
                                 }
                                 1 -> {
