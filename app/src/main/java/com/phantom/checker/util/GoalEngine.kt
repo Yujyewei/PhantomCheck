@@ -163,8 +163,7 @@ object GoalEngine {
                 title = childTitle,
                 dueAt = dueMs,
                 isDone = false,
-                createdAt = System.currentTimeMillis(),
-                source = TodoEntity.SOURCE_MANUAL
+                createdAt = System.currentTimeMillis()
             )
         )
         ReminderScheduler.scheduleTodo(appCtx, todoId, dueMs)

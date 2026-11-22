@@ -1852,7 +1852,7 @@ private enum class CalendarRangeMode(val label: String, val days: Long) {
 @Composable
 private fun LocalCalendarSectionCard(
     glassState: HazeState,
-    settingsVersion: Int
+    settingsVersion: Long
 ) {
     val ctx = LocalContext.current
     val appCtx = ctx.applicationContext

@@ -147,7 +147,7 @@ object DiaryPolicy {
         val dayNotes = runCatching { db.noteDao().all() }.getOrDefault(emptyList())
             .filter { it.createdAt in dayStartMs until dayEndMs }
         dayNotes.take(8).forEach { note ->
-            val preview = note.title.ifBlank { note.content }.replace("\n", " ").take(42)
+            val preview = note.content.replace("\n", " ").trim().take(42)
             rawItems.add(
                 note.createdAt to TimelineItem(
                     timeLabel = Instant.ofEpochMilli(note.createdAt).atZone(zone).format(timeFmt),

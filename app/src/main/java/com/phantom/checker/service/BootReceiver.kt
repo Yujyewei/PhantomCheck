@@ -50,11 +50,17 @@ class BootReceiver : BroadcastReceiver() {
                     }
                 }
                 val pendingTodos = db.todoDao().pendingTodos()
+                val dayKey = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+                val catchUpFloorMs = now - 24L * 60L * 60L * 1000L
                 pendingTodos.forEach { todo ->
                     if (todo.dueAt > now) {
                         ReminderScheduler.scheduleTodo(appCtx, todo.id, todo.dueAt)
-                    } else {
-                        ReminderScheduler.deliverTodoReminder(appCtx, todo.id)
+                    } else if (todo.dueAt >= catchUpFloorMs) {
+                        val bootKey = "boot_todo:${todo.id}:$dayKey"
+                        if (!com.phantom.checker.util.PhantomPrefs.isProactiveMilestoneDelivered(appCtx, bootKey, dayKey)) {
+                            com.phantom.checker.util.PhantomPrefs.markProactiveMilestonesDelivered(appCtx, listOf(bootKey), dayKey)
+                            ReminderScheduler.deliverTodoReminder(appCtx, todo.id)
+                        }
                     }
                 }
                 TaskTemplateScheduler.rescheduleAllEnabled(appCtx)

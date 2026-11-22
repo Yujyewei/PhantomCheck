@@ -2741,14 +2741,11 @@ fun FilterSettingsScreen(
                                                                     PhantomSettingsBus.notifyChanged()
                                                                 }
                                                             )
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .size(10.dp)
-                                                                    .background(
-                                                                        color = if (cal.color != 0) Color(cal.color) else MaterialTheme.colorScheme.primary,
-                                                                        shape = CircleShape
-                                                                    )
-                                                            )
+                                                            Surface(
+                                                                modifier = Modifier.size(10.dp),
+                                                                shape = androidx.compose.foundation.shape.CircleShape,
+                                                                color = if (cal.color != 0) Color(cal.color) else MaterialTheme.colorScheme.primary
+                                                            ) {}
                                                             Spacer(Modifier.width(8.dp))
                                                             Column(modifier = Modifier.weight(1f)) {
                                                                 val badges = buildString {

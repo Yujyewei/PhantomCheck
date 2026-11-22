@@ -308,7 +308,7 @@ private fun PermissionHubScreen(onBack: () -> Unit) {
                             HorizontalDivider()
                             val hcAvailability = remember { com.phantom.checker.util.HealthConnectBridge.checkAvailability(appCtx) }
                             var hcGranted by remember { mutableStateOf(false) }
-                            LaunchedEffect(Unit) {
+                            androidx.compose.runtime.LaunchedEffect(Unit) {
                                 hcGranted = com.phantom.checker.util.HealthConnectBridge.hasAllReadPermissions(appCtx)
                             }
                             val hcPermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(

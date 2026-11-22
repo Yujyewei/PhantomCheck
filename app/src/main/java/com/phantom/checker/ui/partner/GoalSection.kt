@@ -53,7 +53,7 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun PartnerGoalsCard(
     glassState: HazeState,
-    settingsVersion: Int,
+    settingsVersion: Long,
     onGoalsChanged: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
