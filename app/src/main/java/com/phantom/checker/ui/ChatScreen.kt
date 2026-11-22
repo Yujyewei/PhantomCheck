@@ -4143,6 +4143,37 @@ fun ChatAssistantTab(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val calRoute = remember(pendingCal.title, pendingCal.writableCalendars.size) {
+                                    com.phantom.checker.util.IntentCapabilityRegistry.resolve(
+                                        ctx = appCtx,
+                                        intent = com.phantom.checker.util.IntentCapabilityRegistry.IntentType.CALENDAR_ADD,
+                                        hasSelectedWritableCalendar = pendingCal.writableCalendars.isNotEmpty()
+                                    )
+                                }
+                                Text(
+                                    text = calRoute.executionWayLine(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                calRoute.rerouteNoticeText()?.let { notice ->
+                                    Text(
+                                        text = "ℹ️ $notice",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (calRoute.isAllBlocked) {
+                                    TextButton(
+                                        onClick = {
+                                            ctx.startActivity(
+                                                com.phantom.checker.util.IntentCapabilityRegistry.buildPermissionHubIntent(ctx)
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("前往權限授予中心", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                                 if (!pendingCal.location.isNullOrBlank()) {
                                     Text(
                                         text = "地點：${pendingCal.location}",
@@ -4313,6 +4344,36 @@ fun ChatAssistantTab(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val remRoute = remember(pendingTodo.title, pendingTodo.dueAt) {
+                                    com.phantom.checker.util.IntentCapabilityRegistry.resolve(
+                                        ctx = appCtx,
+                                        intent = com.phantom.checker.util.IntentCapabilityRegistry.IntentType.REMINDER
+                                    )
+                                }
+                                Text(
+                                    text = remRoute.executionWayLine(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                remRoute.rerouteNoticeText()?.let { notice ->
+                                    Text(
+                                        text = "ℹ️ $notice",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (remRoute.isAllBlocked) {
+                                    TextButton(
+                                        onClick = {
+                                            ctx.startActivity(
+                                                com.phantom.checker.util.IntentCapabilityRegistry.buildPermissionHubIntent(ctx)
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("前往權限授予中心", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                                 Spacer(Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -5054,6 +5115,26 @@ fun ChatAssistantTab(
                                         text = crossAct.summary(),
                                         style = MaterialTheme.typography.bodySmall
                                     )
+                                    val openAppRoute = remember(crossAct) {
+                                        val pkg = (crossAct as? com.phantom.checker.util.CrossAppActionProposal.OpenApp)?.packageName
+                                        com.phantom.checker.util.IntentCapabilityRegistry.resolve(
+                                            ctx = appCtx,
+                                            intent = com.phantom.checker.util.IntentCapabilityRegistry.IntentType.OPEN_APP,
+                                            targetPackage = pkg
+                                        )
+                                    }
+                                    Text(
+                                        text = openAppRoute.executionWayLine(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    openAppRoute.rerouteNoticeText()?.let { notice ->
+                                        Text(
+                                            text = "ℹ️ $notice",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                     Text(
                                         text = "系統不會自動執行此操作；請確認參數無誤後點擊「執行」。",
                                         style = MaterialTheme.typography.labelSmall,
