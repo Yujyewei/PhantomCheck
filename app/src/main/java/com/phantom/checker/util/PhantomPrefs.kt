@@ -65,7 +65,8 @@ enum class AiPurpose(val id: String, val label: String, val catalogId: String) {
     DEEP_ANALYSIS("ai_deep_analysis", "訊息深度分析", "ai_model_deep_analysis"),
     SETTINGS_SEARCH("ai_settings_search", "設定 AI 語意搜尋", "ai_model_settings_search"),
     AUTO_MEMO("ai_auto_memo", "自動備忘錄生成", "ai_model_auto_memo"),
-    BRIEFING("ai_briefing", "早晚簡報與畫像卡", "ai_model_briefing")
+    BRIEFING("ai_briefing", "早晚簡報與畫像卡", "ai_model_briefing"),
+    PROACTIVE("ai_proactive", "主動情報萃取與摘要", "ai_model_proactive")
 }
 
 enum class TabBarDisplayMode(val prefValue: String, val label: String) {
@@ -359,6 +360,84 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
                 p.edit().putInt(KEY_AI_USAGE_COUNT, currentCount - 1).apply()
             }
         }
+    }
+
+    /** #388 主動情報中樞（AiPurpose.PROACTIVE）獨立每日額度（預設 12 次/日，不吃聊天／分析配額） */
+    fun getProactiveAiDailyLimit(ctx: Context): Int =
+        prefs(ctx).getInt("ai_proactive_daily_limit", 12).coerceIn(1, 50)
+
+    @Synchronized
+    fun getProactiveAiTodayUsed(ctx: Context): Int {
+        val p = prefs(ctx)
+        return if (p.getString("ai_proactive_usage_date", "") == todayDateStr()) {
+            p.getInt("ai_proactive_usage_count", 0)
+        } else 0
+    }
+
+    @Synchronized
+    fun canUseProactiveAiTodayAndIncrement(ctx: Context): Boolean {
+        val limit = getProactiveAiDailyLimit(ctx)
+        val p = prefs(ctx)
+        val today = todayDateStr()
+        val storedDate = p.getString("ai_proactive_usage_date", "")
+        val currentCount = if (storedDate == today) p.getInt("ai_proactive_usage_count", 0) else 0
+        if (currentCount >= limit) return false
+        p.edit()
+            .putString("ai_proactive_usage_date", today)
+            .putInt("ai_proactive_usage_count", currentCount + 1)
+            .apply()
+        return true
+    }
+
+    @Synchronized
+    fun refundTodayProactiveAiUsage(ctx: Context) {
+        val p = prefs(ctx)
+        val today = todayDateStr()
+        if (p.getString("ai_proactive_usage_date", "") == today) {
+            val currentCount = p.getInt("ai_proactive_usage_count", 0)
+            if (currentCount > 0) {
+                p.edit().putInt("ai_proactive_usage_count", currentCount - 1).apply()
+            }
+        }
+    }
+
+    /** #388 / #390 主動情報總開關（預設 false；關閉時零 AI 呼叫、零外送、worker 不排程） */
+    fun isProactiveIntelEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_intel_enabled", false)
+
+    fun setProactiveIntelEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_intel_enabled", enabled).apply()
+    }
+
+    /** #388 / #390 每日自動萃取關注主題開關（預設 true，須總開關開啟才生效） */
+    fun isProactiveExtractEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_extract_enabled", true)
+
+    fun setProactiveExtractEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_extract_enabled", enabled).apply()
+    }
+
+    /** #390 主動情報查詢頻率（6 / 12 / 24 小時，預設 6 小時） */
+    fun getProactiveIntelFreqHours(ctx: Context): Int =
+        prefs(ctx).getInt("proactive_intel_freq_hours", 6).let { if (it in setOf(6, 12, 24)) it else 6 }
+
+    fun setProactiveIntelFreqHours(ctx: Context, hours: Int) {
+        val v = if (hours in setOf(6, 12, 24)) hours else 6
+        prefs(ctx).edit().putInt("proactive_intel_freq_hours", v).apply()
+    }
+
+    fun hasSeenProactiveIntelConsent(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("proactive_intel_consent_seen", false)
+
+    fun setSeenProactiveIntelConsent(ctx: Context, seen: Boolean) {
+        prefs(ctx).edit().putBoolean("proactive_intel_consent_seen", seen).apply()
+    }
+
+    fun getWatchTopicLastExtractDay(ctx: Context): String =
+        prefs(ctx).getString("watch_topic_last_extract_day", "").orEmpty()
+
+    fun setWatchTopicLastExtractDay(ctx: Context, dayKey: String) {
+        prefs(ctx).edit().putString("watch_topic_last_extract_day", dayKey).apply()
     }
 
     /** 每日 AI 摘要開關與排程時間（預設開、22:00） */
@@ -1087,6 +1166,55 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     fun setHasBackgroundImage(ctx: Context, layer: BackgroundLayer, enabled: Boolean) {
         prefs(ctx).edit().putBoolean("bg_enabled_${layer.name.lowercase()}", enabled).apply()
+    }
+
+    /** #392 夥伴（助手）頁頂部橫幅背景自訂狀態 */
+    fun hasAssistantHeaderBackground(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("assistant_header_background", false)
+
+    fun setHasAssistantHeaderBackground(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("assistant_header_background", enabled).apply()
+    }
+
+    /** #393 AI 聊天室字體獨立縮放（0.85f..1.30f，預設 1.0f＝v3.5.0 現行） */
+    fun getChatFontScale(ctx: Context): Float =
+        prefs(ctx).getFloat("chat_font_scale", 1.0f).coerceIn(0.85f, 1.30f)
+
+    fun setChatFontScale(ctx: Context, scale: Float) {
+        prefs(ctx).edit().putFloat("chat_font_scale", scale.coerceIn(0.85f, 1.30f)).apply()
+    }
+
+    /** #393 訊息中心字體獨立縮放（0.85f..1.30f，預設 1.0f＝v3.5.0 現行） */
+    fun getMessagesFontScale(ctx: Context): Float =
+        prefs(ctx).getFloat("messages_font_scale", 1.0f).coerceIn(0.85f, 1.30f)
+
+    fun setMessagesFontScale(ctx: Context, scale: Float) {
+        prefs(ctx).edit().putFloat("messages_font_scale", scale.coerceIn(0.85f, 1.30f)).apply()
+    }
+
+    /** #393 聊天氣泡圓角半徑（8..24 dp，預設 18 dp＝v3.5.0 現行） */
+    fun getChatBubbleCornerDp(ctx: Context): Int =
+        prefs(ctx).getInt("chat_bubble_corner_dp", 18).coerceIn(8, 24)
+
+    fun setChatBubbleCornerDp(ctx: Context, dp: Int) {
+        prefs(ctx).edit().putInt("chat_bubble_corner_dp", dp.coerceIn(8, 24)).apply()
+    }
+
+    /** #393 聊天氣泡寬度比例（70..95%，預設 82%＝v3.5.0 現行；助手氣泡自動＋6% 上限 96%） */
+    fun getChatBubbleWidthPercent(ctx: Context): Int =
+        prefs(ctx).getInt("chat_bubble_width_ratio", 82).coerceIn(70, 95)
+
+    fun setChatBubbleWidthPercent(ctx: Context, percent: Int) {
+        prefs(ctx).edit().putInt("chat_bubble_width_ratio", percent.coerceIn(70, 95)).apply()
+    }
+
+    /** #393 首頁我的最愛 App 橫列顯示數上限（0＝全部顯示＝v3.5.0 預設；否則 4/6/8） */
+    fun getFavoriteAppsMaxVisible(ctx: Context): Int =
+        prefs(ctx).getInt("favorite_apps_max_visible", 0).let { if (it <= 0) 0 else it.coerceIn(2, 12) }
+
+    fun setFavoriteAppsMaxVisible(ctx: Context, maxCount: Int) {
+        val v = if (maxCount <= 0) 0 else maxCount.coerceIn(2, 12)
+        prefs(ctx).edit().putInt("favorite_apps_max_visible", v).apply()
     }
 
     /** 背景暗色遮罩強度（-1 = 預設：日間 35%、夜間 60%；0..100 = 自訂百分比） */

@@ -258,6 +258,11 @@ fun ChatAssistantTab(
     var suggestionChips by remember { mutableStateOf(listOf<String>()) }
     var profiles by remember { mutableStateOf(AiClient.getProfiles(appCtx)) }
     var activeProfile by remember { mutableStateOf(AiClient.getProfileForPurpose(appCtx, com.phantom.checker.util.AiPurpose.CHAT)) }
+    var webSearchEnabled by remember { mutableStateOf(false) }
+    val webSearchSupported = remember(activeProfile) {
+        AiClient.isGeminiGroundingSupported(activeProfile) ||
+            com.phantom.checker.util.EncryptedByokStore.isExternalSearchConfigured(appCtx)
+    }
     var hasApiKey by remember { mutableStateOf(activeProfile != null) }
     var showSuggestions by remember { mutableStateOf(PhantomPrefs.isChatSuggestionsEnabled(appCtx)) }
     var assistantName by remember { mutableStateOf(PhantomPrefs.getAssistantName(appCtx)) }
@@ -484,6 +489,48 @@ fun ChatAssistantTab(
                 com.phantom.checker.util.GoalEngine.detectGoalCandidate(appCtx, displayUserText)?.let { cand ->
                     pendingGoalCandidate = sessionId to cand
                 }
+            }
+
+            // #389 聊天頁「🔍 聯網」開關：走 runGroundedQuery（Gemini 3+ tools=[google_search] 或 BYOK），查無／失敗誠實回報
+            if (webSearchEnabled && attachedImage == null) {
+                val groundedPrompt =
+                    "你是 PhantomCheck 聯網查證助手，請一律使用繁體中文回答。" +
+                        "規則：1) 僅依據搜尋工具回傳的真實最新資料作答 2) 若搜尋無結果或查無相關資訊，直接回答「查無相關最新資料」，嚴禁以模型既有知識頂替或編造 3) 重要事實請保留來源連結。"
+                val groundedRes = AiClient.runGroundedQuery(
+                    context = appCtx,
+                    systemPrompt = groundedPrompt,
+                    userQuery = query,
+                    maxTokens = 480,
+                    purpose = com.phantom.checker.util.AiPurpose.CHAT
+                )
+                val finalContent = groundedRes.fold(
+                    onSuccess = { gr ->
+                        buildString {
+                            append("🔍 **聯網查證結果**\n\n")
+                            append(gr.text.trim())
+                            if (gr.sources.isNotEmpty()) {
+                                append("\n\n**參考來源**\n")
+                                gr.sources.forEach { url -> appendLine("- $url") }
+                            }
+                        }.trim()
+                    },
+                    onFailure = { err ->
+                        "🔍 聯網查詢未完成：${err.message ?: "請稍後再試"}（查無或失敗時絕不以模型既有知識頂替）。"
+                    }
+                )
+                withContext(Dispatchers.IO) {
+                    db.chatDao().insertMessage(
+                        ChatMessageEntity(
+                            sessionId = sessionId,
+                            role = ChatMessageEntity.ROLE_ASSISTANT,
+                            content = finalContent,
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+                loadMessages(sessionId)
+                isSending = false
+                return@launch
             }
 
             val history = messages
@@ -914,12 +961,9 @@ fun ChatAssistantTab(
                     resolvedAdjustStates.isNotEmpty() ||
                     resolvedMsgActions.isNotEmpty() ||
                     resolvedTodoInsertions.isNotEmpty() ||
-                    parsed.memoryViewProposals.isNotEmpty() ||
-                    parsed.memoryAddProposals.isNotEmpty() ||
-                    parsed.memoryUpdateProposals.isNotEmpty() ||
-                    parsed.memoryDeleteProposals.isNotEmpty() ||
-                    parsed.calendarFreeQueryProposals.isNotEmpty() ||
-                    parsed.calendarAddProposals.isNotEmpty()
+                    parsed.openSettingProposals.isNotEmpty() ||
+                    parsed.crossAppActions.isNotEmpty() ||
+                    parsed.hasExtendedProposals()
 
                 val storedReply = parsed.cleanReply.ifBlank {
                     when {
@@ -1000,21 +1044,7 @@ fun ChatAssistantTab(
                     showUsagePermissionGuideCard = true
                 }
 
-                val hasExtendedProposals = parsed.searchProposals.isNotEmpty() ||
-                    parsed.todoManageProposals.isNotEmpty() ||
-                    parsed.vipPinProposals.isNotEmpty() ||
-                    parsed.muteAppProposals.isNotEmpty() ||
-                    parsed.markReadProposals.isNotEmpty() ||
-                    parsed.exportProposals.isNotEmpty() ||
-                    parsed.whitelistDeleteProposals.isNotEmpty() ||
-                    parsed.memoryViewProposals.isNotEmpty() ||
-                    parsed.memoryAddProposals.isNotEmpty() ||
-                    parsed.memoryUpdateProposals.isNotEmpty() ||
-                    parsed.memoryDeleteProposals.isNotEmpty() ||
-                    parsed.calendarFreeQueryProposals.isNotEmpty() ||
-                    parsed.calendarAddProposals.isNotEmpty() ||
-                    parsed.usageQueryProposals.isNotEmpty() ||
-                    parsed.demotedQueryHints.isNotEmpty()
+                val hasExtendedProposals = parsed.hasExtendedProposals()
 
                 if (hasExtendedProposals) {
                     withContext(Dispatchers.IO) {
@@ -1540,6 +1570,18 @@ fun ChatAssistantTab(
                                         )
                                     )
                                 }
+                            }
+                        }
+
+                        // #387 本機日曆行程／課表查詢（純本機 CalendarBridge.queryInstances，嚴禁編造）
+                        if (parsed.calendarQueryProposals.isNotEmpty()) {
+                            parsed.calendarQueryProposals.forEach { q ->
+                                val summary = com.phantom.checker.util.CalendarBridge.queryScheduleSummary(
+                                    ctx = appCtx,
+                                    dateRaw = q.date,
+                                    dayFilter = q.day
+                                )
+                                immediateExtraReplies.add(summary)
                             }
                         }
 
@@ -2834,9 +2876,20 @@ fun ChatAssistantTab(
         }
 
         // 對話內容區
+        val chatLayoutVer by PhantomSettingsBus.version.collectAsState()
+        val chatFontScale = remember(chatLayoutVer) { PhantomPrefs.getChatFontScale(appCtx) }
+        val bubbleCornerDp = remember(chatLayoutVer) { PhantomPrefs.getChatBubbleCornerDp(appCtx) }
+        val bubbleWidthPct = remember(chatLayoutVer) { PhantomPrefs.getChatBubbleWidthPercent(appCtx) }
+        val baseDensity = LocalDensity.current
+        val chatDensity = remember(baseDensity, chatFontScale) {
+            androidx.compose.ui.unit.Density(
+                density = baseDensity.density,
+                fontScale = baseDensity.fontScale * chatFontScale
+            )
+        }
         BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            val userBubbleMaxWidth = maxWidth * 0.82f
-            val assistantBubbleMaxWidth = maxWidth * 0.88f
+            val userBubbleMaxWidth = maxWidth * (bubbleWidthPct / 100f)
+            val assistantBubbleMaxWidth = maxWidth * ((bubbleWidthPct + 6).coerceAtMost(96) / 100f)
             if (messages.isEmpty() && !isSending) {
                 EmptyStateView(
                     icon = AutoAwesomeIcon,
@@ -2844,8 +2897,7 @@ fun ChatAssistantTab(
                     description = "你可以問「今天 LINE 的訊息」、「昨日簡報」或「最近有可疑詐騙嗎」，${assistantName}會根據你的本地備份唯讀查詢並引用來源。"
                 )
             } else {
-                val chatSettingsVer by PhantomSettingsBus.version.collectAsState()
-                val showBubbleTimestamp = remember(chatSettingsVer) {
+                val showBubbleTimestamp = remember(chatLayoutVer) {
                     PhantomPrefs.isChatTimestampEnabled(appCtx)
                 }
                 LazyColumn(
@@ -2855,6 +2907,7 @@ fun ChatAssistantTab(
                 ) {
                     items(messages, key = { it.id }, contentType = { it.role }) { msg ->
                         val isUser = msg.role == ChatMessageEntity.ROLE_USER
+                        androidx.compose.runtime.CompositionLocalProvider(LocalDensity provides chatDensity) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -2864,11 +2917,11 @@ fun ChatAssistantTab(
                             }
                             if (isUser) {
                                 Surface(
-                                    shape = RoundedCornerShape(18.dp),
+                                    shape = RoundedCornerShape(bubbleCornerDp.dp),
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier
                                         .widthIn(max = userBubbleMaxWidth)
-                                        .clip(RoundedCornerShape(18.dp))
+                                        .clip(RoundedCornerShape(bubbleCornerDp.dp))
                                         .combinedClickable(
                                             onClick = {},
                                             onLongClick = {
@@ -2942,7 +2995,7 @@ fun ChatAssistantTab(
                                     PhantomGlassCard(
                                         glassState = glassState,
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(18.dp))
+                                            .clip(RoundedCornerShape(bubbleCornerDp.dp))
                                             .combinedClickable(
                                                 onClick = {},
                                                 onLongClick = {
@@ -2953,7 +3006,7 @@ fun ChatAssistantTab(
                                                     onShowMessage("已複製助手回覆")
                                                 }
                                             ),
-                                        cornerRadius = 18.dp,
+                                        cornerRadius = bubbleCornerDp.dp,
                                         contentPadding = 12.dp
                                     ) {
                                         val thinking = msg.thinkingContent?.takeIf { it.isNotBlank() }
@@ -3101,6 +3154,31 @@ fun ChatAssistantTab(
                                             )
                                         }
                                     }
+                                    if (msg.content.startsWith("📡 **關注情報：")) {
+                                        val topicHeader = remember(msg.content) {
+                                            msg.content.lineSequence().firstOrNull()
+                                                ?.removePrefix("📡 **關注情報：")
+                                                ?.removeSuffix("**")
+                                                ?.trim()
+                                                .orEmpty()
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                inputText = if (topicHeader.isNotBlank()) {
+                                                    "請針對「$topicHeader」的最新情報深入說明重點與影響："
+                                                } else {
+                                                    "請針對上述關注情報深入說明重點與影響："
+                                                }
+                                                if (webSearchSupported) {
+                                                    webSearchEnabled = true
+                                                }
+                                                onShowMessage("已預填深入追問內容，可直接編輯送出")
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                        ) {
+                                            Text("💬 深入追問", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
                                     val autoMems = remember(allMemoriesLive, msg.id) {
                                         allMemoriesLive.filter { it.sourceRef?.contains("|msg:${msg.id}|") == true }
                                     }
@@ -3116,6 +3194,7 @@ fun ChatAssistantTab(
                                     }
                                 }
                             }
+                        }
                         }
                     }
 
@@ -5487,6 +5566,25 @@ fun ChatAssistantTab(
                     )
                 }
             }
+            FilterChip(
+                selected = webSearchEnabled && webSearchSupported,
+                onClick = {
+                    if (webSearchSupported) {
+                        webSearchEnabled = !webSearchEnabled
+                    } else {
+                        webSearchEnabled = false
+                        onShowMessage("目前供應商不支援聯網查詢（請使用 Gemini 3+ 預設檔，或於設定填寫 BYOK 外部搜尋端點）")
+                    }
+                },
+                label = {
+                    Text(
+                        text = if (webSearchEnabled && webSearchSupported) "🔍 聯網中" else "🔍 聯網",
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                },
+                modifier = Modifier.alpha(if (webSearchSupported) 1f else 0.5f)
+            )
             OutlinedTextField(
                 value = inputText,
                 onValueChange = { inputText = it },

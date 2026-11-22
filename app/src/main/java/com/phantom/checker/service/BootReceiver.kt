@@ -30,6 +30,8 @@ class BootReceiver : BroadcastReceiver() {
         DiaryPolicy.schedule(appCtx)
         DiaryPolicy.maybeCatchUp(appCtx)
         CalendarInsightScheduler.scheduleOrUpdate(appCtx)
+        WatchTopicEngine.syncSchedule(appCtx)
+        ProactiveIntelScheduler.syncSchedule(appCtx)
         RetentionPolicy.scheduleOrUpdate(appCtx)
         KeepAlivePolicy.scheduleAll(appCtx)
         StatsForegroundService.startOrRefresh(appCtx, force = true)
@@ -37,6 +39,7 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val now = System.currentTimeMillis()
+                val catchUpFloorMs = now - 24L * 60L * 60L * 1000L
                 val db = AppDatabaseHolder.db(appCtx)
                 val scheduled = db.messageDao().allScheduledReminders()
                 scheduled.forEach { msg ->
@@ -44,14 +47,13 @@ class BootReceiver : BroadcastReceiver() {
                     if (ts != null) {
                         if (ts > now) {
                             ReminderScheduler.schedule(appCtx, msg.id, ts)
-                        } else {
+                        } else if (ts >= catchUpFloorMs) {
                             ReminderScheduler.deliverReminder(appCtx, msg.id)
                         }
                     }
                 }
                 val pendingTodos = db.todoDao().pendingTodos()
                 val dayKey = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
-                val catchUpFloorMs = now - 24L * 60L * 60L * 1000L
                 pendingTodos.forEach { todo ->
                     if (todo.dueAt > now) {
                         ReminderScheduler.scheduleTodo(appCtx, todo.id, todo.dueAt)

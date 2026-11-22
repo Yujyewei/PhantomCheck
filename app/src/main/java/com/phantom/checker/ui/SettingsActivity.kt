@@ -1678,6 +1678,100 @@ fun FilterSettingsScreen(
                                     }
                                 }
                             }
+
+                            // #392 夥伴（助手）頁頭部橫幅背景
+                            val hasPartnerHeaderBg = remember(bgUiVersion) {
+                                BackgroundImageHelper.resolveAssistantHeaderBackgroundFile(appCtx) != null
+                            }
+                            var partnerHeaderThumb by remember(bgUiVersion, hasPartnerHeaderBg) {
+                                mutableStateOf<ImageBitmap?>(null)
+                            }
+                            LaunchedEffect(bgUiVersion, hasPartnerHeaderBg) {
+                                partnerHeaderThumb = if (hasPartnerHeaderBg) {
+                                    BackgroundImageHelper.loadPreviewThumbnail(
+                                        BackgroundImageHelper.assistantHeaderBackgroundFile(appCtx)
+                                    )
+                                } else {
+                                    null
+                                }
+                            }
+                            val partnerHeaderPicker = rememberLauncherForActivityResult(
+                                ActivityResultContracts.PickVisualMedia()
+                            ) { uri ->
+                                if (uri == null) return@rememberLauncherForActivityResult
+                                scope.launch {
+                                    val res = BackgroundImageHelper.saveAssistantHeaderBackgroundFromUri(appCtx, uri)
+                                    res.fold(
+                                        onSuccess = {
+                                            ThemePreferences.bumpBackgroundVersion()
+                                            PhantomSettingsBus.notifyChanged()
+                                            bgUiVersion = ThemePreferences.getBackgroundVersion()
+                                            bgStatusMsg = "已更新「夥伴頁頭部背景」"
+                                            bgPickerFailed = false
+                                        },
+                                        onFailure = { err ->
+                                            bgStatusMsg = "設定夥伴頁頭部背景失敗：${err.localizedMessage ?: "未知錯誤"}"
+                                            bgPickerFailed = true
+                                        }
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                if (partnerHeaderThumb != null) {
+                                    Image(
+                                        bitmap = partnerHeaderThumb!!,
+                                        contentDescription = "夥伴頁頭部背景",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "夥伴頁頭部背景",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = if (hasPartnerHeaderBg) "已自訂" else "預設主題底色",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            partnerHeaderPicker.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        } catch (e: Exception) {
+                                            bgStatusMsg = "無法開啟系統相簿選擇器（${e.localizedMessage ?: "不支援"}）"
+                                            bgPickerFailed = true
+                                        }
+                                    }
+                                ) {
+                                    Text("選擇圖片")
+                                }
+                                if (hasPartnerHeaderBg) {
+                                    TextButton(
+                                        onClick = {
+                                            BackgroundImageHelper.removeAssistantHeaderBackground(appCtx)
+                                            ThemePreferences.bumpBackgroundVersion()
+                                            PhantomSettingsBus.notifyChanged()
+                                            bgUiVersion = ThemePreferences.getBackgroundVersion()
+                                            bgStatusMsg = "已移除「夥伴頁頭部背景」"
+                                            bgPickerFailed = false
+                                        }
+                                    ) {
+                                        Text("移除")
+                                    }
+                                }
+                            }
                         }
 
                         bgStatusMsg?.let { msg ->
@@ -1762,6 +1856,130 @@ fun FilterSettingsScreen(
                             },
                             valueRange = 0f..100f
                         )
+
+                        // #393 頁面細節自訂（字體獨立縮放、聊天氣泡圓角／寬度、最愛 App 橫列顯示上限）
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                        var chatFontScale by remember { mutableStateOf(PhantomPrefs.getChatFontScale(appCtx)) }
+                        var msgFontScale by remember { mutableStateOf(PhantomPrefs.getMessagesFontScale(appCtx)) }
+                        var bubbleCornerDp by remember { mutableIntStateOf(PhantomPrefs.getChatBubbleCornerDp(appCtx)) }
+                        var bubbleWidthPct by remember { mutableIntStateOf(PhantomPrefs.getChatBubbleWidthPercent(appCtx)) }
+                        var favMaxVisible by remember { mutableIntStateOf(PhantomPrefs.getFavoriteAppsMaxVisible(appCtx)) }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "頁面細節自訂",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            TextButton(
+                                onClick = {
+                                    chatFontScale = 1.0f
+                                    msgFontScale = 1.0f
+                                    bubbleCornerDp = 18
+                                    bubbleWidthPct = 82
+                                    favMaxVisible = 0
+                                    PhantomPrefs.setChatFontScale(appCtx, 1.0f)
+                                    PhantomPrefs.setMessagesFontScale(appCtx, 1.0f)
+                                    PhantomPrefs.setChatBubbleCornerDp(appCtx, 18)
+                                    PhantomPrefs.setChatBubbleWidthPercent(appCtx, 82)
+                                    PhantomPrefs.setFavoriteAppsMaxVisible(appCtx, 0)
+                                    PhantomSettingsBus.notifyChanged()
+                                }
+                            ) {
+                                Text("恢復預設")
+                            }
+                        }
+                        Text(
+                            text = "AI 聊天室字體獨立縮放（${String.format(Locale.US, "%.2fx", chatFontScale)}）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Slider(
+                            value = chatFontScale,
+                            onValueChange = { v ->
+                                val stepped = ((v * 20f).roundToInt() / 20f).coerceIn(0.85f, 1.30f)
+                                chatFontScale = stepped
+                                PhantomPrefs.setChatFontScale(appCtx, stepped)
+                                PhantomSettingsBus.notifyChanged()
+                            },
+                            valueRange = 0.85f..1.30f,
+                            steps = 8
+                        )
+                        Text(
+                            text = "訊息中心字體獨立縮放（${String.format(Locale.US, "%.2fx", msgFontScale)}）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Slider(
+                            value = msgFontScale,
+                            onValueChange = { v ->
+                                val stepped = ((v * 20f).roundToInt() / 20f).coerceIn(0.85f, 1.30f)
+                                msgFontScale = stepped
+                                PhantomPrefs.setMessagesFontScale(appCtx, stepped)
+                                PhantomSettingsBus.notifyChanged()
+                            },
+                            valueRange = 0.85f..1.30f,
+                            steps = 8
+                        )
+                        Text(
+                            text = "聊天氣泡圓角半徑（${bubbleCornerDp} dp）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Slider(
+                            value = bubbleCornerDp.toFloat(),
+                            onValueChange = { v ->
+                                val dpVal = v.roundToInt().coerceIn(8, 24)
+                                bubbleCornerDp = dpVal
+                                PhantomPrefs.setChatBubbleCornerDp(appCtx, dpVal)
+                                PhantomSettingsBus.notifyChanged()
+                            },
+                            valueRange = 8f..24f,
+                            steps = 15
+                        )
+                        Text(
+                            text = "聊天氣泡寬度比例（${bubbleWidthPct}%）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Slider(
+                            value = bubbleWidthPct.toFloat(),
+                            onValueChange = { v ->
+                                val pctVal = v.roundToInt().coerceIn(70, 95)
+                                bubbleWidthPct = pctVal
+                                PhantomPrefs.setChatBubbleWidthPercent(appCtx, pctVal)
+                                PhantomSettingsBus.notifyChanged()
+                            },
+                            valueRange = 70f..95f
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "首頁我的最愛 App 橫列顯示上限",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            listOf(0 to "全部（預設）", 4 to "最多 4 個", 6 to "最多 6 個", 8 to "最多 8 個").forEach { (limit, label) ->
+                                FilterChip(
+                                    selected = favMaxVisible == limit,
+                                    onClick = {
+                                        favMaxVisible = limit
+                                        PhantomPrefs.setFavoriteAppsMaxVisible(appCtx, limit)
+                                        PhantomSettingsBus.notifyChanged()
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
 
                         Spacer(Modifier.height(12.dp))
                         var cardBgMode by remember { mutableStateOf(ThemePreferences.getCardBgMode(appCtx)) }
@@ -4170,16 +4388,28 @@ fun FilterSettingsScreen(
             // 7. 防詐情報
             if ("intel" in visibleCardKeys) {
             item(key = "card_intel") {
-                FraudIntelCard(
-                    expanded = expandIntel || ("intel" in highlightedCardKeys),
-                    highlighted = "intel" in highlightedCardKeys,
-                    onToggle = {
-                        expandIntel = !expandIntel
-                        PhantomPrefs.setSettingsCardExpanded(appCtx, "intel", expandIntel)
-                    },
-                    glassState = glassState,
-                    onShowMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FraudIntelCard(
+                        expanded = expandIntel || ("intel" in highlightedCardKeys),
+                        highlighted = "intel" in highlightedCardKeys,
+                        onToggle = {
+                            expandIntel = !expandIntel
+                            PhantomPrefs.setSettingsCardExpanded(appCtx, "intel", expandIntel)
+                        },
+                        glassState = glassState,
+                        onShowMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                    )
+                    ProactiveIntelSettingsCard(
+                        expanded = expandIntel || ("intel" in highlightedCardKeys),
+                        highlighted = "intel" in highlightedCardKeys,
+                        onToggle = {
+                            expandIntel = !expandIntel
+                            PhantomPrefs.setSettingsCardExpanded(appCtx, "intel", expandIntel)
+                        },
+                        glassState = glassState,
+                        onShowMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                    )
+                }
             }
             }
 
@@ -4705,6 +4935,235 @@ private fun ShizukuAdvancedCard(
     }
 }
 
+/** #390 Phase D 主動情報設定區塊：總開關（首次開啟完整說明）、萃取開關、查詢頻率、關注清單入口、立即查詢預覽 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProactiveIntelSettingsCard(
+    expanded: Boolean,
+    highlighted: Boolean,
+    onToggle: () -> Unit,
+    glassState: HazeState,
+    onShowMessage: (String) -> Unit
+) {
+    val ctx = LocalContext.current
+    val appCtx = ctx.applicationContext
+    val scope = rememberCoroutineScope()
+
+    var enabled by remember { mutableStateOf(PhantomPrefs.isProactiveIntelEnabled(appCtx)) }
+    var extractEnabled by remember { mutableStateOf(PhantomPrefs.isProactiveExtractEnabled(appCtx)) }
+    var freqHours by remember { mutableIntStateOf(PhantomPrefs.getProactiveIntelFreqHours(appCtx)) }
+    var showConsentDialog by remember { mutableStateOf(false) }
+    var showWatchTopicDialog by remember { mutableStateOf(false) }
+    var isQueryingNow by remember { mutableStateOf(false) }
+    var previewStatus by remember { mutableStateOf<String?>(null) }
+    var previewDigest by remember { mutableStateOf<String?>(null) }
+
+    CollapsibleSettingsCard(
+        title = "主動情報中樞",
+        collapsedSummary = if (enabled) "已開啟｜每 ${freqHours} 小時查證關注主題最新動態" else "預設關閉｜零 AI 呼叫、零外部查詢",
+        expanded = expanded,
+        onToggle = onToggle,
+        glassState = glassState,
+        highlighted = highlighted
+    ) {
+        SettingSwitchRow(
+            title = "啟用主動情報查詢",
+            subtitle = "僅外送關注清單中的查詢詞（queryHint），絕不送原始訊息、聯絡人或敏感記憶。",
+            checked = enabled,
+            onCheckedChange = { wantEnable ->
+                if (wantEnable && !PhantomPrefs.hasSeenProactiveIntelConsent(appCtx)) {
+                    showConsentDialog = true
+                } else {
+                    enabled = wantEnable
+                    PhantomPrefs.setProactiveIntelEnabled(appCtx, wantEnable)
+                    com.phantom.checker.service.WatchTopicEngine.syncSchedule(appCtx)
+                    com.phantom.checker.service.ProactiveIntelScheduler.syncSchedule(appCtx)
+                    PhantomSettingsBus.notifyChanged()
+                }
+            }
+        )
+        Text(
+            text = "路由建議（二選一）：主力使用 Mistral 時，可於「API 金鑰設定」將「主動情報萃取與摘要」用途單獨綁定一個 Gemini 3+ 設定檔（原生 Google Search grounding），或填寫 BYOK 外部搜尋端點。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+        )
+        SettingSwitchRow(
+            title = "每日自動萃取關注主題",
+            subtitle = "每日至多一次從近期非敏感素材萃取最多 5 個待確認候選（絕不直接推播；敏感記憶硬排除）。",
+            checked = extractEnabled,
+            onCheckedChange = { v ->
+                extractEnabled = v
+                PhantomPrefs.setProactiveExtractEnabled(appCtx, v)
+                com.phantom.checker.service.WatchTopicEngine.syncSchedule(appCtx)
+                PhantomSettingsBus.notifyChanged()
+            }
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "背景查詢頻率（僅連網且電量充足時執行）",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(top = 4.dp)
+        ) {
+            listOf(6 to "每 6 小時", 12 to "每 12 小時", 24 to "每 24 小時").forEach { (h, label) ->
+                FilterChip(
+                    selected = freqHours == h,
+                    onClick = {
+                        freqHours = h
+                        PhantomPrefs.setProactiveIntelFreqHours(appCtx, h)
+                        com.phantom.checker.service.ProactiveIntelScheduler.syncSchedule(appCtx)
+                        PhantomSettingsBus.notifyChanged()
+                    },
+                    label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = { showWatchTopicDialog = true },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("管理關注清單")
+            }
+            Button(
+                onClick = {
+                    if (!isQueryingNow) {
+                        isQueryingNow = true
+                        previewStatus = "查詢中…"
+                        previewDigest = null
+                        scope.launch {
+                            val res = com.phantom.checker.service.DigestComposer.runIntelCycle(appCtx, forceManual = true)
+                            previewStatus = res.statusMessage
+                            previewDigest = res.digestMarkdown
+                            isQueryingNow = false
+                        }
+                    }
+                },
+                enabled = !isQueryingNow,
+                modifier = Modifier.weight(1f)
+            ) {
+                if (isQueryingNow) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(6.dp))
+                    Text("查詢中…")
+                } else {
+                    Text("立即查詢")
+                }
+            }
+        }
+        previewStatus?.let { status ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = status,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        previewDigest?.let { md ->
+            Spacer(Modifier.height(6.dp))
+            ReleaseNotesPreviewBox(
+                title = "主動情報預覽 Digest",
+                releaseNotes = md
+            )
+        }
+    }
+
+    if (showConsentDialog) {
+        AlertDialog(
+            onDismissRequest = { showConsentDialog = false },
+            title = { Text("開啟主動情報中樞前說明") },
+            text = {
+                Text(
+                    "開啟後，本 App 會將您「關注主題清單」中的查詢關鍵字字串（queryHint）送往您自行設定的 AI provider 查詢最新動態。\n\n" +
+                        "• 外送最小化：僅送出主題查詢字串，絕不傳送原始通知全文、聯絡人或敏感記憶。\n" +
+                        "• 省 Token 模式開啟時將自動暫停所有萃取與查詢。\n" +
+                        "• 每日自動萃取的候選僅留存本機待確認，不會直接推播。"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        PhantomPrefs.setSeenProactiveIntelConsent(appCtx, true)
+                        enabled = true
+                        PhantomPrefs.setProactiveIntelEnabled(appCtx, true)
+                        com.phantom.checker.service.WatchTopicEngine.syncSchedule(appCtx)
+                        com.phantom.checker.service.ProactiveIntelScheduler.syncSchedule(appCtx)
+                        PhantomSettingsBus.notifyChanged()
+                        showConsentDialog = false
+                        onShowMessage("已啟用主動情報中樞")
+                    }
+                ) { Text("了解並開啟") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConsentDialog = false }) { Text("暫不開啟") }
+            }
+        )
+    }
+
+    if (showWatchTopicDialog) {
+        com.phantom.checker.ui.memory.WatchTopicManagerDialog(
+            onDismiss = { showWatchTopicDialog = false },
+            onShowMessage = onShowMessage
+        )
+    }
+}
+
+/** #391 捲動式 Markdown 更新內容預覽區塊（關於卡與自動更新彈窗共用） */
+@Composable
+internal fun ReleaseNotesPreviewBox(
+    title: String,
+    releaseNotes: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 260.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(12.dp)
+            ) {
+                if (releaseNotes.isBlank()) {
+                    Text(
+                        text = "此版本無更新說明",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    PhantomMarkdownText(
+                        markdown = releaseNotes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AboutSettingsCard(
     expanded: Boolean,
@@ -4807,7 +5266,7 @@ private fun AboutSettingsCard(
                 }
             }
             val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            ContextCompat.registerReceiver(ctx, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
+            ContextCompat.registerReceiver(ctx, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
             onDispose {
                 try {
                     ctx.unregisterReceiver(receiver)
@@ -4970,6 +5429,12 @@ private fun AboutSettingsCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary
                 )
+                Spacer(Modifier.height(6.dp))
+                val dateSuffix = res.publishedDate.takeIf { it.isNotBlank() }?.let { "／$it" }.orEmpty()
+                ReleaseNotesPreviewBox(
+                    title = "本版更新內容（v${res.currentVersion}$dateSuffix）",
+                    releaseNotes = res.releaseNotes
+                )
             }
             is UpdateCheckResult.UpdateAvailable -> {
                 Spacer(Modifier.height(6.dp))
@@ -4980,6 +5445,11 @@ private fun AboutSettingsCard(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.height(6.dp))
+                ReleaseNotesPreviewBox(
+                    title = "最新版本更新內容（v${res.latestVersion}／${res.publishedDate}）",
+                    releaseNotes = res.releaseNotes
+                )
+                Spacer(Modifier.height(8.dp))
                 if (res.apkDownloadUrl != null) {
                     val readyFile = downloadedApkFile
                     if (readyFile != null && readyFile.exists() && !isDownloading) {
