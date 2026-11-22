@@ -86,22 +86,24 @@ object ProactiveEngine {
             PhantomPrefs.setProactiveDirty(appCtx, true)
         }
 
-        // #372 事件里程碑式去重：同一 todo / event 在同里程碑僅投遞一次（自動清理跨日 key）
+        // #372 事件里程碑式去重 ＋ #377 可自訂提前分鐘數與全天事件提醒時刻
         val deliveredMilestones = PhantomPrefs.getPrunedProactiveMilestones(appCtx, dayKey)
         val newMilestoneKeys = mutableListOf<String>()
         val highPriorityParts = mutableListOf<String>()
+        val leadMinutes = PhantomPrefs.getProactiveReminderLeadMinutes(appCtx)
+        val leadWindowMs = leadMinutes * 60_000L
 
-        // 1. 行程即將開始（60 分鐘窗口）＋ 跨上下文撞期
+        // 1. 行程即將開始（依使用者設定提前分鐘數窗口）＋ 跨上下文撞期
         val soonEvents = calEvents
-            .filter { !it.allDay && it.beginMs in nowMs..(nowMs + 60L * 60_000L) }
+            .filter { !it.allDay && it.beginMs in nowMs..(nowMs + leadWindowMs) }
             .sortedBy { it.beginMs }
         if (soonEvents.isNotEmpty() && PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_SCHEDULE)) {
             for (ev in soonEvents) {
-                val soonKey = "event:${ev.eventId}:$dayKey:soon60m"
+                val soonKey = "event:${ev.eventId}:$dayKey:soon${leadMinutes}m"
                 if (soonKey !in deliveredMilestones) {
                     val hhmm = Instant.ofEpochMilli(ev.beginMs).atZone(zone)
                         .format(DateTimeFormatter.ofPattern("HH:mm", Locale.US))
-                    highPriorityParts.add("⏰ 行程即將開始（$hhmm）：${ev.title}")
+                    highPriorityParts.add("⏰ 行程即將開始（$hhmm，提前 ${leadMinutes} 分鐘）：${ev.title}")
                     newMilestoneKeys.add(soonKey)
                     if (PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_CONFLICT)) {
                         val conflictKey = "event:${ev.eventId}:$dayKey:conflict"
@@ -120,10 +122,10 @@ object ProactiveEngine {
             }
         }
 
-        // 2. 待辦關鍵里程碑（逾期 / 60 分鐘內 / 24 小時內）
+        // 2. 待辦關鍵里程碑（逾期 / 提前 leadMinutes 分鐘內 / 24 小時內）
         if (PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_TODO)) {
             val overdueWindowStart = nowMs - 30L * 60_000L
-            val soon60mEnd = nowMs + 60L * 60_000L
+            val soonEnd = nowMs + leadWindowMs
             val due24hEnd = nowMs + 24L * 60L * 60_000L
             val candidateTodos = pendingTodos
                 .filter { it.dueAt in overdueWindowStart..due24hEnd }
@@ -131,7 +133,7 @@ object ProactiveEngine {
             for (todo in candidateTodos) {
                 val (milestone, label) = when {
                     todo.dueAt < nowMs -> "overdue" to "⚠️ 待辦已逾期：${todo.title}"
-                    todo.dueAt <= soon60mEnd -> "due60m" to "⏰ 1 小時內到期待辦：${todo.title}"
+                    todo.dueAt <= soonEnd -> "due${leadMinutes}m" to "⏰ ${leadMinutes} 分鐘內到期待辦：${todo.title}"
                     else -> "due24h" to "📌 24 小時內待辦：${todo.title}"
                 }
                 val key = "todo:${todo.id}:$dayKey:$milestone"
@@ -143,9 +145,17 @@ object ProactiveEngine {
             }
         }
 
-        // 3. 今日全天事件：每筆全天事件當日僅首次偵測投遞一次
+        // 3. 今日全天事件：達使用者設定之提醒時刻後，每筆全天事件當日僅首次偵測投遞一次
+        val allDayRemindTime = BriefingScheduler.parseHHmm(
+            PhantomPrefs.getProactiveAllDayRemindTime(appCtx),
+            LocalTime.of(9, 0)
+        )
+        val nowLocalTime = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalTime()
         val todayAllDay = calEvents.filter { it.allDay && it.beginMs < tomorrowStartMs && it.endMs > dayStartMs }
-        if (todayAllDay.isNotEmpty() && PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_SCHEDULE)) {
+        if (todayAllDay.isNotEmpty() &&
+            !nowLocalTime.isBefore(allDayRemindTime) &&
+            PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_SCHEDULE)
+        ) {
             val unseenAllDay = todayAllDay.filter { ev ->
                 "allDay:${ev.eventId}:$dayKey" !in deliveredMilestones
             }
@@ -185,8 +195,8 @@ object ProactiveEngine {
         if (!force && PhantomPrefs.getLastBriefingDay(appCtx, isMorning) == dayKey) {
             return@withContext false
         }
-        val cap = PhantomPrefs.getProactiveDailyCap(appCtx)
-        if (!force && PhantomPrefs.getProactiveDailySentCount(appCtx, dayKey) >= cap) {
+        val cap = PhantomPrefs.getBriefingDailyCap(appCtx)
+        if (!force && PhantomPrefs.getBriefingDailySentCount(appCtx, dayKey) >= cap) {
             return@withContext false
         }
 
@@ -292,7 +302,7 @@ object ProactiveEngine {
         val msgId = writeAssistantMessage(db, finalBody, nowMs)
         PhantomPrefs.setLastBriefingDay(appCtx, isMorning, dayKey)
         PhantomPrefs.setProactiveDirty(appCtx, false)
-        PhantomPrefs.incrementProactiveDailySentCount(appCtx, dayKey)
+        PhantomPrefs.incrementBriefingDailySentCount(appCtx, dayKey)
         PhantomPrefs.saveLastBriefingMeta(appCtx, finalBody.replace("**", "").take(120), nowMs, msgId)
         if (PhantomPrefs.isDiscordForwardEnabled(appCtx) && EncryptedByokStore.isDiscordConfigured(appCtx)) {
             runCatching {

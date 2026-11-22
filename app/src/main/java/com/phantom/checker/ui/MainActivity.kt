@@ -879,7 +879,7 @@ private fun PhantomCheckApp(
                     onClick = {
                         PhantomPrefs.setUpdateSnoozeUntilMs(
                             appCtx,
-                            System.currentTimeMillis() + AppUpdateHelper.DEFAULT_UPDATE_SNOOZE_MS
+                            System.currentTimeMillis() + PhantomPrefs.getUpdateSnoozeMinutes(appCtx) * 60L * 1000L
                         )
                         pendingUpdateDialog = null
                     }

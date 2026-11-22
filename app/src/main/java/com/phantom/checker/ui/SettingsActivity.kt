@@ -4890,11 +4890,53 @@ private fun AboutSettingsCard(
         }
         SettingSwitchRow(
             title = "自動檢查更新",
-            subtitle = "每次開啟 App 自動檢查更新；選擇「稍後更新」將於 1 小時後再次提醒。",
+            subtitle = "每次開啟 App 自動檢查更新；選擇「稍後更新」將於設定間隔後再次提醒。",
             checked = updateAutoCheck,
             onCheckedChange = {
                 updateAutoCheck = it
                 PhantomPrefs.setUpdateAutoCheckEnabled(appCtx, it)
+                PhantomSettingsBus.notifyChanged()
+            }
+        )
+        var updateSnoozeMin by remember { mutableStateOf(PhantomPrefs.getUpdateSnoozeMinutes(appCtx)) }
+        var chatTimestampOn by remember { mutableStateOf(PhantomPrefs.isChatTimestampEnabled(appCtx)) }
+        LaunchedEffect(updateBusVer) {
+            if (updateBusVer > 0L) {
+                updateSnoozeMin = PhantomPrefs.getUpdateSnoozeMinutes(appCtx)
+                chatTimestampOn = PhantomPrefs.isChatTimestampEnabled(appCtx)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "「稍後更新」延後提醒間隔",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(30 to "30 分鐘", 60 to "1 小時", 240 to "4 小時").forEach { (mins, label) ->
+                FilterChip(
+                    selected = updateSnoozeMin == mins,
+                    onClick = {
+                        updateSnoozeMin = mins
+                        PhantomPrefs.setUpdateSnoozeMinutes(appCtx, mins)
+                        PhantomSettingsBus.notifyChanged()
+                    },
+                    label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        SettingSwitchRow(
+            title = "聊天室訊息右下角顯示時間戳",
+            subtitle = "在 AI 對話與主動訊息氣泡右下角顯示 HH:mm 發送時間（預設開啟）",
+            checked = chatTimestampOn,
+            onCheckedChange = {
+                chatTimestampOn = it
+                PhantomPrefs.setChatTimestampEnabled(appCtx, it)
+                PhantomSettingsBus.notifyChanged()
             }
         )
         Spacer(Modifier.height(8.dp))

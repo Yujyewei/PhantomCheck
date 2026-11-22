@@ -2840,6 +2840,10 @@ fun ChatAssistantTab(
                     description = "你可以問「今天 LINE 的訊息」、「昨日簡報」或「最近有可疑詐騙嗎」，${assistantName}會根據你的本地備份唯讀查詢並引用來源。"
                 )
             } else {
+                val chatSettingsVer by PhantomSettingsBus.version.collectAsState()
+                val showBubbleTimestamp = remember(chatSettingsVer) {
+                    PhantomPrefs.isChatTimestampEnabled(appCtx)
+                }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -2875,7 +2879,7 @@ fun ChatAssistantTab(
                                             start = 14.dp,
                                             end = 14.dp,
                                             top = 10.dp,
-                                            bottom = 6.dp
+                                            bottom = if (showBubbleTimestamp) 6.dp else 10.dp
                                         )
                                     ) {
                                         Text(
@@ -2883,16 +2887,18 @@ fun ChatAssistantTab(
                                             color = MaterialTheme.colorScheme.onPrimary,
                                             style = MaterialTheme.typography.bodyMedium
                                         )
-                                        Spacer(modifier = Modifier.height(3.dp))
-                                        Text(
-                                            text = bubbleTimeText,
-                                            fontSize = 10.sp,
-                                            lineHeight = 12.sp,
-                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            modifier = Modifier.align(Alignment.End)
-                                        )
+                                        if (showBubbleTimestamp) {
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Text(
+                                                text = bubbleTimeText,
+                                                fontSize = 10.sp,
+                                                lineHeight = 12.sp,
+                                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                modifier = Modifier.align(Alignment.End)
+                                            )
+                                        }
                                     }
                                 }
                             } else {
@@ -3022,19 +3028,72 @@ fun ChatAssistantTab(
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
+                                        if (showBubbleTimestamp) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 4.dp),
+                                                horizontalArrangement = Arrangement.End
+                                            ) {
+                                                Text(
+                                                    text = bubbleTimeText,
+                                                    fontSize = 10.sp,
+                                                    lineHeight = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
+                                        }
+                                    }
+                                    val isProactiveMsg = msg.id > 0L && (
+                                        isBriefingMsg ||
+                                            msg.content.startsWith("**🔔 ") ||
+                                            msg.content.startsWith("**📅 ") ||
+                                            msg.content.startsWith("**📋 ")
+                                        )
+                                    if (isProactiveMsg) {
+                                        var feedbackChoice by remember(msg.id) {
+                                            mutableStateOf(PhantomPrefs.getProactiveMessageFeedback(appCtx, msg.id))
+                                        }
                                         Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 4.dp),
-                                            horizontalArrangement = Arrangement.End
+                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = bubbleTimeText,
-                                                fontSize = 10.sp,
-                                                lineHeight = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                                maxLines = 1,
-                                                softWrap = false
+                                                text = if (feedbackChoice == "up") "👍 已有幫助" else "👍 有幫助",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (feedbackChoice == "up") {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        PhantomPrefs.recordProactiveMessageFeedback(appCtx, msg.id, helpful = true)
+                                                        feedbackChoice = "up"
+                                                        onShowMessage("已記錄回饋：有幫助")
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                            Text(
+                                                text = if (feedbackChoice == "down") "👎 已標記打擾" else "👎 打擾",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (feedbackChoice == "down") {
+                                                    MaterialTheme.colorScheme.error
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        PhantomPrefs.recordProactiveMessageFeedback(appCtx, msg.id, helpful = false)
+                                                        feedbackChoice = "down"
+                                                        onShowMessage("已記錄回饋：打擾（將作為日後主動頻率調權依據）")
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
                                             )
                                         }
                                     }

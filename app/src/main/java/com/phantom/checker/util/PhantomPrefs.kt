@@ -1680,7 +1680,8 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         val p = prefs(ctx)
         val raw = p.getString(KEY_PROACTIVE_RECENT_HASHES, "").orEmpty()
         if (raw.isBlank()) return false
-        val cutoff = nowMs - PROACTIVE_CONTENT_DEDUP_WINDOW_MS
+        val windowMs = getProactiveDedupWindowMinutes(ctx) * 60L * 1000L
+        val cutoff = nowMs - windowMs
         val kept = mutableListOf<String>()
         var hit = false
         raw.lineSequence().forEach { line ->
@@ -1703,7 +1704,8 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun recordProactiveContentHash(ctx: Context, contentHash: String, nowMs: Long) {
         val p = prefs(ctx)
         val raw = p.getString(KEY_PROACTIVE_RECENT_HASHES, "").orEmpty()
-        val cutoff = nowMs - PROACTIVE_CONTENT_DEDUP_WINDOW_MS
+        val windowMs = getProactiveDedupWindowMinutes(ctx) * 60L * 1000L
+        val cutoff = nowMs - windowMs
         val kept = raw.lineSequence()
             .filter { line ->
                 val idx = line.indexOf('|')
@@ -1715,6 +1717,162 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         kept.add("$contentHash|$nowMs")
         val trimmed = if (kept.size > 40) kept.takeLast(40) else kept
         p.edit().putString(KEY_PROACTIVE_RECENT_HASHES, trimmed.joinToString("\n")).apply()
+    }
+
+    // ---- #377 主動訊息體驗與自訂設定擴充 ----
+
+    /** 簡報獨立每日上限（1–10，預設 2；與主動提醒上限分離） */
+    fun getBriefingDailyCap(ctx: Context): Int =
+        prefs(ctx).getInt("briefing_daily_cap", 2).coerceIn(1, 10)
+
+    fun setBriefingDailyCap(ctx: Context, cap: Int) {
+        prefs(ctx).edit().putInt("briefing_daily_cap", cap.coerceIn(1, 10)).apply()
+    }
+
+    fun getBriefingDailySentCount(ctx: Context, todayKey: String): Int {
+        val p = prefs(ctx)
+        if (p.getString("briefing_daily_date", "") != todayKey) return 0
+        return p.getInt("briefing_daily_count", 0)
+    }
+
+    fun incrementBriefingDailySentCount(ctx: Context, todayKey: String) {
+        val p = prefs(ctx)
+        val prev = if (p.getString("briefing_daily_date", "") == todayKey) p.getInt("briefing_daily_count", 0) else 0
+        p.edit()
+            .putString("briefing_daily_date", todayKey)
+            .putInt("briefing_daily_count", prev + 1)
+            .apply()
+    }
+
+    /** 行程／待辦主動提醒提前分鐘數（15 / 30 / 60，預設 30） */
+    fun getProactiveReminderLeadMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("proactive_reminder_lead_minutes", 30)
+        return when (v) {
+            15, 30, 60 -> v
+            else -> 30
+        }
+    }
+
+    fun setProactiveReminderLeadMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            15, 30, 60 -> minutes
+            else -> 30
+        }
+        prefs(ctx).edit().putInt("proactive_reminder_lead_minutes", safe).apply()
+    }
+
+    /** 今日全天事件提醒時刻（HH:mm，預設 09:00） */
+    fun getProactiveAllDayRemindTime(ctx: Context): String =
+        prefs(ctx).getString("proactive_allday_remind_time", "09:00").orEmpty().ifBlank { "09:00" }
+
+    fun setProactiveAllDayRemindTime(ctx: Context, hhmm: String) {
+        prefs(ctx).edit().putString("proactive_allday_remind_time", hhmm.trim().ifBlank { "09:00" }).apply()
+    }
+
+    /** 聊天室氣泡時間戳顯示開關（預設開） */
+    fun isChatTimestampEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("chat_bubble_timestamp_enabled", true)
+
+    fun setChatTimestampEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("chat_bubble_timestamp_enabled", enabled).apply()
+    }
+
+    /** 更新提醒 snooze 間隔分鐘數（30 / 60 / 240，預設 60） */
+    fun getUpdateSnoozeMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("update_snooze_minutes", 60)
+        return when (v) {
+            30, 60, 240 -> v
+            else -> 60
+        }
+    }
+
+    fun setUpdateSnoozeMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            30, 60, 240 -> minutes
+            else -> 60
+        }
+        prefs(ctx).edit().putInt("update_snooze_minutes", safe).apply()
+    }
+
+    /** 主動監控 Worker 檢查間隔分鐘數（15 / 30 / 60，預設 15） */
+    fun getProactiveMonitorIntervalMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("proactive_monitor_interval_minutes", 15)
+        return when (v) {
+            15, 30, 60 -> v
+            else -> 15
+        }
+    }
+
+    fun setProactiveMonitorIntervalMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            15, 30, 60 -> minutes
+            else -> 15
+        }
+        prefs(ctx).edit().putInt("proactive_monitor_interval_minutes", safe).apply()
+    }
+
+    /** 主動提醒同內容去重冷卻分鐘數（10 / 30 / 60，預設 10） */
+    fun getProactiveDedupWindowMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("proactive_dedup_window_minutes", 10)
+        return when (v) {
+            10, 30, 60 -> v
+            else -> 10
+        }
+    }
+
+    fun setProactiveDedupWindowMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            10, 30, 60 -> minutes
+            else -> 10
+        }
+        prefs(ctx).edit().putInt("proactive_dedup_window_minutes", safe).apply()
+    }
+
+    /** 每則主動訊息回饋（👍 helpful / 👎 noisy），輕量存 prefs 不新增 DB 表 */
+    fun recordProactiveMessageFeedback(ctx: Context, messageId: Long, helpful: Boolean) {
+        if (messageId <= 0L) return
+        val p = prefs(ctx)
+        val raw = p.getString("proactive_msg_feedback_map", "").orEmpty()
+        val entries = LinkedHashMap<Long, String>()
+        raw.split(',').forEach { pair ->
+            val idx = pair.indexOf(':')
+            if (idx > 0) {
+                val id = pair.substring(0, idx).toLongOrNull() ?: return@forEach
+                entries[id] = pair.substring(idx + 1)
+            }
+        }
+        val prev = entries[messageId]
+        val nextVal = if (helpful) "up" else "down"
+        if (prev == nextVal) return
+        entries[messageId] = nextVal
+        val trimmed = entries.entries.toList().let { if (it.size > 120) it.takeLast(120) else it }
+        var up = p.getInt("proactive_feedback_helpful_count", 0)
+        var down = p.getInt("proactive_feedback_noisy_count", 0)
+        if (prev == "up") up = (up - 1).coerceAtLeast(0)
+        if (prev == "down") down = (down - 1).coerceAtLeast(0)
+        if (helpful) up++ else down++
+        p.edit()
+            .putString("proactive_msg_feedback_map", trimmed.joinToString(",") { "${it.key}:${it.value}" })
+            .putInt("proactive_feedback_helpful_count", up)
+            .putInt("proactive_feedback_noisy_count", down)
+            .apply()
+    }
+
+    fun getProactiveMessageFeedback(ctx: Context, messageId: Long): String? {
+        if (messageId <= 0L) return null
+        val raw = prefs(ctx).getString("proactive_msg_feedback_map", "").orEmpty()
+        raw.split(',').forEach { pair ->
+            val idx = pair.indexOf(':')
+            if (idx > 0 && pair.substring(0, idx).toLongOrNull() == messageId) {
+                return pair.substring(idx + 1)
+            }
+        }
+        return null
+    }
+
+    fun getProactiveFeedbackCounts(ctx: Context): Pair<Int, Int> {
+        val p = prefs(ctx)
+        return p.getInt("proactive_feedback_helpful_count", 0) to p.getInt("proactive_feedback_noisy_count", 0)
     }
 
     fun getLastBriefingDay(ctx: Context, isMorning: Boolean): String =
