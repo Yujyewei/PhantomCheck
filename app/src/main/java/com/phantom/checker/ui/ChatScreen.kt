@@ -2851,6 +2851,9 @@ fun ChatAssistantTab(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                         ) {
+                            val bubbleTimeText = remember(msg.id, msg.createdAt) {
+                                formatChatBubbleTime(if (msg.createdAt > 0L) msg.createdAt else System.currentTimeMillis())
+                            }
                             if (isUser) {
                                 Surface(
                                     shape = RoundedCornerShape(18.dp),
@@ -2867,12 +2870,30 @@ fun ChatAssistantTab(
                                             }
                                         )
                                 ) {
-                                    Text(
-                                        text = msg.content,
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                                    )
+                                    Column(
+                                        modifier = Modifier.padding(
+                                            start = 14.dp,
+                                            end = 14.dp,
+                                            top = 10.dp,
+                                            bottom = 6.dp
+                                        )
+                                    ) {
+                                        Text(
+                                            text = msg.content,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = bubbleTimeText,
+                                            fontSize = 10.sp,
+                                            lineHeight = 12.sp,
+                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.align(Alignment.End)
+                                        )
+                                    }
                                 }
                             } else {
                                 val isBriefingMsg = msg.id > 0L && (
@@ -3001,6 +3022,21 @@ fun ChatAssistantTab(
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 4.dp),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            Text(
+                                                text = bubbleTimeText,
+                                                fontSize = 10.sp,
+                                                lineHeight = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
                                     }
                                     val autoMems = remember(allMemoriesLive, msg.id) {
                                         allMemoriesLive.filter { it.sourceRef?.contains("|msg:${msg.id}|") == true }
