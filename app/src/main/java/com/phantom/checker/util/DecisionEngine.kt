@@ -45,24 +45,39 @@ object DecisionEngine {
         val isKnownContactOrVip: Boolean = false,
         val hasStructuredTime: Boolean = false,
         val hasOtp: Boolean = false,
+        /** #375 弱訊號：僅含 URL，不可單獨觸發規則 5 自動 scam */
+        val urlPresent: Boolean = false,
+        /** #375 強訊號：含加密貨幣錢包地址 */
+        val cryptoAddressPresent: Boolean = false,
+        /** #375 強訊號：IntelClient 命中 Safe Browsing / PhishTank / fraud.tw / Chainabuse 任一 */
+        val intelHit: Boolean = false,
+        /** 相容欄位：若外部仍傳入 hasUrlOrCrypto，僅視為 urlPresent 弱訊號（不升級為 intelHit） */
         val hasUrlOrCrypto: Boolean = false,
         val hasAmountCue: Boolean = false,
-        val hasKnownAvatar: Boolean = false
+        val hasKnownAvatar: Boolean = false,
+        /** #375 發送者 30 天信譽（≥10 筆低風險或有頭像或誤判回饋提升） */
+        val trustedSenderHistory: Boolean = false
     ) {
+        val hasStrongRiskSignal: Boolean
+            get() = !filterRuleHit.isNullOrBlank() || intelHit || cryptoAddressPresent || hasAmountCue
+
         val hasLocalRiskSignal: Boolean
-            get() = !filterRuleHit.isNullOrBlank() || hasUrlOrCrypto || hasAmountCue
+            get() = hasStrongRiskSignal
 
         val hasLocalTrustSignal: Boolean
-            get() = whitelisted || isKnownContactOrVip || hasKnownAvatar
+            get() = whitelisted || isKnownContactOrVip || trustedSenderHistory || hasKnownAvatar
 
         fun toSignalTags(): List<String> = buildList {
             if (whitelisted) add("whitelist")
             if (!filterRuleHit.isNullOrBlank()) add("rule:${filterRuleHit.take(16)}")
             if (!memoRuleAction.isNullOrBlank()) add("memo:$memoRuleAction")
             if (isKnownContactOrVip) add("known_contact")
+            if (trustedSenderHistory) add("trusted_sender")
             if (hasKnownAvatar) add("known_sender")
-            if (hasUrlOrCrypto) add("url_or_crypto")
-            if (hasAmountCue) add("amount")
+            if (intelHit) add("intel_hit")
+            if (cryptoAddressPresent) add("crypto_addr")
+            if (urlPresent || hasUrlOrCrypto) add("url_present")
+            if (hasAmountCue) add("fraud_cue")
             if (hasOtp) add("otp")
             if (hasStructuredTime) add("time_parsed")
         }
@@ -89,7 +104,7 @@ object DecisionEngine {
             override val signals: List<String>
         ) : Decision()
 
-        /** 低置信：僅 AI 語義且無本地風險訊號，或本地信任與 AI 語義衝突 → 降級進確認卡（不自動彈高危詐騙） */
+        /** 低置信：僅 AI 語義且無本地強風險訊號，或本地信任與 AI 語義衝突 → 降級進確認卡（不自動彈高危詐騙） */
         data class ConfirmCard(
             override val finalScore: Int,
             override val finalLabel: String,
@@ -117,7 +132,7 @@ object DecisionEngine {
             return Decision.Auto(10, "safe", prov, baseSignals)
         }
 
-        // 2. 自訂詐騙過濾規則命中：確定性高置信 scam
+        // 2. 自訂詐騙過濾規則命中：確定性高置信 scam（不可回退鐵律）
         if (!local.filterRuleHit.isNullOrBlank()) {
             val score = maxOf(85, semScore)
             val prov = formatProvenance(messageId, "命中自訂詐騙過濾規則：${local.filterRuleHit}", baseSignals)
@@ -131,29 +146,37 @@ object DecisionEngine {
             return Decision.Auto(semScore, ai.riskLabel.ifBlank { "safe" }, prov, baseSignals)
         }
 
-        // 4. 衝突：本地為通訊錄熟人/VIP，但 AI 判高風險 → 降級進確認卡，不自動彈詐騙警示
-        if (local.isKnownContactOrVip) {
+        // 4. 衝突降級：通訊錄熟人/VIP 或發送者 30 天信任信譽，與 AI 語義衝突 → 降級進確認卡
+        //    （但信譽不得壓過 intelHit 情報命中）
+        if ((local.isKnownContactOrVip || local.trustedSenderHistory) && !local.intelHit) {
             val capped = semScore.coerceAtMost(soloCap)
-            val reason = "本地訊號為通訊錄熟人／VIP，與 AI 語義衝突，改為待確認（點擊「此判斷有誤」可回饋修正）"
-            val prov = formatProvenance(messageId, "${ai.riskReason}（$reason）", baseSignals + "conflict:known_vs_sem")
+            val trustLabel = if (local.isKnownContactOrVip) "通訊錄熟人／VIP" else "歷史高信任發送者"
+            val reason = "本地訊號為$trustLabel，與 AI 語義衝突，改為待確認（點擊「此判斷有誤」可回饋修正）"
+            val conflictTag = if (local.isKnownContactOrVip) "conflict:known_vs_sem" else "conflict:reputation_vs_sem"
+            val prov = formatProvenance(messageId, "${ai.riskReason}（$reason）", baseSignals + conflictTag)
             return Decision.ConfirmCard(
                 finalScore = capped,
                 finalLabel = "warning",
                 confirmReason = reason,
                 provenanceReason = prov,
-                signals = baseSignals + "conflict:known_vs_sem"
+                signals = baseSignals + conflictTag
             )
         }
 
-        // 5. 同向高置信：本地有確定性風險訊號（URL / 加密地址 / 金額詞）＋ AI 語義同向 → 自動執行 scam
-        if (local.hasLocalRiskSignal && semScore >= threshold) {
-            val prov = formatProvenance(messageId, ai.riskReason.ifBlank { "本地風險訊號與 AI 語義一致" }, baseSignals)
+        // 5. 同向高置信：僅「intelHit / 加密貨幣地址 / 明確詐騙操作訊號」＋ AI 語義同向 → 自動執行 scam
+        //    僅 urlPresent（無 intelHit）一律不進規則 5，落入規則 6 確認卡
+        if (local.hasStrongRiskSignal && semScore >= threshold) {
+            val prov = formatProvenance(messageId, ai.riskReason.ifBlank { "本地強風險訊號與 AI 語義一致" }, baseSignals)
             return Decision.Auto(semScore, "scam", prov, baseSignals)
         }
 
-        // 6. 僅 AI 語義且無任何本地確定性風險訊號 → 結構保證不可單獨觸發高危詐騙彈窗，上限壓在 threshold - 10 進確認卡
+        // 6. 僅 AI 語義或僅弱訊號（urlPresent）→ 結構保證不可單獨觸發高危詐騙彈窗，上限壓在 threshold - 10 進確認卡
         val cappedScore = semScore.coerceAtMost(soloCap)
-        val reason = "僅 AI 語義提醒（無本地規則／連結／金額訊號），依雙門檻降為待確認"
+        val reason = if (local.urlPresent || local.hasUrlOrCrypto) {
+            "含一般連結但未命中防詐情報庫，依雙門檻降為待確認（不自動標記詐騙）"
+        } else {
+            "僅 AI 語義提醒（無本地規則／情報命中／強風險訊號），依雙門檻降為待確認"
+        }
         val prov = formatProvenance(messageId, "${ai.riskReason}（$reason）", baseSignals + "sem_only_capped")
         return Decision.ConfirmCard(
             finalScore = cappedScore,
@@ -191,8 +214,12 @@ object DecisionEngine {
             .toList()
     }
 
+    /**
+     * #375 收斂高風險詐騙操作訊號：移除裸「$」「元」「NT$」「台幣」「獲利」等日常詞，
+     * 保留具體詐騙操作（ATM／解除分期／投資群／飆股／保證金／帳戶凍結／匯款轉帳催促／中獎+連結／客服索取驗證碼）。
+     */
     private val AMOUNT_CUE_REGEX = Regex(
-        "(?:NT\\$|USD|\\$|新台幣|台幣|萬元|轉帳|匯款|提領|保證金|手續費|帳戶凍結|解除分期|獲利|投資群|飆股)",
+        "(?:解除分期|操作\\s*ATM|ATM\\s*操作|帳戶凍結|保證金|手續費|投資群|飆股|帶進帶出|老師帶單|急需轉帳|馬上匯款|立即匯款|儘速匯款|匯款.{0,8}帳號|轉帳.{0,8}帳號|(?:提供|告知|給我|回傳).{0,6}(?:驗證碼|OTP)|(?:中獎|得獎).{0,24}(?:https?://|www\\.|bit\\.ly|reurl\\.cc|tinyurl\\.com|點擊|領獎))",
         RegexOption.IGNORE_CASE
     )
 

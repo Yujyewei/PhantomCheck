@@ -1213,6 +1213,14 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         prefs(ctx).edit().putString("update_last_notified_key", key).apply()
     }
 
+    /** #374 更新提醒 snooze 截止時間（epoch ms，預設 0 表示未 snooze） */
+    fun getUpdateSnoozeUntilMs(ctx: Context): Long =
+        prefs(ctx).getLong("update_snooze_until_ms", 0L)
+
+    fun setUpdateSnoozeUntilMs(ctx: Context, untilMs: Long) {
+        prefs(ctx).edit().putLong("update_snooze_until_ms", untilMs.coerceAtLeast(0L)).apply()
+    }
+
     /** 通知欄連續快速回覆開關（預設開） */
     fun isReplyProxyEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean("reply_proxy_enabled", true)
@@ -1626,6 +1634,246 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     fun getProactivePushTotalCount(ctx: Context): Int =
         prefs(ctx).getInt("proactive_push_total_count", 0)
+
+    // ---- #372 主動提醒事件里程碑與 10 分鐘內容去重閘門 ----
+
+    private const val KEY_PROACTIVE_MILESTONE_KEYS = "proactive_delivered_milestones"
+    private const val KEY_PROACTIVE_RECENT_HASHES = "proactive_recent_content_hashes"
+    private const val PROACTIVE_CONTENT_DEDUP_WINDOW_MS = 10L * 60L * 1000L
+
+    /**
+     * 讀取已投遞的里程碑 key 集合，並自動清理非當日（dayKey 不符）之過期 key。
+     * key 格式：type:id:dayKey:milestone 或 allDay:eventId:dayKey。
+     */
+    fun getPrunedProactiveMilestones(ctx: Context, todayKey: String): Set<String> {
+        val p = prefs(ctx)
+        val raw = p.getStringSet(KEY_PROACTIVE_MILESTONE_KEYS, emptySet()).orEmpty()
+        if (raw.isEmpty()) return emptySet()
+        val kept = raw.filterTo(LinkedHashSet()) { key ->
+            val parts = key.split(':')
+            // 格式為 type:id:dayKey:milestone 或 allDay:id:dayKey -> 第 3 欄為 dayKey
+            parts.size >= 3 && parts[2] == todayKey
+        }
+        if (kept.size != raw.size) {
+            p.edit().putStringSet(KEY_PROACTIVE_MILESTONE_KEYS, kept).apply()
+        }
+        return kept
+    }
+
+    fun isProactiveMilestoneDelivered(ctx: Context, milestoneKey: String, todayKey: String): Boolean {
+        return milestoneKey in getPrunedProactiveMilestones(ctx, todayKey)
+    }
+
+    fun markProactiveMilestonesDelivered(ctx: Context, milestoneKeys: Collection<String>, todayKey: String) {
+        if (milestoneKeys.isEmpty()) return
+        val kept = getPrunedProactiveMilestones(ctx, todayKey).toMutableSet()
+        kept.addAll(milestoneKeys.filter { it.isNotBlank() })
+        val trimmed = if (kept.size > 200) kept.toList().takeLast(200).toSet() else kept
+        prefs(ctx).edit().putStringSet(KEY_PROACTIVE_MILESTONE_KEYS, trimmed).apply()
+    }
+
+    /**
+     * 檢查 contentHash 是否於近 10 分鐘內已發送；同時清理逾時紀錄。
+     * 儲存格式：以 '\n' 分隔的 "hash|epochMs" 字串（避免 StringSet 可變集合陷阱）。
+     */
+    fun isProactiveContentHashRecent(ctx: Context, contentHash: String, nowMs: Long): Boolean {
+        val p = prefs(ctx)
+        val raw = p.getString(KEY_PROACTIVE_RECENT_HASHES, "").orEmpty()
+        if (raw.isBlank()) return false
+        val windowMs = getProactiveDedupWindowMinutes(ctx) * 60L * 1000L
+        val cutoff = nowMs - windowMs
+        val kept = mutableListOf<String>()
+        var hit = false
+        raw.lineSequence().forEach { line ->
+            val idx = line.indexOf('|')
+            if (idx <= 0) return@forEach
+            val hash = line.substring(0, idx)
+            val ts = line.substring(idx + 1).toLongOrNull() ?: return@forEach
+            if (ts >= cutoff) {
+                kept.add(line)
+                if (hash == contentHash) hit = true
+            }
+        }
+        val normalized = kept.joinToString("\n")
+        if (normalized != raw) {
+            p.edit().putString(KEY_PROACTIVE_RECENT_HASHES, normalized).apply()
+        }
+        return hit
+    }
+
+    fun recordProactiveContentHash(ctx: Context, contentHash: String, nowMs: Long) {
+        val p = prefs(ctx)
+        val raw = p.getString(KEY_PROACTIVE_RECENT_HASHES, "").orEmpty()
+        val windowMs = getProactiveDedupWindowMinutes(ctx) * 60L * 1000L
+        val cutoff = nowMs - windowMs
+        val kept = raw.lineSequence()
+            .filter { line ->
+                val idx = line.indexOf('|')
+                if (idx <= 0) return@filter false
+                val ts = line.substring(idx + 1).toLongOrNull() ?: return@filter false
+                ts >= cutoff && line.substring(0, idx) != contentHash
+            }
+            .toMutableList()
+        kept.add("$contentHash|$nowMs")
+        val trimmed = if (kept.size > 40) kept.takeLast(40) else kept
+        p.edit().putString(KEY_PROACTIVE_RECENT_HASHES, trimmed.joinToString("\n")).apply()
+    }
+
+    // ---- #377 主動訊息體驗與自訂設定擴充 ----
+
+    /** 簡報獨立每日上限（1–10，預設 2；與主動提醒上限分離） */
+    fun getBriefingDailyCap(ctx: Context): Int =
+        prefs(ctx).getInt("briefing_daily_cap", 2).coerceIn(1, 10)
+
+    fun setBriefingDailyCap(ctx: Context, cap: Int) {
+        prefs(ctx).edit().putInt("briefing_daily_cap", cap.coerceIn(1, 10)).apply()
+    }
+
+    fun getBriefingDailySentCount(ctx: Context, todayKey: String): Int {
+        val p = prefs(ctx)
+        if (p.getString("briefing_daily_date", "") != todayKey) return 0
+        return p.getInt("briefing_daily_count", 0)
+    }
+
+    fun incrementBriefingDailySentCount(ctx: Context, todayKey: String) {
+        val p = prefs(ctx)
+        val prev = if (p.getString("briefing_daily_date", "") == todayKey) p.getInt("briefing_daily_count", 0) else 0
+        p.edit()
+            .putString("briefing_daily_date", todayKey)
+            .putInt("briefing_daily_count", prev + 1)
+            .apply()
+    }
+
+    /** 行程／待辦主動提醒提前分鐘數（15 / 30 / 60，預設 30） */
+    fun getProactiveReminderLeadMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("proactive_reminder_lead_minutes", 30)
+        return when (v) {
+            15, 30, 60 -> v
+            else -> 30
+        }
+    }
+
+    fun setProactiveReminderLeadMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            15, 30, 60 -> minutes
+            else -> 30
+        }
+        prefs(ctx).edit().putInt("proactive_reminder_lead_minutes", safe).apply()
+    }
+
+    /** 今日全天事件提醒時刻（HH:mm，預設 09:00） */
+    fun getProactiveAllDayRemindTime(ctx: Context): String =
+        prefs(ctx).getString("proactive_allday_remind_time", "09:00").orEmpty().ifBlank { "09:00" }
+
+    fun setProactiveAllDayRemindTime(ctx: Context, hhmm: String) {
+        prefs(ctx).edit().putString("proactive_allday_remind_time", hhmm.trim().ifBlank { "09:00" }).apply()
+    }
+
+    /** 聊天室氣泡時間戳顯示開關（預設開） */
+    fun isChatTimestampEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("chat_bubble_timestamp_enabled", true)
+
+    fun setChatTimestampEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("chat_bubble_timestamp_enabled", enabled).apply()
+    }
+
+    /** 更新提醒 snooze 間隔分鐘數（30 / 60 / 240，預設 60） */
+    fun getUpdateSnoozeMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("update_snooze_minutes", 60)
+        return when (v) {
+            30, 60, 240 -> v
+            else -> 60
+        }
+    }
+
+    fun setUpdateSnoozeMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            30, 60, 240 -> minutes
+            else -> 60
+        }
+        prefs(ctx).edit().putInt("update_snooze_minutes", safe).apply()
+    }
+
+    /** 主動監控 Worker 檢查間隔分鐘數（15 / 30 / 60，預設 15） */
+    fun getProactiveMonitorIntervalMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("proactive_monitor_interval_minutes", 15)
+        return when (v) {
+            15, 30, 60 -> v
+            else -> 15
+        }
+    }
+
+    fun setProactiveMonitorIntervalMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            15, 30, 60 -> minutes
+            else -> 15
+        }
+        prefs(ctx).edit().putInt("proactive_monitor_interval_minutes", safe).apply()
+    }
+
+    /** 主動提醒同內容去重冷卻分鐘數（10 / 30 / 60，預設 10） */
+    fun getProactiveDedupWindowMinutes(ctx: Context): Int {
+        val v = prefs(ctx).getInt("proactive_dedup_window_minutes", 10)
+        return when (v) {
+            10, 30, 60 -> v
+            else -> 10
+        }
+    }
+
+    fun setProactiveDedupWindowMinutes(ctx: Context, minutes: Int) {
+        val safe = when (minutes) {
+            10, 30, 60 -> minutes
+            else -> 10
+        }
+        prefs(ctx).edit().putInt("proactive_dedup_window_minutes", safe).apply()
+    }
+
+    /** 每則主動訊息回饋（👍 helpful / 👎 noisy），輕量存 prefs 不新增 DB 表 */
+    fun recordProactiveMessageFeedback(ctx: Context, messageId: Long, helpful: Boolean) {
+        if (messageId <= 0L) return
+        val p = prefs(ctx)
+        val raw = p.getString("proactive_msg_feedback_map", "").orEmpty()
+        val entries = LinkedHashMap<Long, String>()
+        raw.split(',').forEach { pair ->
+            val idx = pair.indexOf(':')
+            if (idx > 0) {
+                val id = pair.substring(0, idx).toLongOrNull() ?: return@forEach
+                entries[id] = pair.substring(idx + 1)
+            }
+        }
+        val prev = entries[messageId]
+        val nextVal = if (helpful) "up" else "down"
+        if (prev == nextVal) return
+        entries[messageId] = nextVal
+        val trimmed = entries.entries.toList().let { if (it.size > 120) it.takeLast(120) else it }
+        var up = p.getInt("proactive_feedback_helpful_count", 0)
+        var down = p.getInt("proactive_feedback_noisy_count", 0)
+        if (prev == "up") up = (up - 1).coerceAtLeast(0)
+        if (prev == "down") down = (down - 1).coerceAtLeast(0)
+        if (helpful) up++ else down++
+        p.edit()
+            .putString("proactive_msg_feedback_map", trimmed.joinToString(",") { "${it.key}:${it.value}" })
+            .putInt("proactive_feedback_helpful_count", up)
+            .putInt("proactive_feedback_noisy_count", down)
+            .apply()
+    }
+
+    fun getProactiveMessageFeedback(ctx: Context, messageId: Long): String? {
+        if (messageId <= 0L) return null
+        val raw = prefs(ctx).getString("proactive_msg_feedback_map", "").orEmpty()
+        raw.split(',').forEach { pair ->
+            val idx = pair.indexOf(':')
+            if (idx > 0 && pair.substring(0, idx).toLongOrNull() == messageId) {
+                return pair.substring(idx + 1)
+            }
+        }
+        return null
+    }
+
+    fun getProactiveFeedbackCounts(ctx: Context): Pair<Int, Int> {
+        val p = prefs(ctx)
+        return p.getInt("proactive_feedback_helpful_count", 0) to p.getInt("proactive_feedback_noisy_count", 0)
+    }
 
     fun getLastBriefingDay(ctx: Context, isMorning: Boolean): String =
         prefs(ctx).getString(if (isMorning) "briefing_last_morning_day" else "briefing_last_evening_day", "").orEmpty()
@@ -2177,6 +2425,88 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun getDecisionFeedbackTotalCount(ctx: Context): Int =
         prefs(ctx).getInt("decision_feedback_total", 0)
 
+    // ---- #375 發送者 30 天輕量信譽統計（零 DB migration，自動淘汰逾 30 天與超過 200 筆） ----
+
+    private const val KEY_SENDER_REPUTATION_30D = "sender_reputation_30d"
+    private const val SENDER_REPUTATION_WINDOW_MS = 30L * 24L * 60L * 60L * 1000L
+    private const val SENDER_REPUTATION_TRUST_THRESHOLD = 10
+    private const val MAX_SENDER_REPUTATION_ENTRIES = 200
+
+    private fun senderReputationKey(packageName: String, sender: String): String =
+        "${packageName.trim().lowercase(Locale.ROOT)}|${sender.trim().lowercase(Locale.ROOT)}"
+            .replace("\n", " ")
+            .replace("=", "_")
+
+    fun recordSenderLowRiskMessage(
+        ctx: Context,
+        packageName: String,
+        sender: String,
+        nowMs: Long = System.currentTimeMillis(),
+        bonus: Int = 1
+    ) {
+        if (sender.isBlank()) return
+        val k = senderReputationKey(packageName, sender)
+        val cutoff = nowMs - SENDER_REPUTATION_WINDOW_MS
+        val p = prefs(ctx)
+        val map = LinkedHashMap<String, Pair<Int, Long>>()
+        p.getString(KEY_SENDER_REPUTATION_30D, "").orEmpty().lineSequence().forEach { line ->
+            val eq = line.lastIndexOf('=')
+            if (eq <= 0) return@forEach
+            val keyPart = line.substring(0, eq)
+            val valParts = line.substring(eq + 1).split(':')
+            val count = valParts.getOrNull(0)?.toIntOrNull() ?: return@forEach
+            val ts = valParts.getOrNull(1)?.toLongOrNull() ?: return@forEach
+            if (ts >= cutoff) {
+                map[keyPart] = count to ts
+            }
+        }
+        val prev = map.remove(k)?.first ?: 0
+        map[k] = (prev + bonus.coerceAtLeast(1)).coerceAtMost(9999) to nowMs
+        val entries = map.entries.toList()
+        val trimmed = if (entries.size > MAX_SENDER_REPUTATION_ENTRIES) {
+            entries.takeLast(MAX_SENDER_REPUTATION_ENTRIES)
+        } else {
+            entries
+        }
+        val encoded = trimmed.joinToString("\n") { (key, v) -> "$key=${v.first}:${v.second}" }
+        p.edit().putString(KEY_SENDER_REPUTATION_30D, encoded).apply()
+    }
+
+    fun getSenderLowRiskCount30d(
+        ctx: Context,
+        packageName: String,
+        sender: String,
+        nowMs: Long = System.currentTimeMillis()
+    ): Int {
+        if (sender.isBlank()) return 0
+        val k = senderReputationKey(packageName, sender)
+        val cutoff = nowMs - SENDER_REPUTATION_WINDOW_MS
+        val raw = prefs(ctx).getString(KEY_SENDER_REPUTATION_30D, "").orEmpty()
+        if (raw.isBlank()) return 0
+        raw.lineSequence().forEach { line ->
+            val eq = line.lastIndexOf('=')
+            if (eq <= 0) return@forEach
+            if (line.substring(0, eq) == k) {
+                val valParts = line.substring(eq + 1).split(':')
+                val count = valParts.getOrNull(0)?.toIntOrNull() ?: 0
+                val ts = valParts.getOrNull(1)?.toLongOrNull() ?: 0L
+                return if (ts >= cutoff) count else 0
+            }
+        }
+        return 0
+    }
+
+    fun isTrustedSenderHistory(
+        ctx: Context,
+        packageName: String,
+        sender: String,
+        hasKnownAvatar: Boolean,
+        nowMs: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (hasKnownAvatar) return true
+        return getSenderLowRiskCount30d(ctx, packageName, sender, nowMs) >= SENDER_REPUTATION_TRUST_THRESHOLD
+    }
+
     // ---- #368 連結應用中心動作登錄檔：同步時間與靜默錯誤狀態 ----
 
     fun getLinkedAppLastSyncAt(ctx: Context, connectorId: String): Long =
@@ -2191,6 +2521,74 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     fun setLinkedAppLastError(ctx: Context, connectorId: String, err: String) {
         prefs(ctx).edit().putString("linked_app_last_err_$connectorId", err.take(120)).apply()
+    }
+
+    // ---- #378 AI 日記／每日回顧 ----
+
+    fun isDiaryDailyEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("diary_daily_enabled", true)
+
+    fun setDiaryDailyEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("diary_daily_enabled", enabled).apply()
+    }
+
+    fun getDiaryAnnotationDislikeCount(ctx: Context, category: String): Int =
+        prefs(ctx).getInt("diary_annotation_dislike_${category.lowercase(Locale.ROOT)}", 0)
+
+    fun incrementDiaryAnnotationDislike(ctx: Context, category: String) {
+        val key = "diary_annotation_dislike_${category.lowercase(Locale.ROOT)}"
+        val p = prefs(ctx)
+        p.edit().putInt(key, p.getInt(key, 0) + 1).apply()
+    }
+
+    // ---- #379 長程目標追蹤 ----
+
+    fun isGoalTrackingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("goal_tracking_enabled", true)
+
+    fun setGoalTrackingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("goal_tracking_enabled", enabled).apply()
+    }
+
+    fun isGoalCandidateDismissed(ctx: Context, messageHash: String): Boolean {
+        val set = prefs(ctx).getStringSet("goal_dismissed_hashes", emptySet()).orEmpty()
+        return messageHash in set
+    }
+
+    fun markGoalCandidateDismissed(ctx: Context, messageHash: String) {
+        if (messageHash.isBlank()) return
+        val p = prefs(ctx)
+        val next = p.getStringSet("goal_dismissed_hashes", emptySet()).orEmpty().toMutableSet()
+        next.add(messageHash)
+        val trimmed = if (next.size > 100) next.toList().takeLast(100).toSet() else next
+        p.edit().putStringSet("goal_dismissed_hashes", trimmed).apply()
+    }
+
+    // ---- #381 Health Connect 生理數據整合 ----
+
+    fun isHealthBriefingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("health_briefing_enabled", true)
+
+    fun setHealthBriefingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("health_briefing_enabled", enabled).apply()
+    }
+
+    fun isHealthSoftInviteEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("health_soft_invite_enabled", true)
+
+    fun setHealthSoftInviteEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("health_soft_invite_enabled", enabled).apply()
+    }
+
+    /** 未授權 Health Connect 時每 7 天最多一次軟性邀請 */
+    fun shouldShowHealthSoftInvite(ctx: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (!isHealthBriefingEnabled(ctx) || !isHealthSoftInviteEnabled(ctx)) return false
+        val last = prefs(ctx).getLong("health_last_soft_invite_ms", 0L)
+        return (nowMs - last) >= 7L * 24L * 60L * 60L * 1000L
+    }
+
+    fun markHealthSoftInviteShown(ctx: Context, nowMs: Long = System.currentTimeMillis()) {
+        prefs(ctx).edit().putLong("health_last_soft_invite_ms", nowMs).apply()
     }
 }
 

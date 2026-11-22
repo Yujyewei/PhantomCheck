@@ -112,6 +112,11 @@ private fun AssistantHubScreen(onBack: () -> Unit) {
 
     var activeTopics by remember { mutableStateOf(PhantomPrefs.getProactiveTopics(appCtx)) }
     var dailyCap by remember { mutableFloatStateOf(PhantomPrefs.getProactiveDailyCap(appCtx).toFloat()) }
+    var briefingDailyCap by remember { mutableFloatStateOf(PhantomPrefs.getBriefingDailyCap(appCtx).toFloat()) }
+    var reminderLeadMin by remember { mutableStateOf(PhantomPrefs.getProactiveReminderLeadMinutes(appCtx)) }
+    var allDayRemindTime by remember { mutableStateOf(PhantomPrefs.getProactiveAllDayRemindTime(appCtx)) }
+    var monitorIntervalMin by remember { mutableStateOf(PhantomPrefs.getProactiveMonitorIntervalMinutes(appCtx)) }
+    var dedupWindowMin by remember { mutableStateOf(PhantomPrefs.getProactiveDedupWindowMinutes(appCtx)) }
     var dndEnabled by remember { mutableStateOf(PhantomPrefs.isProactiveDndEnabled(appCtx)) }
     var dndStart by remember { mutableStateOf(PhantomPrefs.getProactiveDndStart(appCtx)) }
     var dndEnd by remember { mutableStateOf(PhantomPrefs.getProactiveDndEnd(appCtx)) }
@@ -383,7 +388,7 @@ private fun AssistantHubScreen(onBack: () -> Unit) {
                                 }
                             }
 
-                            Text("每日主動推播上限：${dailyCap.roundToInt()} 則（1–20 可調）", style = MaterialTheme.typography.bodySmall)
+                            Text("每日主動提醒上限：${dailyCap.roundToInt()} 則（1–20 可調，與簡報獨立）", style = MaterialTheme.typography.bodySmall)
                             Slider(
                                 value = dailyCap,
                                 onValueChange = { dailyCap = it },
@@ -394,6 +399,85 @@ private fun AssistantHubScreen(onBack: () -> Unit) {
                                 valueRange = 1f..20f,
                                 steps = 18
                             )
+
+                            Text("每日早晚簡報上限：${briefingDailyCap.roundToInt()} 則（1–10 可調，與主動提醒獨立）", style = MaterialTheme.typography.bodySmall)
+                            Slider(
+                                value = briefingDailyCap,
+                                onValueChange = { briefingDailyCap = it },
+                                onValueChangeFinished = {
+                                    PhantomPrefs.setBriefingDailyCap(appCtx, briefingDailyCap.roundToInt())
+                                    PhantomSettingsBus.notifyChanged()
+                                },
+                                valueRange = 1f..10f,
+                                steps = 8
+                            )
+
+                            Text("行程／待辦主動提醒提前時間", style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(15, 30, 60).forEach { mins ->
+                                    FilterChip(
+                                        selected = reminderLeadMin == mins,
+                                        onClick = {
+                                            reminderLeadMin = mins
+                                            PhantomPrefs.setProactiveReminderLeadMinutes(appCtx, mins)
+                                            PhantomSettingsBus.notifyChanged()
+                                        },
+                                        label = { Text("${mins} 分鐘", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = allDayRemindTime,
+                                onValueChange = {
+                                    allDayRemindTime = it
+                                    PhantomPrefs.setProactiveAllDayRemindTime(appCtx, it)
+                                    PhantomSettingsBus.notifyChanged()
+                                },
+                                label = { Text("今日全天事件提醒時刻（HH:mm，預設 09:00）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Text("背景指紋與里程碑檢查間隔", style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(15, 30, 60).forEach { mins ->
+                                    FilterChip(
+                                        selected = monitorIntervalMin == mins,
+                                        onClick = {
+                                            monitorIntervalMin = mins
+                                            PhantomPrefs.setProactiveMonitorIntervalMinutes(appCtx, mins)
+                                            BriefingScheduler.scheduleProactiveMonitorWorker(appCtx)
+                                            PhantomSettingsBus.notifyChanged()
+                                        },
+                                        label = { Text("${mins} 分鐘", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+
+                            Text("同內容主動提醒去重冷卻時間", style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(10, 30, 60).forEach { mins ->
+                                    FilterChip(
+                                        selected = dedupWindowMin == mins,
+                                        onClick = {
+                                            dedupWindowMin = mins
+                                            PhantomPrefs.setProactiveDedupWindowMinutes(appCtx, mins)
+                                            PhantomSettingsBus.notifyChanged()
+                                        },
+                                        label = { Text("${mins} 分鐘", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+
+                            val (upCount, downCount) = remember { PhantomPrefs.getProactiveFeedbackCounts(appCtx) }
+                            if (upCount > 0 || downCount > 0) {
+                                Text(
+                                    text = "主動訊息回饋累計：👍 有幫助 $upCount 次 · 👎 打擾 $downCount 次",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
 
                             HorizontalDivider(Modifier.padding(vertical = 4.dp))
 

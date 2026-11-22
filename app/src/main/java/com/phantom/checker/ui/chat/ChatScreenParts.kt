@@ -978,6 +978,10 @@ private val CHAT_DEVICE_NOW_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofP
 internal fun formatChatTime(epochMs: Long): String =
     Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).format(CHAT_TIME_FORMATTER)
 
+/** #376 聊天室氣泡右下角 HH:mm 時間戳：嚴格沿用 CHAT_TIME_FORMATTER（Locale.US），不新增 formatter */
+internal fun formatChatBubbleTime(epochMs: Long): String =
+    formatChatTime(epochMs).substringAfter(' ')
+
 internal val CHAT_ID_REF_REGEX = Regex("^(?:#|id[:=\\s]*)(\\d+)$", RegexOption.IGNORE_CASE)
 internal val CHAT_REF_SPLIT_REGEX = Regex("[\\s:：,，、/|]+")
 private val CHAT_RECENT_DAYS_REGEX = Regex("近\\s*(\\d+)\\s*[天日]")

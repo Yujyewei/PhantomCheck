@@ -166,6 +166,7 @@ internal fun PartnerTab(
     val lastBriefingSummary = remember(settingsTick) { PhantomPrefs.getLastBriefingSummary(appCtx) }
     val proactivePushTotal = remember(settingsTick) { PhantomPrefs.getProactivePushTotalCount(appCtx) }
 
+    var goalProgressCount by remember { mutableStateOf(0) }
     LaunchedEffect(settingsTick) {
         assistantName = PhantomPrefs.getAssistantName(appCtx)
         avatarBitmap = AssistantAvatarHelper.loadAvatarBitmap(appCtx)
@@ -173,6 +174,9 @@ internal fun PartnerTab(
             runCatching {
                 db.chatDao().allSessions().sumOf { s -> db.chatDao().messagesForSession(s.id).size }
             }.getOrDefault(0)
+        }
+        goalProgressCount = withContext(Dispatchers.IO) {
+            runCatching { db.goalDao().totalProgressCount() }.getOrDefault(0)
         }
     }
 
@@ -191,8 +195,8 @@ internal fun PartnerTab(
     val conflictCount = remember(rawMemories) {
         rawMemories.count { it.status == MemoryEntity.STATUS_CONFLICT }
     }
-    val intimacy = remember(confirmedMemoryCount, chatMsgCount, briefingReadCount) {
-        computeIntimacyLevel(confirmedMemoryCount, chatMsgCount, briefingReadCount)
+    val intimacy = remember(confirmedMemoryCount, chatMsgCount, briefingReadCount, goalProgressCount) {
+        computeIntimacyLevel(confirmedMemoryCount, chatMsgCount + goalProgressCount, briefingReadCount)
     }
 
     val recentCards = remember(lastBriefingSummary, newConfirmed7d, conflictCount, proactivePushTotal) {
@@ -235,6 +239,19 @@ internal fun PartnerTab(
         contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // #378 每日回顧／生活時間軸卡片（夥伴分頁頂部入口，無 API key 亦 100% 可用）
+        item(key = "partner_diary_card") {
+            PartnerDiaryCard(glassState = glassState)
+        }
+
+        // #379 長程目標追蹤卡（進度條＋連續天數＋里程碑；無 API key 手動建立全流程可用）
+        item(key = "partner_goals_card") {
+            PartnerGoalsCard(
+                glassState = glassState,
+                settingsVersion = settingsTick
+            )
+        }
+
         // 1. 夥伴頭像、名字、陪伴天數與快捷按鈕
         item(key = "partner_profile_header") {
             PhantomGlassCard(

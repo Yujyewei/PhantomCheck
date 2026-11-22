@@ -68,8 +68,9 @@ object BriefingScheduler {
             wm.cancelUniqueWork(MONITOR_WORK_NAME)
             return
         }
-        // 零 token 本地指紋比對，不設網路 constraint
-        val req = PeriodicWorkRequestBuilder<ProactiveMonitorWorker>(15L, TimeUnit.MINUTES)
+        // 零 token 本地指紋比對，不設網路 constraint；支援 15/30/60 分鐘自訂間隔
+        val intervalMinutes = PhantomPrefs.getProactiveMonitorIntervalMinutes(appCtx).toLong()
+        val req = PeriodicWorkRequestBuilder<ProactiveMonitorWorker>(intervalMinutes, TimeUnit.MINUTES)
             .build()
         wm.enqueueUniquePeriodicWork(
             MONITOR_WORK_NAME,

@@ -188,8 +188,16 @@ object AppUpdateHelper {
     }
 
     private const val UPDATE_CHANNEL_ID = "app_updates"
+    const val DEFAULT_UPDATE_SNOOZE_MS = 60L * 60L * 1000L
 
-    private fun isNetworkAvailable(ctx: Context): Boolean {
+    sealed interface AutoUpdateCheckOutcome {
+        data class Available(val update: UpdateCheckResult.UpdateAvailable) : AutoUpdateCheckOutcome
+        data object UpToDate : AutoUpdateCheckOutcome
+        data object Skipped : AutoUpdateCheckOutcome
+        data object Failed : AutoUpdateCheckOutcome
+    }
+
+    fun isNetworkAvailable(ctx: Context): Boolean {
         return try {
             val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
             val net = cm.activeNetwork ?: return false
@@ -200,30 +208,37 @@ object AppUpdateHelper {
         }
     }
 
+    fun isSnoozed(ctx: Context, nowMs: Long = System.currentTimeMillis()): Boolean =
+        nowMs < PhantomPrefs.getUpdateSnoozeUntilMs(ctx.applicationContext)
+
     /**
-     * 每次開啟 App 自動檢查一次 GitHub 最新版本：
-     * - 關閉開關或無網路時直接跳過（失敗靜默，不標記已檢查）
-     * - 發現新版本時發送每日每版本最多一次通知，並每次回傳 UpdateAvailable 供前端彈窗提示
+     * #374 更新提醒必現狀態機：
+     * - 關閉開關、無網路或仍在 snooze 期間 → Skipped（不消耗進程檢查旗標）
+     * - 發現新版本且未 snooze → 必發系統通知並回傳 Available（已移除 version|day 每日 gate）
+     * - 檢查失敗（403/429/逾時/網路錯誤）→ 回傳 Failed（呼叫端於進程內最多重試一次）
      */
-    suspend fun checkAndNotifyIfNeeded(ctx: Context): UpdateCheckResult.UpdateAvailable? {
+    suspend fun checkAndNotifyWithOutcome(
+        ctx: Context,
+        nowMs: Long = System.currentTimeMillis()
+    ): AutoUpdateCheckOutcome {
         val appCtx = ctx.applicationContext
-        if (!PhantomPrefs.isUpdateAutoCheckEnabled(appCtx)) return null
-        if (!isNetworkAvailable(appCtx)) return null
+        if (!PhantomPrefs.isUpdateAutoCheckEnabled(appCtx)) return AutoUpdateCheckOutcome.Skipped
+        if (!isNetworkAvailable(appCtx)) return AutoUpdateCheckOutcome.Skipped
+        if (isSnoozed(appCtx, nowMs)) return AutoUpdateCheckOutcome.Skipped
 
         return when (val res = checkLatestRelease(appCtx)) {
             is UpdateCheckResult.UpdateAvailable -> {
-                val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-                val key = "${res.latestVersion}|$today"
-                if (PhantomPrefs.getUpdateLastNotifiedKey(appCtx) != key) {
-                    postUpdateAvailableNotification(appCtx, res)
-                    PhantomPrefs.setUpdateLastNotifiedKey(appCtx, key)
-                }
-                res
+                postUpdateAvailableNotification(appCtx, res)
+                AutoUpdateCheckOutcome.Available(res)
             }
-            is UpdateCheckResult.UpToDate,
-            is UpdateCheckResult.Error -> null
+            is UpdateCheckResult.UpToDate -> AutoUpdateCheckOutcome.UpToDate
+            is UpdateCheckResult.Error -> AutoUpdateCheckOutcome.Failed
         }
     }
+
+    /** 相容舊呼叫點：回傳 UpdateAvailable 或 null */
+    suspend fun checkAndNotifyIfNeeded(ctx: Context): UpdateCheckResult.UpdateAvailable? =
+        (checkAndNotifyWithOutcome(ctx) as? AutoUpdateCheckOutcome.Available)?.update
 
     private fun postUpdateAvailableNotification(
         ctx: Context,
@@ -237,7 +252,7 @@ object AppUpdateHelper {
                     "版本更新",
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
-                    description = "偵測到新版本發佈時提醒（每天最多一次）"
+                    description = "偵測到新版本發佈時提醒；選擇稍後更新將於 snooze 間隔後再提醒"
                 }
             )
         }

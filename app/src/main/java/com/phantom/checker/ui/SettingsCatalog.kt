@@ -122,7 +122,12 @@ object SettingsCatalog {
         SettingSearchItem("contacts_integration", "hub", "通訊錄整合（暱稱／匯入／VIP）", "管理通訊軟體暱稱綁定本名、免 AI 額度關係匯入與 VIP 信任圈白名單同步（原始通訊錄絕不外送 AI）", listOf("通訊錄", "聯絡人", "暱稱", "綁定", "匯入", "vip", "信任圈", "contacts"), page = "AssistantHubActivity"),
         SettingSearchItem("briefing_morning_enabled", "hub", "早間個人簡報", "每日定時（預設 08:45）整理今日行程、待辦與重點通知寫入 AI 助手並發送通知", listOf("早間簡報", "早報", "簡報", "主動推播", "briefing"), page = "AssistantHubActivity"),
         SettingSearchItem("briefing_evening_enabled", "hub", "晚間個人簡報", "每日定時（預設 22:25）回顧今日重點並預覽明日行程與待辦", listOf("晚間簡報", "晚報", "簡報", "主動推播", "briefing"), page = "AssistantHubActivity"),
-        SettingSearchItem("proactive_daily_cap", "hub", "每日主動推播上限", "限制 AI 助手每日主動簡報與提醒則數上限（預設 6 則，1–20 可調）", listOf("主動推播", "上限", "節流", "cap", "簡報"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_daily_cap", "hub", "每日主動提醒上限", "限制 AI 助手每日主動提醒則數上限（預設 6 則，1–20 可調，與簡報上限獨立）", listOf("主動推播", "上限", "節流", "cap", "主動提醒"), page = "AssistantHubActivity"),
+        SettingSearchItem("briefing_daily_cap", "hub", "每日早晚簡報上限", "限制早間與晚間簡報每日合計上限（預設 2 則，1–10 可調，與主動提醒獨立）", listOf("簡報上限", "早晚簡報", "上限", "briefing cap"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_reminder_lead_minutes", "hub", "行程／待辦提醒提前時間", "設定主動提醒提前觸發分鐘數（15／30／60 分鐘，預設 30 分鐘）", listOf("提前提醒", "提前分鐘", "lead", "行程提醒", "待辦提醒"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_allday_remind_time", "hub", "全天事件提醒時刻", "設定今日全天事件主動提醒開始時刻（HH:mm，預設 09:00）", listOf("全天事件", "提醒時間", "allday", "09:00"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_monitor_interval_minutes", "hub", "主動監控檢查間隔", "設定零 token 本地指紋與里程碑背景檢查週期（15／30／60 分鐘，預設 15 分鐘）", listOf("監控頻率", "檢查間隔", "monitor", "worker"), page = "AssistantHubActivity"),
+        SettingSearchItem("proactive_dedup_window_minutes", "hub", "主動提醒去重冷卻時間", "同內容主動提醒於此冷卻時間內絕不重複發送（10／30／60 分鐘，預設 10 分鐘）", listOf("去重", "冷卻", "防重複", "dedup"), page = "AssistantHubActivity"),
         SettingSearchItem("proactive_dnd_enabled", "hub", "主動推播獨立勿擾時段", "設定主動推播的獨立勿擾時段（預設 00:00–07:00，期間仍寫入聊天但不發通知）", listOf("勿擾", "主動推播", "靜音", "dnd"), page = "AssistantHubActivity"),
         SettingSearchItem("proactive_calendar_insight_enabled", "hub", "主動日曆情報", "定時讀取勾選日曆並依即將到來事件主動彙整情報寫入主動訊息聊天室（預設開啟）", listOf("日曆情報", "主動日曆", "行事曆", "calendar", "insight"), page = "AssistantHubActivity"),
         SettingSearchItem("proactive_calendar_insight_notif_enabled", "hub", "日曆情報發送通知", "主動日曆情報產出時是否發送通知（關閉時僅寫入主動訊息聊天室，預設開啟）", listOf("日曆情報", "通知", "calendar", "notif"), page = "AssistantHubActivity"),
@@ -130,10 +135,16 @@ object SettingsCatalog {
         SettingSearchItem("calendar_insight_interval_minutes", "hub", "日曆情報檢查頻率", "設定主動日曆情報定時檢查週期（30／60／120／180 分鐘，預設 60 分鐘）", listOf("日曆情報", "頻率", "週期", "interval"), page = "AssistantHubActivity"),
         SettingSearchItem("memory_auto_extract_enabled", "hub", "對話自動記憶擷取", "對話中出現個人資訊（人、事、時、地、偏好、習慣）時自動寫入非敏感無衝突記憶並於氣泡下顯示小字提醒（敏感與衝突仍進確認卡，預設開啟）", listOf("自動記憶", "擷取", "記憶", "memory", "extract"), page = "AssistantHubActivity"),
         SettingSearchItem("chat_pending_capsules_enabled", "hub", "未決事項膠囊列", "對話框頂部顯示至多 3 顆可滑除的未決事項快速膠囊與壓縮接續錨點（預設開啟）", listOf("膠囊", "未決事項", "錨點", "連續性", "capsules"), page = "AssistantHubActivity"),
-        SettingSearchItem("decision_confirm_threshold", "hub", "雙門檻自動決策置信閾值", "調整 AI 自動判定高風險與降級確認卡的分數門檻（預設 60，範圍 40–85）", listOf("雙門檻", "決策", "閾值", "確認卡", "decision", "threshold"), page = "AssistantHubActivity"),
+        SettingSearchItem("chat_bubble_timestamp_enabled", "about", "聊天室訊息右下角時間戳", "控制 AI 對話與主動訊息氣泡右下角是否顯示 HH:mm 發送時間（預設開啟）", listOf("時間戳", "發送時間", "聊天時間", "timestamp")),
+        SettingSearchItem("diary_daily_enabled", "hub", "AI 日記／每日回顧", "每日 00:30 零 token 本機整理前一日時間軸，AI 註記展開快取且可「不準」降權（無 API key 亦可用）", listOf("日記", "每日回顧", "時間軸", "diary", "註記"), page = "AssistantHubActivity"),
+        SettingSearchItem("goal_tracking_enabled", "hub", "長程目標追蹤", "偵測習慣／目標訊號必經確認卡建立、自動拆解週期子待辦並支援只降不升頻率調整（無 API key 亦可手動建立）", listOf("目標", "長程目標", "習慣", "打卡", "goal"), page = "AssistantHubActivity"),
+        SettingSearchItem("health_briefing_enabled", "hub", "Health Connect 生理節奏整合", "晨間簡報附查表式睡眠／步數／心率規則建議（增強不依賴、原始數值不出本機）", listOf("健康", "睡眠", "步數", "心率", "health connect", "生理"), page = "PermissionHubActivity"),
+        SettingSearchItem("health_soft_invite_enabled", "hub", "Health Connect 軟性邀請", "未授權 Health Connect 時於晨間簡報每週最多一次顯示軟性連接邀請", listOf("穿戴", "手錶", "health", "軟邀請"), page = "PermissionHubActivity"),
+        SettingSearchItem("decision_confirm_threshold", "hub", "雙門檻自動決策置信閾值", "調整 AI 自動判定高風險與降級確認卡的分數門檻（預設 60，範圍 40–85）", listOf("雙門檻", "決策", "閾值", "防詐門檻", "確認卡", "decision", "threshold"), page = "AssistantHubActivity"),
         SettingSearchItem("ai_model_briefing", "ai", "簡報與畫像卡模型", "為早晚簡報與「我對你的瞭解」畫像卡指定獨立 AI 模型", listOf("簡報模型", "畫像卡模型", "briefing", "模型"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("linked_apps_center", "hub", "連結應用程式中心", "集中檢視日曆、通訊錄、通知、鬧鐘、電池優化狀態與自填金鑰雲端擴充（GitHub／Discord）", listOf("連結應用", "github", "discord", "webhook", "鬧鐘", "gmail", "地圖", "跨app", "linked"), page = "LinkedAppsActivity"),
-        SettingSearchItem("update_auto_check", "about", "自動檢查更新", "每次開啟 App 時自動檢查 GitHub 最新版本並提示；通知欄提醒每天最多一次", listOf("檢查更新", "更新", "版本", "自動更新", "update")),
+        SettingSearchItem("update_auto_check", "about", "自動檢查更新", "每次開啟 App 自動檢查更新；選擇「稍後更新」將於設定間隔後再次提醒。", listOf("檢查更新", "更新", "版本", "自動更新", "update")),
+        SettingSearchItem("update_snooze_minutes", "about", "更新提醒延後間隔", "點擊「稍後更新」後暫停提醒的時間（30 分鐘／1 小時／4 小時，預設 1 小時）", listOf("稍後更新", "延後", "snooze", "更新間隔")),
         SettingSearchItem("about_section", "about", "關於", "應用程式名稱、版本號、作者、GitHub 倉庫、第三方元件與隱私說明", listOf("版本", "作者", "關於", "about", "version", "檢查更新", "更新", "update", "下載"))
     )
 
@@ -184,6 +195,11 @@ object SettingsCatalog {
         "stats_unread_ratio",
         "stats_app_share",
         "stats_todo_done",
+        "chat_bubble_timestamp_enabled",
+        "diary_daily_enabled",
+        "goal_tracking_enabled",
+        "health_briefing_enabled",
+        "health_soft_invite_enabled",
         "update_auto_check"
     )
 
@@ -239,6 +255,11 @@ object SettingsCatalog {
             "stats_unread_ratio",
             "stats_app_share",
             "stats_todo_done" -> PhantomPrefs.isStatsCardVisible(appCtx, id)
+            "chat_bubble_timestamp_enabled" -> PhantomPrefs.isChatTimestampEnabled(appCtx)
+            "diary_daily_enabled" -> PhantomPrefs.isDiaryDailyEnabled(appCtx)
+            "goal_tracking_enabled" -> PhantomPrefs.isGoalTrackingEnabled(appCtx)
+            "health_briefing_enabled" -> PhantomPrefs.isHealthBriefingEnabled(appCtx)
+            "health_soft_invite_enabled" -> PhantomPrefs.isHealthSoftInviteEnabled(appCtx)
             "update_auto_check" -> PhantomPrefs.isUpdateAutoCheckEnabled(appCtx)
             else -> null
         }
@@ -328,6 +349,14 @@ object SettingsCatalog {
             "stats_unread_ratio",
             "stats_app_share",
             "stats_todo_done" -> PhantomPrefs.setStatsCardVisible(appCtx, id, enabled)
+            "chat_bubble_timestamp_enabled" -> PhantomPrefs.setChatTimestampEnabled(appCtx, enabled)
+            "diary_daily_enabled" -> {
+                PhantomPrefs.setDiaryDailyEnabled(appCtx, enabled)
+                com.phantom.checker.service.DiaryPolicy.schedule(appCtx)
+            }
+            "goal_tracking_enabled" -> PhantomPrefs.setGoalTrackingEnabled(appCtx, enabled)
+            "health_briefing_enabled" -> PhantomPrefs.setHealthBriefingEnabled(appCtx, enabled)
+            "health_soft_invite_enabled" -> PhantomPrefs.setHealthSoftInviteEnabled(appCtx, enabled)
             "update_auto_check" -> PhantomPrefs.setUpdateAutoCheckEnabled(appCtx, enabled)
             else -> return null
         }

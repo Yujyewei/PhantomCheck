@@ -286,6 +286,7 @@ fun ChatAssistantTab(
     var pendingTodoQueue by remember { mutableStateOf<List<PendingTodoInsertion>>(emptyList()) }
     var editingTodoTimeTarget by remember { mutableStateOf<PendingTodoInsertion?>(null) }
     var pendingCalendarQueue by remember { mutableStateOf<List<PendingCalendarAddition>>(emptyList()) }
+    var pendingGoalCandidate by remember { mutableStateOf<Pair<Long, com.phantom.checker.util.GoalEngine.GoalCandidate>?>(null) }
     var searchResultCard by remember { mutableStateOf<SearchResultCardState?>(null) }
     var showUsagePermissionGuideCard by remember { mutableStateOf(false) }
     var pendingExtendedActionQueue by remember { mutableStateOf<List<PendingExtendedAction>>(emptyList()) }
@@ -480,6 +481,9 @@ fun ChatAssistantTab(
                 }
                 loadMessages(sessionId)
                 loadSessionsAndSuggestions()
+                com.phantom.checker.util.GoalEngine.detectGoalCandidate(appCtx, displayUserText)?.let { cand ->
+                    pendingGoalCandidate = sessionId to cand
+                }
             }
 
             val history = messages
@@ -2840,6 +2844,10 @@ fun ChatAssistantTab(
                     description = "你可以問「今天 LINE 的訊息」、「昨日簡報」或「最近有可疑詐騙嗎」，${assistantName}會根據你的本地備份唯讀查詢並引用來源。"
                 )
             } else {
+                val chatSettingsVer by PhantomSettingsBus.version.collectAsState()
+                val showBubbleTimestamp = remember(chatSettingsVer) {
+                    PhantomPrefs.isChatTimestampEnabled(appCtx)
+                }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -2851,6 +2859,9 @@ fun ChatAssistantTab(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                         ) {
+                            val bubbleTimeText = remember(msg.id, msg.createdAt) {
+                                formatChatBubbleTime(if (msg.createdAt > 0L) msg.createdAt else System.currentTimeMillis())
+                            }
                             if (isUser) {
                                 Surface(
                                     shape = RoundedCornerShape(18.dp),
@@ -2867,12 +2878,32 @@ fun ChatAssistantTab(
                                             }
                                         )
                                 ) {
-                                    Text(
-                                        text = msg.content,
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                                    )
+                                    Column(
+                                        modifier = Modifier.padding(
+                                            start = 14.dp,
+                                            end = 14.dp,
+                                            top = 10.dp,
+                                            bottom = if (showBubbleTimestamp) 6.dp else 10.dp
+                                        )
+                                    ) {
+                                        Text(
+                                            text = msg.content,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        if (showBubbleTimestamp) {
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Text(
+                                                text = bubbleTimeText,
+                                                fontSize = 10.sp,
+                                                lineHeight = 12.sp,
+                                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                modifier = Modifier.align(Alignment.End)
+                                            )
+                                        }
+                                    }
                                 }
                             } else {
                                 val isBriefingMsg = msg.id > 0L && (
@@ -3001,6 +3032,74 @@ fun ChatAssistantTab(
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
+                                        if (showBubbleTimestamp) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 4.dp),
+                                                horizontalArrangement = Arrangement.End
+                                            ) {
+                                                Text(
+                                                    text = bubbleTimeText,
+                                                    fontSize = 10.sp,
+                                                    lineHeight = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
+                                        }
+                                    }
+                                    val isProactiveMsg = msg.id > 0L && (
+                                        isBriefingMsg ||
+                                            msg.content.startsWith("**🔔 ") ||
+                                            msg.content.startsWith("**📅 ") ||
+                                            msg.content.startsWith("**📋 ")
+                                        )
+                                    if (isProactiveMsg) {
+                                        var feedbackChoice by remember(msg.id) {
+                                            mutableStateOf(PhantomPrefs.getProactiveMessageFeedback(appCtx, msg.id))
+                                        }
+                                        Row(
+                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = if (feedbackChoice == "up") "👍 已有幫助" else "👍 有幫助",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (feedbackChoice == "up") {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        PhantomPrefs.recordProactiveMessageFeedback(appCtx, msg.id, helpful = true)
+                                                        feedbackChoice = "up"
+                                                        onShowMessage("已記錄回饋：有幫助")
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                            Text(
+                                                text = if (feedbackChoice == "down") "👎 已標記打擾" else "👎 打擾",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (feedbackChoice == "down") {
+                                                    MaterialTheme.colorScheme.error
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        PhantomPrefs.recordProactiveMessageFeedback(appCtx, msg.id, helpful = false)
+                                                        feedbackChoice = "down"
+                                                        onShowMessage("已記錄回饋：打擾（將作為日後主動頻率調權依據）")
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
                                     }
                                     val autoMems = remember(allMemoriesLive, msg.id) {
                                         allMemoriesLive.filter { it.sourceRef?.contains("|msg:${msg.id}|") == true }
@@ -3014,6 +3113,91 @@ fun ChatAssistantTab(
                                                 .padding(start = 6.dp, top = 2.dp)
                                                 .clickable { inspectAutoMemoriesMsgId = msg.id }
                                         )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    pendingGoalCandidate?.takeIf { it.first == currentSessionId }?.let { (_, candidate) ->
+                        item(key = "pending_goal_confirm_card") {
+                            var editTitle by remember(candidate.messageHash) { mutableStateOf(candidate.title) }
+                            var editCadence by remember(candidate.messageHash) { mutableStateOf(candidate.cadenceDays) }
+                            PhantomGlassCard(
+                                glassState = glassState,
+                                modifier = Modifier.fillMaxWidth(),
+                                cornerRadius = 18.dp,
+                                contentPadding = 14.dp
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "🎯 偵測到長程目標（置信 ${candidate.confidence}%）",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "為你建立目標並自動排程週期子待辦，同意嗎？（確認前絕不自動建立）",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    OutlinedTextField(
+                                        value = editTitle,
+                                        onValueChange = { editTitle = it },
+                                        label = { Text("目標標題（可編輯）") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        listOf(1 to "每天", 7 to "每週", 14 to "雙週", 30 to "每月").forEach { (days, label) ->
+                                            FilterChip(
+                                                selected = editCadence == days,
+                                                onClick = { editCadence = days },
+                                                label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                                            )
+                                        }
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                val finalTitle = editTitle.trim()
+                                                if (finalTitle.isNotEmpty()) {
+                                                    scope.launch {
+                                                        com.phantom.checker.util.GoalEngine.createGoalAndScheduleNextTodo(
+                                                            appCtx,
+                                                            finalTitle,
+                                                            editCadence
+                                                        )
+                                                        onShowMessage("已建立目標「$finalTitle」並排程下一期提醒")
+                                                    }
+                                                    pendingGoalCandidate = null
+                                                }
+                                            },
+                                            enabled = editTitle.trim().isNotEmpty()
+                                        ) {
+                                            Text("同意建立", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                PhantomPrefs.markGoalCandidateDismissed(appCtx, candidate.messageHash)
+                                                pendingGoalCandidate = null
+                                            }
+                                        ) {
+                                            Text("不感興趣", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                PhantomPrefs.markGoalCandidateDismissed(appCtx, candidate.messageHash)
+                                                PhantomPrefs.recordDecisionFeedback(appCtx, "goal_wrong")
+                                                pendingGoalCandidate = null
+                                                onShowMessage("已記錄誤判回饋")
+                                            }
+                                        ) {
+                                            Text("判斷有誤", style = MaterialTheme.typography.labelSmall)
+                                        }
                                     }
                                 }
                             }
@@ -3959,6 +4143,37 @@ fun ChatAssistantTab(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val calRoute = remember(pendingCal.title, pendingCal.writableCalendars.size) {
+                                    com.phantom.checker.util.IntentCapabilityRegistry.resolve(
+                                        ctx = appCtx,
+                                        intent = com.phantom.checker.util.IntentCapabilityRegistry.IntentType.CALENDAR_ADD,
+                                        hasSelectedWritableCalendar = pendingCal.writableCalendars.isNotEmpty()
+                                    )
+                                }
+                                Text(
+                                    text = calRoute.executionWayLine(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                calRoute.rerouteNoticeText()?.let { notice ->
+                                    Text(
+                                        text = "ℹ️ $notice",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (calRoute.isAllBlocked) {
+                                    TextButton(
+                                        onClick = {
+                                            ctx.startActivity(
+                                                com.phantom.checker.util.IntentCapabilityRegistry.buildPermissionHubIntent(ctx)
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("前往權限授予中心", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                                 if (!pendingCal.location.isNullOrBlank()) {
                                     Text(
                                         text = "地點：${pendingCal.location}",
@@ -4129,6 +4344,36 @@ fun ChatAssistantTab(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val remRoute = remember(pendingTodo.title, pendingTodo.dueAt) {
+                                    com.phantom.checker.util.IntentCapabilityRegistry.resolve(
+                                        ctx = appCtx,
+                                        intent = com.phantom.checker.util.IntentCapabilityRegistry.IntentType.REMINDER
+                                    )
+                                }
+                                Text(
+                                    text = remRoute.executionWayLine(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                remRoute.rerouteNoticeText()?.let { notice ->
+                                    Text(
+                                        text = "ℹ️ $notice",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (remRoute.isAllBlocked) {
+                                    TextButton(
+                                        onClick = {
+                                            ctx.startActivity(
+                                                com.phantom.checker.util.IntentCapabilityRegistry.buildPermissionHubIntent(ctx)
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("前往權限授予中心", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                                 Spacer(Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -4870,6 +5115,26 @@ fun ChatAssistantTab(
                                         text = crossAct.summary(),
                                         style = MaterialTheme.typography.bodySmall
                                     )
+                                    val openAppRoute = remember(crossAct) {
+                                        val pkg = (crossAct as? com.phantom.checker.util.CrossAppActionProposal.OpenApp)?.packageName
+                                        com.phantom.checker.util.IntentCapabilityRegistry.resolve(
+                                            ctx = appCtx,
+                                            intent = com.phantom.checker.util.IntentCapabilityRegistry.IntentType.OPEN_APP,
+                                            targetPackage = pkg
+                                        )
+                                    }
+                                    Text(
+                                        text = openAppRoute.executionWayLine(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    openAppRoute.rerouteNoticeText()?.let { notice ->
+                                        Text(
+                                            text = "ℹ️ $notice",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                     Text(
                                         text = "系統不會自動執行此操作；請確認參數無誤後點擊「執行」。",
                                         style = MaterialTheme.typography.labelSmall,

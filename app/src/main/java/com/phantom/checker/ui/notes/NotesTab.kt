@@ -727,7 +727,17 @@ internal fun NotesTab(
             val spawned = withContext(Dispatchers.IO) {
                 ReminderScheduler.completeTodoWithRecurrence(appCtx, t, checked)
             }
-            if (spawned != null) {
+            val goalAdvanced = if (checked) {
+                com.phantom.checker.util.GoalEngine.onTodoCompleted(
+                    appCtx,
+                    t.copy(isDone = true, completedAt = System.currentTimeMillis())
+                )
+            } else {
+                false
+            }
+            if (goalAdvanced) {
+                onShowMessage("已完成目標子待辦，並已自動排程下一期提醒")
+            } else if (spawned != null) {
                 onShowMessage("已完成並自動建立下一次重複待辦")
             }
         }
@@ -831,7 +841,15 @@ internal fun NotesTab(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
+
+            // #373 本機行事曆區（日／週／月檢視；零勾選時顯示導引卡直達設定，絕不靜默空白）
+            LocalCalendarSectionCard(
+                glassState = glassState,
+                settingsVersion = notesSettingsVersion
+            )
+
+            Spacer(Modifier.height(10.dp))
 
             // 1. 待辦事項區（與 AI 助手、桌面小工具同步；可收合以節省空間）
             val pendingCount = todos.count { !it.isDone }
@@ -1819,3 +1837,187 @@ internal fun ManualMemoRuleDialog(
     }
 
 }
+
+private enum class CalendarRangeMode(val label: String, val days: Long) {
+    DAY("日檢視", 1L),
+    WEEK("週檢視", 7L),
+    MONTH("月檢視", 31L)
+}
+
+/**
+ * #373 本機行事曆區（日／週／月檢視）：
+ * - 未授權或 0 個日曆被勾選時絕不靜默空白，直接顯示導引卡「前往設定勾選日曆」直達按鈕。
+ * - 已勾選時僅查已勾選日曆，全程 Dispatchers.IO，支援日／週／月範圍切換與深色／大字體不破版。
+ */
+@Composable
+private fun LocalCalendarSectionCard(
+    glassState: HazeState,
+    settingsVersion: Long
+) {
+    val ctx = LocalContext.current
+    val appCtx = ctx.applicationContext
+    var expanded by remember { mutableStateOf(false) }
+    var rangeMode by remember { mutableStateOf(CalendarRangeMode.WEEK) }
+    var events by remember { mutableStateOf<List<com.phantom.checker.util.CalendarBridge.CalendarEventInstance>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+
+    val hasPerm = remember(settingsVersion) { com.phantom.checker.util.CalendarBridge.hasReadPermission(appCtx) }
+    val selectedIds = remember(settingsVersion) { PhantomPrefs.getSelectedCalendarIds(appCtx) }
+    val isReady = hasPerm && selectedIds.isNotEmpty()
+
+    LaunchedEffect(isReady, expanded, rangeMode, settingsVersion) {
+        if (!isReady || !expanded) {
+            if (!isReady) events = emptyList()
+            return@LaunchedEffect
+        }
+        loading = true
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        val beginMs = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMs = today.plusDays(rangeMode.days).atStartOfDay(zone).toInstant().toEpochMilli()
+        events = runCatching {
+            com.phantom.checker.util.CalendarBridge.queryInstances(appCtx, beginMs, endMs, selectedIds)
+        }.getOrDefault(emptyList())
+        loading = false
+    }
+
+    PhantomGlassCard(
+        glassState = glassState,
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = 20.dp,
+        contentPadding = 12.dp
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isReady) {
+                            "📅 本機行事曆（已勾選 ${selectedIds.size} 個日曆）"
+                        } else {
+                            "📅 本機行事曆（尚未勾選日曆）"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收合行事曆" else "展開行事曆",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (!isReady) {
+                // 0 個日曆被勾選或未授權時不得靜默空白：始終顯示明確導引卡與直達設定按鈕
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (!hasPerm) {
+                            "尚未授予日曆讀取權限，授權並勾選日曆後即可同步顯示手機行程。"
+                        } else {
+                            "目前尚未勾選任何本機日曆，因此無法顯示行程。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            val intent = Intent(ctx, com.phantom.checker.ui.SettingsActivity::class.java).apply {
+                                putExtra("highlight_card_key", "memory_assistant")
+                            }
+                            ctx.startActivity(intent)
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("前往設定勾選日曆", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            } else if (expanded) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CalendarRangeMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = rangeMode == mode,
+                            onClick = { rangeMode = mode },
+                            label = { Text(mode.label, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+                if (loading) {
+                    Text(
+                        text = "載入本機行程中…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else if (events.isEmpty()) {
+                    Text(
+                        text = "${rangeMode.label}期間內無已勾選日曆的排定行程。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    val zone = remember { java.time.ZoneId.systemDefault() }
+                    val dateFmt = remember { java.time.format.DateTimeFormatter.ofPattern("MM/dd", java.util.Locale.US) }
+                    val timeFmt = remember { java.time.format.DateTimeFormatter.ofPattern("HH:mm", java.util.Locale.US) }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        events.take(20).forEach { ev ->
+                            val timeLabel = if (ev.allDay) {
+                                val d = java.time.Instant.ofEpochMilli(ev.beginMs)
+                                    .atZone(java.time.ZoneOffset.UTC)
+                                    .toLocalDate()
+                                "${d.format(dateFmt)} 全天"
+                            } else {
+                                val s = java.time.Instant.ofEpochMilli(ev.beginMs).atZone(zone)
+                                val e = java.time.Instant.ofEpochMilli(ev.endMs).atZone(zone)
+                                "${s.format(dateFmt)} ${s.format(timeFmt)}–${e.format(timeFmt)}"
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Text(
+                                    text = timeLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = ev.title + (ev.location?.let { " · $it" } ?: ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
