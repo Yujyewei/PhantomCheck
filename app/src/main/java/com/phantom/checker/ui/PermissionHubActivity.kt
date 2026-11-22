@@ -305,6 +305,50 @@ private fun PermissionHubScreen(onBack: () -> Unit) {
                                     )
                                 }
                             }
+                            HorizontalDivider()
+                            val hcAvailability = remember { com.phantom.checker.util.HealthConnectBridge.checkAvailability(appCtx) }
+                            var hcGranted by remember { mutableStateOf(false) }
+                            LaunchedEffect(Unit) {
+                                hcGranted = com.phantom.checker.util.HealthConnectBridge.hasAllReadPermissions(appCtx)
+                            }
+                            val hcPermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                                androidx.health.connect.client.PermissionController.createRequestPermissionResultContract()
+                            ) { grantedSet ->
+                                hcGranted = grantedSet.containsAll(com.phantom.checker.util.HealthConnectBridge.REQUIRED_READ_PERMISSIONS)
+                            }
+                            PermissionRow(
+                                name = "Health Connect（睡眠／步數／心率）",
+                                granted = hcGranted,
+                                desc = when {
+                                    hcAvailability == com.phantom.checker.util.HealthConnectBridge.SdkAvailability.UNAVAILABLE ->
+                                        "此裝置未支援或未安裝 Health Connect（例如部分無 GMS 機型），App 其餘功能不受影響"
+                                    hcAvailability == com.phantom.checker.util.HealthConnectBridge.SdkAvailability.PROVIDER_UPDATE_REQUIRED ->
+                                        "需安裝或更新 Health Connect 才可讀取穿戴裝置睡眠、步數與心率"
+                                    hcGranted ->
+                                        "已授權本機聚合讀取，原始生理數值永不出本機，僅用於統計 7 日趨勢與晨間規則建議"
+                                    else ->
+                                        "選配授權：於 Stats 顯示 7 日睡眠／步數趨勢，並於晨間簡報提供查表式節奏建議"
+                                },
+                                actionLabel = when {
+                                    hcAvailability != com.phantom.checker.util.HealthConnectBridge.SdkAvailability.AVAILABLE -> "安裝／查看"
+                                    hcGranted -> "管理權限"
+                                    else -> "立即授予"
+                                }
+                            ) {
+                                if (hcAvailability != com.phantom.checker.util.HealthConnectBridge.SdkAvailability.AVAILABLE || hcGranted) {
+                                    runCatching {
+                                        ctx.startActivity(com.phantom.checker.util.HealthConnectBridge.buildInstallOrSettingsIntent(ctx))
+                                    }
+                                } else {
+                                    runCatching {
+                                        hcPermLauncher.launch(com.phantom.checker.util.HealthConnectBridge.REQUIRED_READ_PERMISSIONS)
+                                    }.onFailure {
+                                        runCatching {
+                                            ctx.startActivity(com.phantom.checker.util.HealthConnectBridge.buildInstallOrSettingsIntent(ctx))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -2563,6 +2563,33 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         val trimmed = if (next.size > 100) next.toList().takeLast(100).toSet() else next
         p.edit().putStringSet("goal_dismissed_hashes", trimmed).apply()
     }
+
+    // ---- #381 Health Connect 生理數據整合 ----
+
+    fun isHealthBriefingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("health_briefing_enabled", true)
+
+    fun setHealthBriefingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("health_briefing_enabled", enabled).apply()
+    }
+
+    fun isHealthSoftInviteEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("health_soft_invite_enabled", true)
+
+    fun setHealthSoftInviteEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("health_soft_invite_enabled", enabled).apply()
+    }
+
+    /** 未授權 Health Connect 時每 7 天最多一次軟性邀請 */
+    fun shouldShowHealthSoftInvite(ctx: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (!isHealthBriefingEnabled(ctx) || !isHealthSoftInviteEnabled(ctx)) return false
+        val last = prefs(ctx).getLong("health_last_soft_invite_ms", 0L)
+        return (nowMs - last) >= 7L * 24L * 60L * 60L * 1000L
+    }
+
+    fun markHealthSoftInviteShown(ctx: Context, nowMs: Long = System.currentTimeMillis()) {
+        prefs(ctx).edit().putLong("health_last_soft_invite_ms", nowMs).apply()
+    }
 }
 
 

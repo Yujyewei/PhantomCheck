@@ -262,6 +262,35 @@ object ProactiveEngine {
             facts.add("關注地區：$regionKeyword")
         }
 
+        // #381 Health Connect 生理數據整合（僅晨間簡報、增強不依賴、原始數值不出本機、僅附查表規則一句結論）
+        if (isMorning && PhantomPrefs.isHealthBriefingEnabled(appCtx)) {
+            val hcAuthorized = runCatching {
+                com.phantom.checker.util.HealthConnectBridge.hasAllReadPermissions(appCtx)
+            }.getOrDefault(false)
+            if (hcAuthorized) {
+                val snapshot = runCatching {
+                    com.phantom.checker.util.HealthConnectBridge.readMorningSnapshot(appCtx)
+                }.getOrNull()
+                if (snapshot != null) {
+                    val hasEarlyBefore9Am = if (CalendarBridge.isCalendarEnabledForAi(appCtx)) {
+                        val dayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+                        val nineAm = today.atTime(LocalTime.of(9, 0)).atZone(zone).toInstant().toEpochMilli()
+                        runCatching {
+                            CalendarBridge.queryInstances(appCtx, dayStart, nineAm)
+                                .any { !it.allDay && it.beginMs in dayStart until nineAm }
+                        }.getOrDefault(false)
+                    } else false
+                    com.phantom.checker.util.HealthConnectBridge.evaluateLookupRule(snapshot, hasEarlyBefore9Am)
+                        ?.let { ruleAdvice ->
+                            facts.add("❤️ 生理節奏建議：$ruleAdvice")
+                        }
+                }
+            } else if (PhantomPrefs.shouldShowHealthSoftInvite(appCtx, nowMs)) {
+                facts.add("💡 連接穿戴裝置可獲得睡眠建議（可至權限授予中心開啟 Health Connect）")
+                PhantomPrefs.markHealthSoftInviteShown(appCtx, nowMs)
+            }
+        }
+
         // 選配外部情報搜尋（BYOK，未設定或省 token 模式誠實跳過不報錯）
         var externalIntel: String? = null
         if (!tokenSaver &&

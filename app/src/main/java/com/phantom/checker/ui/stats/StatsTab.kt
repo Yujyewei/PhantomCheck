@@ -1471,6 +1471,133 @@ internal fun StatsTab(
             }
         }
 
+        // #381 Health Connect 7 日睡眠與步數迷你趨勢條（本機聚合，無 API key 亦可用；未授權誠實降級）
+        item(key = "stats_health_7d") {
+            val ctx = LocalContext.current
+            val appCtx = ctx.applicationContext
+            var trend by remember { mutableStateOf<List<com.phantom.checker.util.HealthConnectBridge.DailyHealthPoint>>(emptyList()) }
+            var hcReady by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                hcReady = com.phantom.checker.util.HealthConnectBridge.hasAllReadPermissions(appCtx)
+                if (hcReady) {
+                    trend = com.phantom.checker.util.HealthConnectBridge.readLast7DaysTrend(appCtx)
+                }
+            }
+            PhantomGlassCard(
+                glassState = glassState,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = 20.dp,
+                contentPadding = 14.dp
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "❤️ Health Connect 7 日趨勢",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (!hcReady) {
+                            TextButton(
+                                onClick = {
+                                    ctx.startActivity(
+                                        android.content.Intent(ctx, com.phantom.checker.ui.PermissionHubActivity::class.java)
+                                    )
+                                }
+                            ) {
+                                Text("前往授權", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                    if (!hcReady || trend.isEmpty()) {
+                        Text(
+                            text = if (!hcReady) {
+                                "尚未授權 Health Connect（選配功能）。授權後可在此檢視近 7 日睡眠與步數趨勢，原始數值絕不出本機。"
+                            } else {
+                                "近 7 日尚無穿戴裝置或系統步數紀錄。"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        val maxSleep = trend.maxOf { it.sleepHours }.coerceAtLeast(8f)
+                        val maxSteps = trend.maxOf { it.steps }.coerceAtLeast(8000L)
+                        Text(
+                            text = "睡眠時數（近 7 日迷你條）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(54.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            trend.forEach { pt ->
+                                val hFrac = (pt.sleepHours / maxSleep).coerceIn(0.08f, 1f)
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Bottom
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.65f)
+                                            .height((34f * hFrac).dp)
+                                            .background(
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                                shape = RoundedCornerShape(4.dp)
+                                            )
+                                    )
+                                    Text(
+                                        text = pt.dayLabel.takeLast(2),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "每日步數（近 7 日迷你條）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(54.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            trend.forEach { pt ->
+                                val hFrac = (pt.steps.toFloat() / maxSteps.toFloat()).coerceIn(0.08f, 1f)
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Bottom
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.65f)
+                                            .height((34f * hFrac).dp)
+                                            .background(
+                                                color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
+                                                shape = RoundedCornerShape(4.dp)
+                                            )
+                                    )
+                                    Text(
+                                        text = pt.dayLabel.takeLast(2),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 匯出 CSV 按鈕
         item {
             OutlinedButton(

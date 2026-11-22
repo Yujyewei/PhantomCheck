@@ -138,6 +138,8 @@ object SettingsCatalog {
         SettingSearchItem("chat_bubble_timestamp_enabled", "about", "聊天室訊息右下角時間戳", "控制 AI 對話與主動訊息氣泡右下角是否顯示 HH:mm 發送時間（預設開啟）", listOf("時間戳", "發送時間", "聊天時間", "timestamp")),
         SettingSearchItem("diary_daily_enabled", "hub", "AI 日記／每日回顧", "每日 00:30 零 token 本機整理前一日時間軸，AI 註記展開快取且可「不準」降權（無 API key 亦可用）", listOf("日記", "每日回顧", "時間軸", "diary", "註記"), page = "AssistantHubActivity"),
         SettingSearchItem("goal_tracking_enabled", "hub", "長程目標追蹤", "偵測習慣／目標訊號必經確認卡建立、自動拆解週期子待辦並支援只降不升頻率調整（無 API key 亦可手動建立）", listOf("目標", "長程目標", "習慣", "打卡", "goal"), page = "AssistantHubActivity"),
+        SettingSearchItem("health_briefing_enabled", "hub", "Health Connect 生理節奏整合", "晨間簡報附查表式睡眠／步數／心率規則建議（增強不依賴、原始數值不出本機）", listOf("健康", "睡眠", "步數", "心率", "health connect", "生理"), page = "PermissionHubActivity"),
+        SettingSearchItem("health_soft_invite_enabled", "hub", "Health Connect 軟性邀請", "未授權 Health Connect 時於晨間簡報每週最多一次顯示軟性連接邀請", listOf("穿戴", "手錶", "health", "軟邀請"), page = "PermissionHubActivity"),
         SettingSearchItem("decision_confirm_threshold", "hub", "雙門檻自動決策置信閾值", "調整 AI 自動判定高風險與降級確認卡的分數門檻（預設 60，範圍 40–85）", listOf("雙門檻", "決策", "閾值", "防詐門檻", "確認卡", "decision", "threshold"), page = "AssistantHubActivity"),
         SettingSearchItem("ai_model_briefing", "ai", "簡報與畫像卡模型", "為早晚簡報與「我對你的瞭解」畫像卡指定獨立 AI 模型", listOf("簡報模型", "畫像卡模型", "briefing", "模型"), page = "ApiKeySettingsActivity"),
         SettingSearchItem("linked_apps_center", "hub", "連結應用程式中心", "集中檢視日曆、通訊錄、通知、鬧鐘、電池優化狀態與自填金鑰雲端擴充（GitHub／Discord）", listOf("連結應用", "github", "discord", "webhook", "鬧鐘", "gmail", "地圖", "跨app", "linked"), page = "LinkedAppsActivity"),
@@ -196,6 +198,8 @@ object SettingsCatalog {
         "chat_bubble_timestamp_enabled",
         "diary_daily_enabled",
         "goal_tracking_enabled",
+        "health_briefing_enabled",
+        "health_soft_invite_enabled",
         "update_auto_check"
     )
 
@@ -254,6 +258,8 @@ object SettingsCatalog {
             "chat_bubble_timestamp_enabled" -> PhantomPrefs.isChatTimestampEnabled(appCtx)
             "diary_daily_enabled" -> PhantomPrefs.isDiaryDailyEnabled(appCtx)
             "goal_tracking_enabled" -> PhantomPrefs.isGoalTrackingEnabled(appCtx)
+            "health_briefing_enabled" -> PhantomPrefs.isHealthBriefingEnabled(appCtx)
+            "health_soft_invite_enabled" -> PhantomPrefs.isHealthSoftInviteEnabled(appCtx)
             "update_auto_check" -> PhantomPrefs.isUpdateAutoCheckEnabled(appCtx)
             else -> null
         }
@@ -349,6 +355,8 @@ object SettingsCatalog {
                 com.phantom.checker.service.DiaryPolicy.schedule(appCtx)
             }
             "goal_tracking_enabled" -> PhantomPrefs.setGoalTrackingEnabled(appCtx, enabled)
+            "health_briefing_enabled" -> PhantomPrefs.setHealthBriefingEnabled(appCtx, enabled)
+            "health_soft_invite_enabled" -> PhantomPrefs.setHealthSoftInviteEnabled(appCtx, enabled)
             "update_auto_check" -> PhantomPrefs.setUpdateAutoCheckEnabled(appCtx, enabled)
             else -> return null
         }
