@@ -41,10 +41,11 @@ object ProactiveEngine {
     data class MonitorCheckResult(
         val fingerprintChanged: Boolean,
         val hasHighPriority: Boolean,
-        val highPrioritySummary: String?
+        val highPrioritySummary: String?,
+        val pendingMilestoneKeys: List<String> = emptyList()
     )
 
-    /** 零 token 本機指紋計算與高優先級檢查（全程 Dispatchers.IO，零 AI 呼叫） */
+    /** 零 token 本機指紋計算與事件里程碑高優先級檢查（全程 Dispatchers.IO，零 AI 呼叫） */
     suspend fun evaluateLocalFingerprintAndPriority(
         ctx: Context,
         nowMs: Long = System.currentTimeMillis()
@@ -53,7 +54,9 @@ object ProactiveEngine {
         val db = AppDatabaseHolder.db(appCtx)
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)
+        val dayKey = today.format(DateTimeFormatter.ISO_LOCAL_DATE)
         val dayStartMs = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val tomorrowStartMs = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
         val twoDaysEndMs = today.plusDays(2).atStartOfDay(zone).toInstant().toEpochMilli()
 
         val pendingTodos = runCatching { db.todoDao().pendingTodos() }.getOrDefault(emptyList())
@@ -83,32 +86,76 @@ object ProactiveEngine {
             PhantomPrefs.setProactiveDirty(appCtx, true)
         }
 
-        // 高優先級條件：todo 24h 內到期、當天全天事件、事件近 60 分鐘開始
-        val urgentTodos = pendingTodos.filter { it.dueAt in (nowMs - 30L * 60_000L)..(nowMs + 24L * 60L * 60_000L) }
-        val soonEvents = calEvents.filter { !it.allDay && it.beginMs in nowMs..(nowMs + 60L * 60_000L) }
-        val todayAllDay = calEvents.filter { it.allDay }
-
+        // #372 事件里程碑式去重：同一 todo / event 在同里程碑僅投遞一次（自動清理跨日 key）
+        val deliveredMilestones = PhantomPrefs.getPrunedProactiveMilestones(appCtx, dayKey)
+        val newMilestoneKeys = mutableListOf<String>()
         val highPriorityParts = mutableListOf<String>()
+
+        // 1. 行程即將開始（60 分鐘窗口）＋ 跨上下文撞期
+        val soonEvents = calEvents
+            .filter { !it.allDay && it.beginMs in nowMs..(nowMs + 60L * 60_000L) }
+            .sortedBy { it.beginMs }
         if (soonEvents.isNotEmpty() && PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_SCHEDULE)) {
-            val ev = soonEvents.first()
-            val hhmm = Instant.ofEpochMilli(ev.beginMs).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm", Locale.US))
-            highPriorityParts.add("⏰ 行程即將開始（$hhmm）：${ev.title}")
-            // 跨上下文撞期檢查
-            if (PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_CONFLICT)) {
-                val conflicts = CalendarBridge.findConflictingEvents(appCtx, ev.beginMs, ev.endMs)
-                    .filter { it.eventId != ev.eventId }
-                if (conflicts.isNotEmpty()) {
-                    val freeSummary = CalendarBridge.queryFreeSlotsSummary(appCtx, days = 1, dayFilter = "today")
-                    highPriorityParts.add("⚠️ 偵測到撞期：${CalendarBridge.formatConflictSummary(conflicts)}\n替代空檔參考：${freeSummary.take(160)}")
+            for (ev in soonEvents) {
+                val soonKey = "event:${ev.eventId}:$dayKey:soon60m"
+                if (soonKey !in deliveredMilestones) {
+                    val hhmm = Instant.ofEpochMilli(ev.beginMs).atZone(zone)
+                        .format(DateTimeFormatter.ofPattern("HH:mm", Locale.US))
+                    highPriorityParts.add("⏰ 行程即將開始（$hhmm）：${ev.title}")
+                    newMilestoneKeys.add(soonKey)
+                    if (PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_CONFLICT)) {
+                        val conflictKey = "event:${ev.eventId}:$dayKey:conflict"
+                        if (conflictKey !in deliveredMilestones) {
+                            val conflicts = CalendarBridge.findConflictingEvents(appCtx, ev.beginMs, ev.endMs)
+                                .filter { it.eventId != ev.eventId }
+                            if (conflicts.isNotEmpty()) {
+                                val freeSummary = CalendarBridge.queryFreeSlotsSummary(appCtx, days = 1, dayFilter = "today")
+                                highPriorityParts.add("⚠️ 偵測到撞期：${CalendarBridge.formatConflictSummary(conflicts)}\n替代空檔參考：${freeSummary.take(160)}")
+                                newMilestoneKeys.add(conflictKey)
+                            }
+                        }
+                    }
+                    break // 每次檢查優先聚焦最近一筆未送達的即將開始行程
                 }
             }
         }
-        if (urgentTodos.isNotEmpty() && PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_TODO)) {
-            val topTodo = urgentTodos.minByOrNull { it.dueAt }!!
-            highPriorityParts.add("📌 24 小時內待辦：${topTodo.title}")
+
+        // 2. 待辦關鍵里程碑（逾期 / 60 分鐘內 / 24 小時內）
+        if (PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_TODO)) {
+            val overdueWindowStart = nowMs - 30L * 60_000L
+            val soon60mEnd = nowMs + 60L * 60_000L
+            val due24hEnd = nowMs + 24L * 60L * 60_000L
+            val candidateTodos = pendingTodos
+                .filter { it.dueAt in overdueWindowStart..due24hEnd }
+                .sortedBy { it.dueAt }
+            for (todo in candidateTodos) {
+                val (milestone, label) = when {
+                    todo.dueAt < nowMs -> "overdue" to "⚠️ 待辦已逾期：${todo.title}"
+                    todo.dueAt <= soon60mEnd -> "due60m" to "⏰ 1 小時內到期待辦：${todo.title}"
+                    else -> "due24h" to "📌 24 小時內待辦：${todo.title}"
+                }
+                val key = "todo:${todo.id}:$dayKey:$milestone"
+                if (key !in deliveredMilestones) {
+                    highPriorityParts.add(label)
+                    newMilestoneKeys.add(key)
+                    break // 聚焦最緊急的一筆未送達里程碑，避免單卡過長
+                }
+            }
         }
+
+        // 3. 今日全天事件：每筆全天事件當日僅首次偵測投遞一次
+        val todayAllDay = calEvents.filter { it.allDay && it.beginMs < tomorrowStartMs && it.endMs > dayStartMs }
         if (todayAllDay.isNotEmpty() && PhantomPrefs.isProactiveTopicEnabled(appCtx, PhantomPrefs.PROACTIVE_TOPIC_SCHEDULE)) {
-            highPriorityParts.add("📅 今日全天事件：${todayAllDay.first().title}")
+            val unseenAllDay = todayAllDay.filter { ev ->
+                "allDay:${ev.eventId}:$dayKey" !in deliveredMilestones
+            }
+            if (unseenAllDay.isNotEmpty()) {
+                val titles = unseenAllDay.take(3).joinToString("、") { it.title }
+                highPriorityParts.add("📅 今日全天事件：$titles")
+                unseenAllDay.forEach { ev ->
+                    newMilestoneKeys.add("allDay:${ev.eventId}:$dayKey")
+                }
+            }
         }
 
         val hasHigh = highPriorityParts.isNotEmpty()
@@ -118,7 +165,8 @@ object ProactiveEngine {
         MonitorCheckResult(
             fingerprintChanged = changed,
             hasHighPriority = hasHigh,
-            highPrioritySummary = highPriorityParts.takeIf { it.isNotEmpty() }?.joinToString("\n")
+            highPrioritySummary = highPriorityParts.takeIf { it.isNotEmpty() }?.joinToString("\n"),
+            pendingMilestoneKeys = newMilestoneKeys
         )
     }
 
@@ -264,33 +312,52 @@ object ProactiveEngine {
         true
     }
 
-    /** 發送高優先級主動提醒（零 token 模板優先，遵守上限與勿擾） */
+    /**
+     * #372 統一主動提醒去重閘門：
+     * 1) 若提供 milestoneKeys 且全部已於今日投遞過 → 擋下。
+     * 2) 同 contentHash 於近 10 分鐘內已投遞 → 擋下（雙保險）。
+     */
+    private fun shouldAllowProactiveDelivery(
+        appCtx: Context,
+        contentForHash: String,
+        milestoneKeys: List<String>,
+        dayKey: String,
+        nowMs: Long
+    ): String? {
+        if (milestoneKeys.isNotEmpty()) {
+            val delivered = PhantomPrefs.getPrunedProactiveMilestones(appCtx, dayKey)
+            if (milestoneKeys.all { it in delivered }) return null
+        }
+        val hash = sha256Hex(contentForHash.trim())
+        if (PhantomPrefs.isProactiveContentHashRecent(appCtx, hash, nowMs)) {
+            return null
+        }
+        return hash
+    }
+
+    /** 發送高優先級主動提醒（零 token 模板優先，統一經由 milestone + 10 分鐘內容去重閘門，遵守上限與勿擾） */
     suspend fun deliverProactiveAlert(
         ctx: Context,
         title: String,
         body: String,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        milestoneKeys: List<String> = emptyList()
     ): Boolean = withContext(Dispatchers.IO) {
         val appCtx = ctx.applicationContext
-        val dayKey = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_LOCAL_DATE)
-        if (PhantomPrefs.getProactiveDailySentCount(appCtx, dayKey) >= PhantomPrefs.getProactiveDailyCap(appCtx)) {
-            return@withContext false
-        }
-        val db = AppDatabaseHolder.db(appCtx)
         val assistantName = PhantomPrefs.getAssistantName(appCtx)
         val fullText = "**🔔 $assistantName 主動提醒｜$title**\n$body"
-        val msgId = writeAssistantMessage(db, fullText, nowMs)
-        PhantomPrefs.incrementProactiveDailySentCount(appCtx, dayKey)
-        if (!isInDndWindow(appCtx, nowMs)) {
-            postBriefingNotification(
-                ctx = appCtx,
-                notifId = NotifIds.PROACTIVE_PUSH,
-                title = "$assistantName：$title",
-                preview = body.replace("\n", " ").take(90),
-                messageId = msgId
-            )
-        }
-        true
+        val msgId = deliverProactiveMessage(
+            ctx = appCtx,
+            title = "$assistantName：$title",
+            body = fullText,
+            notifId = NotifIds.PROACTIVE_PUSH,
+            sendNotif = true,
+            respectDailyCap = true,
+            nowMs = nowMs,
+            milestoneKeys = milestoneKeys,
+            previewOverride = body
+        )
+        msgId != null
     }
 
     const val PROACTIVE_SESSION_TITLE = "AI 助手簡報與主動提醒"
@@ -307,7 +374,7 @@ object ProactiveEngine {
             )
     }
 
-    /** 統一投遞主動訊息（寫入專屬主動訊息聊天室＋可選通知；遵守每日上限與獨立勿擾） */
+    /** 統一投遞主動訊息（寫入專屬主動訊息聊天室＋可選通知；統一經過里程碑＋10分鐘內容雜湊去重閘門、每日上限與獨立勿擾） */
     suspend fun deliverProactiveMessage(
         ctx: Context,
         title: String,
@@ -315,7 +382,9 @@ object ProactiveEngine {
         notifId: Int = NotifIds.PROACTIVE_PUSH,
         sendNotif: Boolean = true,
         respectDailyCap: Boolean = true,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        milestoneKeys: List<String> = emptyList(),
+        previewOverride: String? = null
     ): Long? = withContext(Dispatchers.IO) {
         val appCtx = ctx.applicationContext
         val dayKey = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_LOCAL_DATE)
@@ -324,15 +393,21 @@ object ProactiveEngine {
         ) {
             return@withContext null
         }
+        val contentHash = shouldAllowProactiveDelivery(appCtx, body, milestoneKeys, dayKey, nowMs)
+            ?: return@withContext null
         val db = AppDatabaseHolder.db(appCtx)
         val msgId = writeAssistantMessage(db, body, nowMs)
         PhantomPrefs.incrementProactiveDailySentCount(appCtx, dayKey)
+        PhantomPrefs.recordProactiveContentHash(appCtx, contentHash, nowMs)
+        if (milestoneKeys.isNotEmpty()) {
+            PhantomPrefs.markProactiveMilestonesDelivered(appCtx, milestoneKeys, dayKey)
+        }
         if (sendNotif && !isInDndWindow(appCtx, nowMs)) {
             postBriefingNotification(
                 ctx = appCtx,
                 notifId = notifId,
                 title = title,
-                preview = body.replace("**", "").replace("\n", " ").take(90),
+                preview = (previewOverride ?: body).replace("**", "").replace("\n", " ").take(90),
                 messageId = msgId
             )
         }
@@ -460,7 +535,7 @@ object ProactiveEngine {
     }
 }
 
-/** #337 15 分鐘週期零 token 變動偵測 Worker（無實質變動零 AI 呼叫） */
+/** #337 / #372 15 分鐘週期零 token 變動偵測與里程碑提醒 Worker（無實質變動零 AI 呼叫） */
 class ProactiveMonitorWorker(
     appContext: Context,
     params: WorkerParameters
@@ -468,11 +543,12 @@ class ProactiveMonitorWorker(
     override suspend fun doWork(): Result {
         return try {
             val check = ProactiveEngine.evaluateLocalFingerprintAndPriority(applicationContext)
-            if (check.fingerprintChanged && check.hasHighPriority && !check.highPrioritySummary.isNullOrBlank()) {
+            if (check.hasHighPriority && !check.highPrioritySummary.isNullOrBlank() && check.pendingMilestoneKeys.isNotEmpty()) {
                 ProactiveEngine.deliverProactiveAlert(
                     ctx = applicationContext,
                     title = "重要行程／待辦提醒",
-                    body = check.highPrioritySummary
+                    body = check.highPrioritySummary,
+                    milestoneKeys = check.pendingMilestoneKeys
                 )
             }
             Result.success()

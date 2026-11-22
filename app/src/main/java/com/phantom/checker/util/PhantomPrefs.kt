@@ -1627,6 +1627,88 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun getProactivePushTotalCount(ctx: Context): Int =
         prefs(ctx).getInt("proactive_push_total_count", 0)
 
+    // ---- #372 主動提醒事件里程碑與 10 分鐘內容去重閘門 ----
+
+    private const val KEY_PROACTIVE_MILESTONE_KEYS = "proactive_delivered_milestones"
+    private const val KEY_PROACTIVE_RECENT_HASHES = "proactive_recent_content_hashes"
+    private const val PROACTIVE_CONTENT_DEDUP_WINDOW_MS = 10L * 60L * 1000L
+
+    /**
+     * 讀取已投遞的里程碑 key 集合，並自動清理非當日（dayKey 不符）之過期 key。
+     * key 格式：type:id:dayKey:milestone 或 allDay:eventId:dayKey。
+     */
+    fun getPrunedProactiveMilestones(ctx: Context, todayKey: String): Set<String> {
+        val p = prefs(ctx)
+        val raw = p.getStringSet(KEY_PROACTIVE_MILESTONE_KEYS, emptySet()).orEmpty()
+        if (raw.isEmpty()) return emptySet()
+        val kept = raw.filterTo(LinkedHashSet()) { key ->
+            val parts = key.split(':')
+            // 格式為 type:id:dayKey:milestone 或 allDay:id:dayKey -> 第 3 欄為 dayKey
+            parts.size >= 3 && parts[2] == todayKey
+        }
+        if (kept.size != raw.size) {
+            p.edit().putStringSet(KEY_PROACTIVE_MILESTONE_KEYS, kept).apply()
+        }
+        return kept
+    }
+
+    fun isProactiveMilestoneDelivered(ctx: Context, milestoneKey: String, todayKey: String): Boolean {
+        return milestoneKey in getPrunedProactiveMilestones(ctx, todayKey)
+    }
+
+    fun markProactiveMilestonesDelivered(ctx: Context, milestoneKeys: Collection<String>, todayKey: String) {
+        if (milestoneKeys.isEmpty()) return
+        val kept = getPrunedProactiveMilestones(ctx, todayKey).toMutableSet()
+        kept.addAll(milestoneKeys.filter { it.isNotBlank() })
+        val trimmed = if (kept.size > 200) kept.toList().takeLast(200).toSet() else kept
+        prefs(ctx).edit().putStringSet(KEY_PROACTIVE_MILESTONE_KEYS, trimmed).apply()
+    }
+
+    /**
+     * 檢查 contentHash 是否於近 10 分鐘內已發送；同時清理逾時紀錄。
+     * 儲存格式：以 '\n' 分隔的 "hash|epochMs" 字串（避免 StringSet 可變集合陷阱）。
+     */
+    fun isProactiveContentHashRecent(ctx: Context, contentHash: String, nowMs: Long): Boolean {
+        val p = prefs(ctx)
+        val raw = p.getString(KEY_PROACTIVE_RECENT_HASHES, "").orEmpty()
+        if (raw.isBlank()) return false
+        val cutoff = nowMs - PROACTIVE_CONTENT_DEDUP_WINDOW_MS
+        val kept = mutableListOf<String>()
+        var hit = false
+        raw.lineSequence().forEach { line ->
+            val idx = line.indexOf('|')
+            if (idx <= 0) return@forEach
+            val hash = line.substring(0, idx)
+            val ts = line.substring(idx + 1).toLongOrNull() ?: return@forEach
+            if (ts >= cutoff) {
+                kept.add(line)
+                if (hash == contentHash) hit = true
+            }
+        }
+        val normalized = kept.joinToString("\n")
+        if (normalized != raw) {
+            p.edit().putString(KEY_PROACTIVE_RECENT_HASHES, normalized).apply()
+        }
+        return hit
+    }
+
+    fun recordProactiveContentHash(ctx: Context, contentHash: String, nowMs: Long) {
+        val p = prefs(ctx)
+        val raw = p.getString(KEY_PROACTIVE_RECENT_HASHES, "").orEmpty()
+        val cutoff = nowMs - PROACTIVE_CONTENT_DEDUP_WINDOW_MS
+        val kept = raw.lineSequence()
+            .filter { line ->
+                val idx = line.indexOf('|')
+                if (idx <= 0) return@filter false
+                val ts = line.substring(idx + 1).toLongOrNull() ?: return@filter false
+                ts >= cutoff && line.substring(0, idx) != contentHash
+            }
+            .toMutableList()
+        kept.add("$contentHash|$nowMs")
+        val trimmed = if (kept.size > 40) kept.takeLast(40) else kept
+        p.edit().putString(KEY_PROACTIVE_RECENT_HASHES, trimmed.joinToString("\n")).apply()
+    }
+
     fun getLastBriefingDay(ctx: Context, isMorning: Boolean): String =
         prefs(ctx).getString(if (isMorning) "briefing_last_morning_day" else "briefing_last_evening_day", "").orEmpty()
 
