@@ -44,7 +44,9 @@ object CalendarBridge {
         val accountName: String,
         val accountType: String,
         val accessLevel: Int,
-        val color: Int
+        val color: Int,
+        val visible: Boolean = true,
+        val synced: Boolean = true
     ) {
         val isWritable: Boolean
             get() = accessLevel >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR
@@ -96,7 +98,7 @@ object CalendarBridge {
     fun isCalendarEnabledForAi(ctx: Context): Boolean =
         hasReadPermission(ctx) && PhantomPrefs.getSelectedCalendarIds(ctx).isNotEmpty()
 
-    /** 列出裝置所有可讀日曆（含權限等級與是否可寫）；全程 Dispatchers.IO */
+    /** 列出裝置所有可讀日曆（含權限等級、是否可寫、VISIBLE 與 SYNC_EVENTS）；單次 cursor 全程 Dispatchers.IO */
     suspend fun listCalendars(ctx: Context): List<CalendarAccountInfo> = withContext(Dispatchers.IO) {
         if (!hasReadPermission(ctx)) return@withContext emptyList()
         val result = mutableListOf<CalendarAccountInfo>()
@@ -106,7 +108,9 @@ object CalendarBridge {
             CalendarContract.Calendars.ACCOUNT_NAME,
             CalendarContract.Calendars.ACCOUNT_TYPE,
             CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
-            CalendarContract.Calendars.CALENDAR_COLOR
+            CalendarContract.Calendars.CALENDAR_COLOR,
+            CalendarContract.Calendars.VISIBLE,
+            CalendarContract.Calendars.SYNC_EVENTS
         )
         try {
             ctx.contentResolver.query(
@@ -123,6 +127,8 @@ object CalendarBridge {
                     val accountType = cursor.getString(3)?.trim().orEmpty()
                     val accessLevel = cursor.getInt(4)
                     val color = cursor.getInt(5)
+                    val visible = if (cursor.isNull(6)) true else cursor.getInt(6) == 1
+                    val synced = if (cursor.isNull(7)) true else cursor.getInt(7) == 1
                     result.add(
                         CalendarAccountInfo(
                             id = id,
@@ -130,7 +136,9 @@ object CalendarBridge {
                             accountName = accountName,
                             accountType = accountType,
                             accessLevel = accessLevel,
-                            color = color
+                            color = color,
+                            visible = visible,
+                            synced = synced
                         )
                     )
                 }
@@ -247,8 +255,11 @@ object CalendarBridge {
             return@withContext "尚未授予「日曆讀取權限」，無法查詢本機行程。請前往「設定 → 記憶庫與 AI 助手 → 本機日曆整合」授予權限並勾選欲開放的日曆。"
         }
         val selectedIds = PhantomPrefs.getSelectedCalendarIds(ctx)
+        val allCals = runCatching { listCalendars(ctx) }.getOrDefault(emptyList())
         if (selectedIds.isEmpty()) {
-            return@withContext "尚未勾選任何本機日曆。請前往「設定 → 記憶庫與 AI 助手 → 本機日曆整合」勾選要開放給助手查詢的日曆帳號。"
+            val visibleCount = allCals.count { it.visible }
+            val extraHint = if (visibleCount > 0) "（裝置偵測到 $visibleCount 個顯示中日曆尚未勾選）" else ""
+            return@withContext "尚未勾選任何本機日曆$extraHint，目前無法查詢行程。請前往「設定 → 記憶庫與 AI 助手 → 本機日曆整合」勾選日曆，或點擊「一鍵勾選所有顯示中日曆」。"
         }
 
         val zone = ZoneId.systemDefault()
@@ -354,6 +365,8 @@ object CalendarBridge {
             sb.append(line)
         }
 
+        val unselectedCount = allCals.count { it.id !in selectedIds }
+        sb.append("（已勾選 ${selectedIds.size} 個日曆／裝置另有 $unselectedCount 個未勾選）")
         sb.toString().trim()
     }
 

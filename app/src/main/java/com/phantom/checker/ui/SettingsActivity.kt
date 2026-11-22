@@ -2599,7 +2599,17 @@ fun FilterSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
-                            val selectedCount = deviceCalendars.count { it.id in selectedCalendarIds }
+                            var showHiddenCalendars by remember { mutableStateOf(false) }
+                            val visibleCals = remember(deviceCalendars) {
+                                deviceCalendars.filter { it.visible }
+                            }
+                            val hiddenCals = remember(deviceCalendars) {
+                                deviceCalendars.filter { !it.visible }
+                            }
+                            val selectedTotalCount = deviceCalendars.count { it.id in selectedCalendarIds }
+                            val selectedVisibleCount = visibleCals.count { it.id in selectedCalendarIds }
+                            val allVisibleSelected = visibleCals.isNotEmpty() && visibleCals.all { it.id in selectedCalendarIds }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2612,59 +2622,188 @@ fun FilterSettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "已勾選 $selectedCount / ${deviceCalendars.size} 個日曆",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "已勾選 $selectedTotalCount 個（顯示中日曆 $selectedVisibleCount / ${visibleCals.size}）",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (hiddenCals.isNotEmpty()) {
+                                        Text(
+                                            text = "已自動隱藏 ${hiddenCals.size} 個未顯示／訂閱日曆",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                                 Icon(
                                     imageVector = if (calendarListExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                                     contentDescription = if (calendarListExpanded) "收合日曆清單" else "展開日曆清單",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+
+                            // #373 一鍵勾選所有顯示中日曆主按鈕（解決預設零勾選導致空查詢）
+                            if (visibleCals.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            val next = if (allVisibleSelected) {
+                                                selectedCalendarIds - visibleCals.map { it.id }.toSet()
+                                            } else {
+                                                selectedCalendarIds + visibleCals.map { it.id }.toSet()
+                                            }
+                                            selectedCalendarIds = next
+                                            PhantomPrefs.setSelectedCalendarIds(appCtx, next)
+                                            PhantomSettingsBus.notifyChanged()
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (allVisibleSelected) "取消所有顯示中日曆" else "一鍵勾選所有顯示中日曆（${visibleCals.size}）",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
+                            }
+
                             AnimatedVisibility(visible = calendarListExpanded) {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    deviceCalendars.forEach { cal ->
-                                        val checked = cal.id in selectedCalendarIds
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val renderCalendarGroups: @Composable (List<com.phantom.checker.util.CalendarBridge.CalendarAccountInfo>, Boolean) -> Unit =
+                                        { cals, isHiddenSection ->
+                                            val grouped = cals.groupBy { it.accountName.ifBlank { "本機／未分類帳號" } }
+                                            grouped.forEach { (accountLabel, groupCals) ->
+                                                val groupIds = groupCals.map { it.id }.toSet()
+                                                val groupAllChecked = groupIds.all { it in selectedCalendarIds }
+                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(top = 4.dp, bottom = 2.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = "$accountLabel（${groupCals.size}）",
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        TextButton(
+                                                            onClick = {
+                                                                val next = if (groupAllChecked) {
+                                                                    selectedCalendarIds - groupIds
+                                                                } else {
+                                                                    selectedCalendarIds + groupIds
+                                                                }
+                                                                selectedCalendarIds = next
+                                                                PhantomPrefs.setSelectedCalendarIds(appCtx, next)
+                                                                PhantomSettingsBus.notifyChanged()
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = if (groupAllChecked) "全取消" else "全選",
+                                                                style = MaterialTheme.typography.labelSmall
+                                                            )
+                                                        }
+                                                    }
+                                                    groupCals.forEach { cal ->
+                                                        val checked = cal.id in selectedCalendarIds
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .clickable {
+                                                                    val next = if (checked) selectedCalendarIds - cal.id else selectedCalendarIds + cal.id
+                                                                    selectedCalendarIds = next
+                                                                    PhantomPrefs.setSelectedCalendarIds(appCtx, next)
+                                                                    PhantomSettingsBus.notifyChanged()
+                                                                }
+                                                                .padding(vertical = 2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Checkbox(
+                                                                checked = checked,
+                                                                onCheckedChange = { isChecked ->
+                                                                    val next = if (isChecked) selectedCalendarIds + cal.id else selectedCalendarIds - cal.id
+                                                                    selectedCalendarIds = next
+                                                                    PhantomPrefs.setSelectedCalendarIds(appCtx, next)
+                                                                    PhantomSettingsBus.notifyChanged()
+                                                                }
+                                                            )
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(10.dp)
+                                                                    .background(
+                                                                        color = if (cal.color != 0) Color(cal.color) else MaterialTheme.colorScheme.primary,
+                                                                        shape = CircleShape
+                                                                    )
+                                                            )
+                                                            Spacer(Modifier.width(8.dp))
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                val badges = buildString {
+                                                                    append(if (cal.isWritable) "（可讀寫）" else "（唯讀）")
+                                                                    if (isHiddenSection) append("・已隱藏")
+                                                                    if (!cal.synced) append("・未同步")
+                                                                }
+                                                                Text(
+                                                                    text = cal.displayName + badges,
+                                                                    style = MaterialTheme.typography.bodyMedium,
+                                                                    maxLines = 2,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                    if (visibleCals.isEmpty()) {
+                                        Text(
+                                            text = "目前無顯示中的本機日曆，可展開下方隱藏日曆檢視。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    } else {
+                                        renderCalendarGroups(visibleCals, false)
+                                    }
+
+                                    if (hiddenCals.isNotEmpty()) {
+                                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable {
-                                                    val next = if (checked) selectedCalendarIds - cal.id else selectedCalendarIds + cal.id
-                                                    selectedCalendarIds = next
-                                                    PhantomPrefs.setSelectedCalendarIds(appCtx, next)
-                                                    PhantomSettingsBus.notifyChanged()
-                                                }
-                                                .padding(vertical = 2.dp),
+                                                .clickable { showHiddenCalendars = !showHiddenCalendars }
+                                                .padding(vertical = 6.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Checkbox(
-                                                checked = checked,
-                                                onCheckedChange = { isChecked ->
-                                                    val next = if (isChecked) selectedCalendarIds + cal.id else selectedCalendarIds - cal.id
-                                                    selectedCalendarIds = next
-                                                    PhantomPrefs.setSelectedCalendarIds(appCtx, next)
-                                                    PhantomSettingsBus.notifyChanged()
-                                                }
+                                            Text(
+                                                text = "顯示隱藏／未同步日曆（${hiddenCals.size}）",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = cal.displayName + if (cal.isWritable) "（可讀寫）" else "（唯讀）",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                if (cal.accountName.isNotBlank()) {
-                                                    Text(
-                                                        text = cal.accountName,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
+                                            Icon(
+                                                imageVector = if (showHiddenCalendars) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                contentDescription = if (showHiddenCalendars) "收合隱藏日曆" else "展開隱藏日曆",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        AnimatedVisibility(visible = showHiddenCalendars) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                renderCalendarGroups(hiddenCals, true)
                                             }
                                         }
                                     }
