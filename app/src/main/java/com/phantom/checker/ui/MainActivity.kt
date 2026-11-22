@@ -288,6 +288,7 @@ internal val MemoryIcon: ImageVector by lazy {
 class MainActivity : ComponentActivity() {
     companion object {
         internal val hasAutoCheckedUpdateThisProcess = java.util.concurrent.atomic.AtomicBoolean(false)
+        internal val autoUpdateCheckFailuresThisProcess = java.util.concurrent.atomic.AtomicInteger(0)
     }
 
     private val requestedTabState = mutableStateOf<MainTab?>(null)
@@ -578,12 +579,26 @@ private fun PhantomCheckApp(
                 }
                 refreshTrigger++
                 if (PhantomPrefs.isUpdateAutoCheckEnabled(appCtx) &&
+                    AppUpdateHelper.isNetworkAvailable(appCtx) &&
+                    !AppUpdateHelper.isSnoozed(appCtx) &&
                     MainActivity.hasAutoCheckedUpdateThisProcess.compareAndSet(false, true)
                 ) {
                     scope.launch {
-                        val found = AppUpdateHelper.checkAndNotifyIfNeeded(appCtx)
-                        if (found != null) {
-                            pendingUpdateDialog = found
+                        when (val outcome = AppUpdateHelper.checkAndNotifyWithOutcome(appCtx)) {
+                            is AppUpdateHelper.AutoUpdateCheckOutcome.Available -> {
+                                pendingUpdateDialog = outcome.update
+                            }
+                            is AppUpdateHelper.AutoUpdateCheckOutcome.Failed -> {
+                                // #374 單一進程失敗最多允許重試一次（總計最多 2 次嘗試）
+                                if (MainActivity.autoUpdateCheckFailuresThisProcess.incrementAndGet() < 2) {
+                                    MainActivity.hasAutoCheckedUpdateThisProcess.set(false)
+                                }
+                            }
+                            is AppUpdateHelper.AutoUpdateCheckOutcome.Skipped -> {
+                                // 無網路或尚在 snooze，釋放旗標待條件齊備後補檢
+                                MainActivity.hasAutoCheckedUpdateThisProcess.set(false)
+                            }
+                            is AppUpdateHelper.AutoUpdateCheckOutcome.UpToDate -> Unit
                         }
                     }
                 }
@@ -860,8 +875,16 @@ private fun PhantomCheckApp(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingUpdateDialog = null }) {
-                    Text("稍後再說")
+                TextButton(
+                    onClick = {
+                        PhantomPrefs.setUpdateSnoozeUntilMs(
+                            appCtx,
+                            System.currentTimeMillis() + AppUpdateHelper.DEFAULT_UPDATE_SNOOZE_MS
+                        )
+                        pendingUpdateDialog = null
+                    }
+                ) {
+                    Text("稍後更新")
                 }
             }
         )

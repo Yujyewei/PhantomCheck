@@ -1213,6 +1213,14 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         prefs(ctx).edit().putString("update_last_notified_key", key).apply()
     }
 
+    /** #374 更新提醒 snooze 截止時間（epoch ms，預設 0 表示未 snooze） */
+    fun getUpdateSnoozeUntilMs(ctx: Context): Long =
+        prefs(ctx).getLong("update_snooze_until_ms", 0L)
+
+    fun setUpdateSnoozeUntilMs(ctx: Context, untilMs: Long) {
+        prefs(ctx).edit().putLong("update_snooze_until_ms", untilMs.coerceAtLeast(0L)).apply()
+    }
+
     /** 通知欄連續快速回覆開關（預設開） */
     fun isReplyProxyEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean("reply_proxy_enabled", true)
