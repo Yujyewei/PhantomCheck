@@ -286,6 +286,7 @@ fun ChatAssistantTab(
     var pendingTodoQueue by remember { mutableStateOf<List<PendingTodoInsertion>>(emptyList()) }
     var editingTodoTimeTarget by remember { mutableStateOf<PendingTodoInsertion?>(null) }
     var pendingCalendarQueue by remember { mutableStateOf<List<PendingCalendarAddition>>(emptyList()) }
+    var pendingGoalCandidate by remember { mutableStateOf<Pair<Long, com.phantom.checker.util.GoalEngine.GoalCandidate>?>(null) }
     var searchResultCard by remember { mutableStateOf<SearchResultCardState?>(null) }
     var showUsagePermissionGuideCard by remember { mutableStateOf(false) }
     var pendingExtendedActionQueue by remember { mutableStateOf<List<PendingExtendedAction>>(emptyList()) }
@@ -480,6 +481,9 @@ fun ChatAssistantTab(
                 }
                 loadMessages(sessionId)
                 loadSessionsAndSuggestions()
+                com.phantom.checker.util.GoalEngine.detectGoalCandidate(appCtx, displayUserText)?.let { cand ->
+                    pendingGoalCandidate = sessionId to cand
+                }
             }
 
             val history = messages
@@ -3109,6 +3113,91 @@ fun ChatAssistantTab(
                                                 .padding(start = 6.dp, top = 2.dp)
                                                 .clickable { inspectAutoMemoriesMsgId = msg.id }
                                         )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    pendingGoalCandidate?.takeIf { it.first == currentSessionId }?.let { (_, candidate) ->
+                        item(key = "pending_goal_confirm_card") {
+                            var editTitle by remember(candidate.messageHash) { mutableStateOf(candidate.title) }
+                            var editCadence by remember(candidate.messageHash) { mutableStateOf(candidate.cadenceDays) }
+                            PhantomGlassCard(
+                                glassState = glassState,
+                                modifier = Modifier.fillMaxWidth(),
+                                cornerRadius = 18.dp,
+                                contentPadding = 14.dp
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "🎯 偵測到長程目標（置信 ${candidate.confidence}%）",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "為你建立目標並自動排程週期子待辦，同意嗎？（確認前絕不自動建立）",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    OutlinedTextField(
+                                        value = editTitle,
+                                        onValueChange = { editTitle = it },
+                                        label = { Text("目標標題（可編輯）") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        listOf(1 to "每天", 7 to "每週", 14 to "雙週", 30 to "每月").forEach { (days, label) ->
+                                            FilterChip(
+                                                selected = editCadence == days,
+                                                onClick = { editCadence = days },
+                                                label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                                            )
+                                        }
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                val finalTitle = editTitle.trim()
+                                                if (finalTitle.isNotEmpty()) {
+                                                    scope.launch {
+                                                        com.phantom.checker.util.GoalEngine.createGoalAndScheduleNextTodo(
+                                                            appCtx,
+                                                            finalTitle,
+                                                            editCadence
+                                                        )
+                                                        onShowMessage("已建立目標「$finalTitle」並排程下一期提醒")
+                                                    }
+                                                    pendingGoalCandidate = null
+                                                }
+                                            },
+                                            enabled = editTitle.trim().isNotEmpty()
+                                        ) {
+                                            Text("同意建立", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                PhantomPrefs.markGoalCandidateDismissed(appCtx, candidate.messageHash)
+                                                pendingGoalCandidate = null
+                                            }
+                                        ) {
+                                            Text("不感興趣", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                PhantomPrefs.markGoalCandidateDismissed(appCtx, candidate.messageHash)
+                                                PhantomPrefs.recordDecisionFeedback(appCtx, "goal_wrong")
+                                                pendingGoalCandidate = null
+                                                onShowMessage("已記錄誤判回饋")
+                                            }
+                                        ) {
+                                            Text("判斷有誤", style = MaterialTheme.typography.labelSmall)
+                                        }
                                     }
                                 }
                             }

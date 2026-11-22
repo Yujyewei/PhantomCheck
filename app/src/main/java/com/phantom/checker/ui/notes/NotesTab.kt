@@ -727,7 +727,17 @@ internal fun NotesTab(
             val spawned = withContext(Dispatchers.IO) {
                 ReminderScheduler.completeTodoWithRecurrence(appCtx, t, checked)
             }
-            if (spawned != null) {
+            val goalAdvanced = if (checked) {
+                com.phantom.checker.util.GoalEngine.onTodoCompleted(
+                    appCtx,
+                    t.copy(isDone = true, completedAt = System.currentTimeMillis())
+                )
+            } else {
+                false
+            }
+            if (goalAdvanced) {
+                onShowMessage("已完成目標子待辦，並已自動排程下一期提醒")
+            } else if (spawned != null) {
                 onShowMessage("已完成並自動建立下一次重複待辦")
             }
         }

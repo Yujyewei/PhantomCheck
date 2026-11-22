@@ -2540,6 +2540,29 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         val p = prefs(ctx)
         p.edit().putInt(key, p.getInt(key, 0) + 1).apply()
     }
+
+    // ---- #379 長程目標追蹤 ----
+
+    fun isGoalTrackingEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("goal_tracking_enabled", true)
+
+    fun setGoalTrackingEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("goal_tracking_enabled", enabled).apply()
+    }
+
+    fun isGoalCandidateDismissed(ctx: Context, messageHash: String): Boolean {
+        val set = prefs(ctx).getStringSet("goal_dismissed_hashes", emptySet()).orEmpty()
+        return messageHash in set
+    }
+
+    fun markGoalCandidateDismissed(ctx: Context, messageHash: String) {
+        if (messageHash.isBlank()) return
+        val p = prefs(ctx)
+        val next = p.getStringSet("goal_dismissed_hashes", emptySet()).orEmpty().toMutableSet()
+        next.add(messageHash)
+        val trimmed = if (next.size > 100) next.toList().takeLast(100).toSet() else next
+        p.edit().putStringSet("goal_dismissed_hashes", trimmed).apply()
+    }
 }
 
 

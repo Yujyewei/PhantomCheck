@@ -561,6 +561,7 @@ class ProactiveMonitorWorker(
                     milestoneKeys = check.pendingMilestoneKeys
                 )
             }
+            com.phantom.checker.util.GoalEngine.evaluateMissedGoalPushes(applicationContext)
             Result.success()
         } catch (e: Exception) {
             android.util.Log.w("PhantomProactive", "Monitor worker failed: ${e.javaClass.simpleName}")
