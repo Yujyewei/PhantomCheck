@@ -10,6 +10,8 @@ class PhantomApplication : Application() {
         ShizukuManager.init(this)
         com.phantom.checker.service.BriefingScheduler.rescheduleAll(this)
         com.phantom.checker.service.CalendarInsightScheduler.scheduleOrUpdate(this)
+        com.phantom.checker.service.DiaryPolicy.schedule(this)
+        com.phantom.checker.service.DiaryPolicy.maybeCatchUp(this)
     }
 
     override fun onTrimMemory(level: Int) {

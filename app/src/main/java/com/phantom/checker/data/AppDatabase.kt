@@ -1443,6 +1443,100 @@ interface TaskTemplateDao {
     suspend fun deleteById(id: Long)
 }
 
+@Entity(tableName = "diary_days")
+data class DiaryDayEntity(
+    @PrimaryKey val dayKey: String, // yyyy-MM-dd
+    val timelineJson: String,
+    val generatedAt: Long,
+    val annotation: String? = null,
+    val annotatedAt: Long = 0L,
+    val annotationCategory: String? = null
+)
+
+@Dao
+interface DiaryDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(day: DiaryDayEntity)
+
+    @Query("SELECT * FROM diary_days WHERE dayKey = :dayKey LIMIT 1")
+    suspend fun byDayKey(dayKey: String): DiaryDayEntity?
+
+    @Query("SELECT * FROM diary_days WHERE dayKey LIKE :monthPrefix || '%' ORDER BY dayKey DESC")
+    suspend fun byMonth(monthPrefix: String): List<DiaryDayEntity>
+
+    @Query("SELECT * FROM diary_days ORDER BY dayKey DESC LIMIT :limit")
+    suspend fun recent(limit: Int = 31): List<DiaryDayEntity>
+
+    @Query("UPDATE diary_days SET annotation = :annotation, annotatedAt = :annotatedAt, annotationCategory = :category WHERE dayKey = :dayKey")
+    suspend fun updateAnnotation(dayKey: String, annotation: String?, annotatedAt: Long, category: String?)
+}
+
+@Entity(tableName = "goals")
+data class GoalEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val cadenceDays: Int, // 1=每天, 7=每週, 14=雙週, 30=每月
+    val startDate: String, // yyyy-MM-dd
+    val milestoneJson: String = "[]",
+    val targetCount: Int = 12,
+    val status: String = STATUS_ACTIVE, // active | paused | completed
+    val missedPushStreak: Int = 0,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    companion object {
+        const val STATUS_ACTIVE = "active"
+        const val STATUS_PAUSED = "paused"
+        const val STATUS_COMPLETED = "completed"
+    }
+}
+
+@Entity(
+    tableName = "goal_progress",
+    indices = [
+        Index(value = ["goalId", "completedAt"]),
+        Index(value = ["goalId", "todoId"], unique = true)
+    ]
+)
+data class GoalProgressEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val goalId: Long,
+    val todoId: Long,
+    val completedAt: Long = System.currentTimeMillis()
+)
+
+@Dao
+interface GoalDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGoal(goal: GoalEntity): Long
+
+    @Update
+    suspend fun updateGoal(goal: GoalEntity)
+
+    @Query("DELETE FROM goals WHERE id = :goalId")
+    suspend fun deleteGoal(goalId: Long)
+
+    @Query("SELECT * FROM goals ORDER BY createdAt DESC")
+    suspend fun allGoals(): List<GoalEntity>
+
+    @Query("SELECT * FROM goals WHERE status = 'active' ORDER BY createdAt DESC")
+    suspend fun activeGoals(): List<GoalEntity>
+
+    @Query("SELECT * FROM goals WHERE id = :goalId LIMIT 1")
+    suspend fun byId(goalId: Long): GoalEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertProgress(progress: GoalProgressEntity): Long
+
+    @Query("SELECT * FROM goal_progress WHERE goalId = :goalId ORDER BY completedAt DESC")
+    suspend fun progressForGoal(goalId: Long): List<GoalProgressEntity>
+
+    @Query("SELECT COUNT(*) FROM goal_progress")
+    suspend fun totalProgressCount(): Int
+
+    @Query("DELETE FROM goal_progress WHERE goalId = :goalId")
+    suspend fun deleteProgressForGoal(goalId: Long)
+}
+
 @Database(
     entities = [
         MessageEntity::class,
@@ -1465,9 +1559,12 @@ interface TaskTemplateDao {
         SenderAvatarEntity::class,
         MemoryEntity::class,
         ContactAliasEntity::class,
-        TaskTemplateEntity::class
+        TaskTemplateEntity::class,
+        DiaryDayEntity::class,
+        GoalEntity::class,
+        GoalProgressEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1489,6 +1586,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun senderAvatarDao(): SenderAvatarDao
     abstract fun memoryDao(): MemoryDao
     abstract fun contactAliasDao(): ContactAliasDao
+    abstract fun diaryDao(): DiaryDao
+    abstract fun goalDao(): GoalDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1880,6 +1979,56 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_task_template_isEnabled_triggerType` ON `task_template` (`isEnabled`, `triggerType`)"
+                )
+            }
+        }
+
+        /** #378 + #379 單一非破壞性遷移 21→22：純 CREATE TABLE（diary_days、goals、goal_progress） */
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `diary_days` (
+                        `dayKey` TEXT NOT NULL,
+                        `timelineJson` TEXT NOT NULL,
+                        `generatedAt` INTEGER NOT NULL,
+                        `annotation` TEXT,
+                        `annotatedAt` INTEGER NOT NULL,
+                        `annotationCategory` TEXT,
+                        PRIMARY KEY(`dayKey`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `goals` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `cadenceDays` INTEGER NOT NULL,
+                        `startDate` TEXT NOT NULL,
+                        `milestoneJson` TEXT NOT NULL,
+                        `targetCount` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `missedPushStreak` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `goal_progress` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `goalId` INTEGER NOT NULL,
+                        `todoId` INTEGER NOT NULL,
+                        `completedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_goal_progress_goalId_completedAt` ON `goal_progress` (`goalId`, `completedAt`)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_goal_progress_goalId_todoId` ON `goal_progress` (`goalId`, `todoId`)"
                 )
             }
         }

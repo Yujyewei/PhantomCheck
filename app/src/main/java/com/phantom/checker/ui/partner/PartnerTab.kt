@@ -235,6 +235,11 @@ internal fun PartnerTab(
         contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // #378 每日回顧／生活時間軸卡片（夥伴分頁頂部入口，無 API key 亦 100% 可用）
+        item(key = "partner_diary_card") {
+            PartnerDiaryCard(glassState = glassState)
+        }
+
         // 1. 夥伴頭像、名字、陪伴天數與快捷按鈕
         item(key = "partner_profile_header") {
             PhantomGlassCard(

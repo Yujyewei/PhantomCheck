@@ -27,6 +27,8 @@ class BootReceiver : BroadcastReceiver() {
         WeeklySummaryPolicy.maybeCatchUp(appCtx)
         BriefingScheduler.rescheduleAll(appCtx)
         BriefingScheduler.maybeCatchUp(appCtx)
+        DiaryPolicy.schedule(appCtx)
+        DiaryPolicy.maybeCatchUp(appCtx)
         CalendarInsightScheduler.scheduleOrUpdate(appCtx)
         RetentionPolicy.scheduleOrUpdate(appCtx)
         KeepAlivePolicy.scheduleAll(appCtx)

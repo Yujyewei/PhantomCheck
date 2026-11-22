@@ -2522,6 +2522,24 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun setLinkedAppLastError(ctx: Context, connectorId: String, err: String) {
         prefs(ctx).edit().putString("linked_app_last_err_$connectorId", err.take(120)).apply()
     }
+
+    // ---- #378 AI 日記／每日回顧 ----
+
+    fun isDiaryDailyEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("diary_daily_enabled", true)
+
+    fun setDiaryDailyEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("diary_daily_enabled", enabled).apply()
+    }
+
+    fun getDiaryAnnotationDislikeCount(ctx: Context, category: String): Int =
+        prefs(ctx).getInt("diary_annotation_dislike_${category.lowercase(Locale.ROOT)}", 0)
+
+    fun incrementDiaryAnnotationDislike(ctx: Context, category: String) {
+        val key = "diary_annotation_dislike_${category.lowercase(Locale.ROOT)}"
+        val p = prefs(ctx)
+        p.edit().putInt(key, p.getInt(key, 0) + 1).apply()
+    }
 }
 
 
