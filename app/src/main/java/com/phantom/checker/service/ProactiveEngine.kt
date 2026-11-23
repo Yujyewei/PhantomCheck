@@ -112,7 +112,7 @@ object ProactiveEngine {
                                 .filter { it.eventId != ev.eventId }
                             if (conflicts.isNotEmpty()) {
                                 val freeSummary = CalendarBridge.queryFreeSlotsSummary(appCtx, days = 1, dayFilter = "today")
-                                highPriorityParts.add("⚠️ 偵測到撞期：${CalendarBridge.formatConflictSummary(conflicts)}\n替代空檔參考：${freeSummary.take(160)}")
+                                highPriorityParts.add("⚠️ 偵測到撞期：${CalendarBridge.formatConflictSummary(conflicts)}\n替代空檔參考：${freeSummary.trim()}")
                                 newMilestoneKeys.add(conflictKey)
                             }
                         }
@@ -222,13 +222,13 @@ object ProactiveEngine {
             val calSummary = runCatching {
                 CalendarBridge.queryFreeSlotsSummary(appCtx, days = 1, dayFilter = dayFilter)
             }.getOrDefault("")
-            if (calSummary.isNotBlank()) facts.add(calSummary.take(260))
+            if (calSummary.isNotBlank()) facts.add(calSummary.trim())
         }
         if (PhantomPrefs.BRIEFING_CONTENT_TODO in prefsSet) {
             val todos = runCatching { db.todoDao().pendingTodos() }.getOrDefault(emptyList())
             val overdue = todos.count { it.dueAt < nowMs }
             if (todos.isNotEmpty()) {
-                val topTitles = todos.take(4).joinToString("、") { it.title.take(20) }
+                val topTitles = todos.take(4).joinToString("、") { it.title.trim() }
                 facts.add("未完成待辦 ${todos.size} 筆（逾期 $overdue 筆）：$topTitles")
             }
         }
@@ -324,32 +324,38 @@ object ProactiveEngine {
         } else {
             val polished = AiClient.generateBriefingText(
                 context = appCtx,
-                systemPrompt = "你是「$assistantName」，請將以下本機整理的事實潤飾為簡潔溫暖的繁體中文簡報（≤220字，保留所有關鍵數字與項目，不可編造）。",
+                systemPrompt = "你是「$assistantName」，請將以下本機整理的事實潤飾為簡潔溫暖的繁體中文簡報（≤220字，保留所有關鍵數字與項目，不可編造，且務必以完整句號收尾）。",
                 userPrompt = templateBody,
-                maxTokens = 320
+                maxTokens = 480
             )
             if (!polished.isNullOrBlank()) "**$headerTitle**\n$polished" else templateBody
         }
 
-        val msgId = writeAssistantMessage(db, finalBody, nowMs)
+        val briefingMilestone = if (force) {
+            emptyList()
+        } else {
+            listOf("briefing:${if (isMorning) "morning" else "evening"}:$dayKey")
+        }
+        val notifId = if (isMorning) NotifIds.BRIEFING_MORNING else NotifIds.BRIEFING_EVENING
+        val msgId = deliverProactiveMessage(
+            ctx = appCtx,
+            title = headerTitle,
+            body = finalBody,
+            notifId = notifId,
+            sendNotif = true,
+            respectDailyCap = false, // 簡報走獨立 getBriefingDailyCap 額度，已於上方檢查
+            nowMs = nowMs,
+            milestoneKeys = briefingMilestone
+        ) ?: return@withContext false
+
         PhantomPrefs.setLastBriefingDay(appCtx, isMorning, dayKey)
         PhantomPrefs.setProactiveDirty(appCtx, false)
         PhantomPrefs.incrementBriefingDailySentCount(appCtx, dayKey)
-        PhantomPrefs.saveLastBriefingMeta(appCtx, finalBody.replace("**", "").take(120), nowMs, msgId)
+        PhantomPrefs.saveLastBriefingMeta(appCtx, finalBody, nowMs, msgId)
         if (PhantomPrefs.isDiscordForwardEnabled(appCtx) && EncryptedByokStore.isDiscordConfigured(appCtx)) {
             runCatching {
                 CloudExtensionsClient.sendDiscordMessage(appCtx, finalBody)
             }
-        }
-
-        if (!isInDndWindow(appCtx, nowMs)) {
-            postBriefingNotification(
-                ctx = appCtx,
-                notifId = if (isMorning) NotifIds.BRIEFING_MORNING else NotifIds.BRIEFING_EVENING,
-                title = headerTitle,
-                preview = finalBody.replace("**", "").replace("\n", " ").take(90),
-                messageId = msgId
-            )
         }
         true
     }
@@ -427,14 +433,8 @@ object ProactiveEngine {
 
         if (!isInDndWindow(appCtx, nowMs) && areNotificationsEnabled(appCtx)) {
             val nm = appCtx.getSystemService(NotificationManager::class.java)
-            if (nm != null) {
-                nm.createNotificationChannel(
-                    NotificationChannel(
-                        CHANNEL_ASSISTANT_BRIEFING,
-                        "AI 助手早晚簡報與主動提醒",
-                        NotificationManager.IMPORTANCE_DEFAULT
-                    )
-                )
+            val ch = ensureBriefingChannel(appCtx)
+            if (nm != null && (ch == null || ch.importance != NotificationManager.IMPORTANCE_NONE)) {
                 val openIntent = Intent(appCtx, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra(DailySummaryPolicy.EXTRA_OPEN_TAB, BriefingScheduler.TAB_ASSISTANT)
@@ -581,7 +581,40 @@ object ProactiveEngine {
     }
 
     fun areNotificationsEnabled(ctx: Context): Boolean {
-        return androidx.core.app.NotificationManagerCompat.from(ctx.applicationContext).areNotificationsEnabled()
+        val appCtx = ctx.applicationContext
+        return StatsForegroundService.hasPostNotificationsPermission(appCtx) &&
+            androidx.core.app.NotificationManagerCompat.from(appCtx).areNotificationsEnabled()
+    }
+
+    fun ensureBriefingChannel(ctx: Context): NotificationChannel? {
+        val nm = ctx.applicationContext.getSystemService(NotificationManager::class.java) ?: return null
+        val channel = NotificationChannel(
+            CHANNEL_ASSISTANT_BRIEFING,
+            "AI 助手早晚簡報與主動提醒",
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+        nm.createNotificationChannel(channel)
+        return nm.getNotificationChannel(CHANNEL_ASSISTANT_BRIEFING)
+    }
+
+    /** #404 偵測 assistant_briefing 通知頻道是否被使用者手動停用（importance == IMPORTANCE_NONE） */
+    fun isBriefingChannelBlocked(ctx: Context): Boolean {
+        val ch = ensureBriefingChannel(ctx) ?: return false
+        return ch.importance == NotificationManager.IMPORTANCE_NONE
+    }
+
+    fun openBriefingChannelSettings(ctx: Context) {
+        ensureBriefingChannel(ctx)
+        val chIntent = Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CHANNEL_ASSISTANT_BRIEFING)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching {
+            ctx.startActivity(chIntent)
+        }.onFailure {
+            openAppNotificationSettings(ctx)
+        }
     }
 
     fun openAppNotificationSettings(ctx: Context) {
@@ -612,13 +645,8 @@ object ProactiveEngine {
     ) {
         if (!areNotificationsEnabled(ctx)) return
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ASSISTANT_BRIEFING,
-                "AI 助手早晚簡報與主動提醒",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
-        )
+        val ch = ensureBriefingChannel(ctx)
+        if (ch != null && ch.importance == NotificationManager.IMPORTANCE_NONE) return
         // 絕不用 trampoline：PendingIntent.getActivity 直達 MainActivity Assistant 分頁
         val openIntent = Intent(ctx, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -668,6 +696,7 @@ class ProactiveMonitorWorker(
                 )
             }
             com.phantom.checker.util.GoalEngine.evaluateMissedGoalPushes(applicationContext)
+            HealthObservationPolicy.evaluateAndDeliverIfNeeded(applicationContext)
             Result.success()
         } catch (e: Exception) {
             android.util.Log.w("PhantomProactive", "Monitor worker failed: ${e.javaClass.simpleName}")

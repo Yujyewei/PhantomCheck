@@ -2508,7 +2508,7 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     fun saveChatContinuityAnchor(ctx: Context, text: String, nowMs: Long = System.currentTimeMillis()) {
         prefs(ctx).edit()
-            .putString("chat_continuity_anchor_text", text.trim().take(80))
+            .putString("chat_continuity_anchor_text", text.trim())
             .putLong("chat_continuity_anchor_at", nowMs)
             .putBoolean("chat_continuity_anchor_dismissed", false)
             .apply()
@@ -2708,6 +2708,55 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
         prefs(ctx).edit().putBoolean("health_soft_invite_enabled", enabled).apply()
     }
 
+    /** #403 允許 AI 讀取健康摘要（預設開啟；關閉時不注入聊天 <health_context>，亦不執行主動健康觀察） */
+    fun isHealthAiQueryEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("health_ai_query_enabled", true)
+
+    fun setHealthAiQueryEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("health_ai_query_enabled", enabled).apply()
+    }
+
+    /** #403 記錄與檢查每條主動健康觀察規則近 7 日已投遞次數（每規則每週至多 2 次） */
+    fun getHealthRuleWeeklyCount(ctx: Context, ruleId: String, nowMs: Long = System.currentTimeMillis()): Int {
+        val p = prefs(ctx)
+        val raw = p.getString("health_proactive_weekly_history", "").orEmpty()
+        if (raw.isBlank()) return 0
+        val cutoff = nowMs - 7L * 24L * 60L * 60L * 1000L
+        var count = 0
+        val kept = mutableListOf<String>()
+        raw.lineSequence().forEach { line ->
+            val parts = line.split('|')
+            if (parts.size < 2) return@forEach
+            val rId = parts[0]
+            val ts = parts[1].toLongOrNull() ?: return@forEach
+            if (ts >= cutoff) {
+                kept.add(line)
+                if (rId == ruleId) count++
+            }
+        }
+        val normalized = kept.joinToString("\n")
+        if (normalized != raw) {
+            p.edit().putString("health_proactive_weekly_history", normalized).apply()
+        }
+        return count
+    }
+
+    fun recordHealthRuleDelivered(ctx: Context, ruleId: String, nowMs: Long = System.currentTimeMillis()) {
+        val p = prefs(ctx)
+        val raw = p.getString("health_proactive_weekly_history", "").orEmpty()
+        val cutoff = nowMs - 7L * 24L * 60L * 60L * 1000L
+        val kept = raw.lineSequence()
+            .filter { line ->
+                val parts = line.split('|')
+                val ts = parts.getOrNull(1)?.toLongOrNull() ?: return@filter false
+                ts >= cutoff
+            }
+            .toMutableList()
+        kept.add("$ruleId|$nowMs")
+        val trimmed = if (kept.size > 60) kept.takeLast(60) else kept
+        p.edit().putString("health_proactive_weekly_history", trimmed.joinToString("\n")).apply()
+    }
+
     /** 未授權 Health Connect 時每 7 天最多一次軟性邀請 */
     fun shouldShowHealthSoftInvite(ctx: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         if (!isHealthBriefingEnabled(ctx) || !isHealthSoftInviteEnabled(ctx)) return false
@@ -2718,6 +2767,51 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun markHealthSoftInviteShown(ctx: Context, nowMs: Long = System.currentTimeMillis()) {
         prefs(ctx).edit().putLong("health_last_soft_invite_ms", nowMs).apply()
     }
+
+    /** #404 主動通知頻道（assistant_briefing）被停用時的一次性聊天室頂部引導卡開關 */
+    fun isBriefingChannelGuideDismissed(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("briefing_channel_guide_dismissed", false)
+
+    fun setBriefingChannelGuideDismissed(ctx: Context, dismissed: Boolean) {
+        prefs(ctx).edit().putBoolean("briefing_channel_guide_dismissed", dismissed).apply()
+    }
+
+    // ---- #408 APK 更新下載狀態持久化（downloadId + version + fileName + 防重自動安裝 flag） ----
+
+    fun saveActiveApkDownload(ctx: Context, downloadId: Long, version: String, fileName: String) {
+        prefs(ctx).edit()
+            .putLong("update_apk_download_id", downloadId)
+            .putString("update_apk_download_version", version.trim())
+            .putString("update_apk_download_file_name", fileName.trim())
+            .putBoolean("update_apk_auto_install_launched", false)
+            .apply()
+    }
+
+    fun getActiveApkDownloadId(ctx: Context): Long =
+        prefs(ctx).getLong("update_apk_download_id", -1L)
+
+    fun getActiveApkDownloadVersion(ctx: Context): String =
+        prefs(ctx).getString("update_apk_download_version", "").orEmpty().trim()
+
+    fun getActiveApkDownloadFileName(ctx: Context): String =
+        prefs(ctx).getString("update_apk_download_file_name", "").orEmpty().trim()
+
+    fun isActiveApkAutoInstallLaunched(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("update_apk_auto_install_launched", false)
+
+    fun setActiveApkAutoInstallLaunched(ctx: Context, launched: Boolean) {
+        prefs(ctx).edit().putBoolean("update_apk_auto_install_launched", launched).apply()
+    }
+
+    fun clearActiveApkDownload(ctx: Context) {
+        prefs(ctx).edit()
+            .remove("update_apk_download_id")
+            .remove("update_apk_download_version")
+            .remove("update_apk_download_file_name")
+            .remove("update_apk_auto_install_launched")
+            .apply()
+    }
 }
+
 
 
