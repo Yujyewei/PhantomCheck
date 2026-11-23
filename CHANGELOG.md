@@ -1,6 +1,7 @@
-# 更新日誌（CHANGELOG）
+# 更新日誌（CHANGELOG） / Changelog
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 格式，並採用語意化版本控制。
+This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and uses Semantic Versioning.
 
 ## [4.3.0] - 2026-11-23
 
@@ -17,6 +18,21 @@
 
 ### 新增、變更與修正
 - **#439 小工具優化與新增四個桌面小工具（PR #442）**：既有 7 工具（`StatsWidgetProvider`、`StatsMiniWidgetProvider`、`StatsDetailWidgetProvider`、`AiSummaryWidgetProvider`、`NotesWidgetProvider`、`ReminderWidgetProvider`、`RiskActionWidgetProvider`）補齊 `targetCellWidth/Height`、`previewLayout`、專屬向量預覽圖（`widget_preview_*.xml`）、`goAsync` 8.5s timeout 與 `onDisabled` 清理；新增今天待辦（`TodoTodayWidgetProvider`）／目標進度（`GoalProgressWidgetProvider`）／快捷記事（`QuickNoteWidgetProvider`）／健康快照（`HealthSnapWidgetProvider`）四個小工具（零新權限、零新網路、`exported=false`、`FLAG_IMMUTABLE`、健康快取 30 分鐘、未授權顯示教學態）。
+
+### English
+- **Tag Compare**: [`v4.2.0...v4.3.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v4.2.0...v4.3.0) (`versionCode = 51`, `versionName = "4.3.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Breaking / Behavior Changes**
+- **#437 AI Transport Layer Hardening (PR #442, Behavior Change)**: GitHub Models was fully retired on 2026-07-30; `AiClient` now blocks retired hosts (`models.github.ai`, `models.inference.ai.azure.com`) before sending invalid requests and throws an exception with the retirement notice URL and migration guidance; unifies `Accept: application/json`; non-JSON responses (checked via `Content-Type` or leading body character) throw explicit exceptions preserving HTTP status code, `Content-Type`, and the first 300 characters of the body; `testConnection` payload shape (`Hi` / `max_tokens=5`) is unchanged.
+- **#440 Insights Tab Long-Term Goal Tracking (PR #442, Behavior Change)**: Completion is unified through `ReminderScheduler.completeTodoWithRecurrence` as the single trigger for `GoalEngine.onTodoCompleted` (with `(goalId,todoId)` dedup guard before write), removing direct `NotesTab` calls and the old goal-progress Toast (`notes_s_dd002c`); overdue downgrade periods persist in dedicated `phantom_goal_engine` `SharedPreferences` (unaffected by daily cleanup, preventing 15-minute `WorkManager` re-entry); next-period generation anchors on `max(today, previous dueAt + cadenceDays)` without drift; milestones consume `milestoneJson` (`[3,7,14,30]` from `startDate`) as the source of truth.
+- **#441 Intimacy Stage 5 (PR #442, Behavior Change)**: Thresholds updated from `30/100/250` to `50/160/420/900`, adding Lv5 "Kindred (知己)"; existing users' effective level may adjust downward as expected; the `2/1/1` weight formula is unchanged.
+- **#438 In-App 3-State Language Switch (PR #442, Behavior Change)**: Added 3-state "Language" setting (Follow System / 繁體中文 / English; API 33+ syncs via `LocaleManager` per-app settings, API 26–32 smoothly recreates via `attachBaseContext`); notifications, widgets, Settings catalog, and AI outputs all follow the app language; `zh-TW` system + Follow System behaves identically to v4.2.0.
+
+**Added, Changed & Fixed**
+- **#439 Widget Optimization & 4 New Home-Screen Widgets (PR #442)**: Upgraded all 7 existing widgets (`StatsWidgetProvider`, `StatsMiniWidgetProvider`, `StatsDetailWidgetProvider`, `AiSummaryWidgetProvider`, `NotesWidgetProvider`, `ReminderWidgetProvider`, `RiskActionWidgetProvider`) with `targetCellWidth/Height`, `previewLayout`, dedicated vector previews (`widget_preview_*.xml`), `goAsync` 8.5s timeout, and `onDisabled` cleanup; added 4 new widgets: Today's To-Dos (`TodoTodayWidgetProvider`), Goal Progress (`GoalProgressWidgetProvider`), Quick Note (`QuickNoteWidgetProvider`), and Health Snapshot (`HealthSnapWidgetProvider`) (zero new permissions, zero new network calls, `exported=false`, `FLAG_IMMUTABLE`, 30-minute health cache, onboarding state when unauthorized).
 
 ## [4.2.0] - 2026-11-23
 
@@ -42,6 +58,29 @@
   - **AI Prompt 輸出語言自動跟隨系統語系**：`AiClient`（訊息風險分析、自動備忘錄 `memo`、每週摘要 `summarizeWeekly`、深度分析 `deepAnalyzeMessage`、簡報潤飾 `generateBriefingText`、RAG 情境摘要 `summarizeRagContext`）、`DiaryPolicy`（回顧註記）、`ProactiveEngine`、`ProactiveIntelWorker`、`CalendarInsightWorker`、`TaskTemplateEngine`、`MemoryEngine` 與 `ChatScreenParts` 全面依系統 Locale 自動切換繁中／英文輸出指令；JSON 結構鍵與枚舉值（`risk_label`、`memo_type` 等）維持不變，英文備忘錄採等量密度上限（60 words／360 chars）並支援英文句尾標點續寫判定。
   - **詐騙規則層新增英文話術偵測**：`IndicatorExtractor`、`MemoryEngine` 與 `ContactContext` 依據 2025–2026 FTC、FBI IC3、FCC、UK Report Fraud、APWG 與 FinCEN 公開通報意譯擴充英文詐騙特徵詞庫（涵蓋 unpaid toll 未繳過路費、package redelivery 假包裹補費、bank ATO／fraud department／safe account 假銀行警示、Hi Mum 換號急用冒充、crypto platform／guaranteed return／seed phrase 殺豬盤與驗證碼索取），無 AI 或省 token 模式下規則層同樣具備中英文雙語攔截能力。
 
+### English
+- **Tag Compare**: [`v4.1.0...v4.2.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v4.1.0...v4.2.0) (`versionCode = 50`, `versionName = "4.2.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Breaking / Behavior Changes**
+- **Default UI & AI Output Language Changed to English (Non-`zh-TW` Devices)**:
+  - Provides dual resource buckets only: default `res/values/strings.xml` (English, fallback = `en`) and Traditional Chinese `res/values-zh-rTW/strings.xml`.
+  - **When the device system language is not Traditional Chinese (`zh-TW`), both App UI and AI natural-language outputs (risk analysis, auto-memo, weekly summary, deep analysis, morning/evening briefings, diary annotations, proactive intel, etc.) switch to English**; other unbucketed languages also fall back to English.
+  - **Traditional Chinese (`zh-TW`) devices remain byte-for-byte unchanged in UI display**, and AI outputs retain Traditional Chinese and the existing 40-character memo density.
+
+**Added, Changed & Fixed**
+- **#429 i18n Round 1: Full-Repo UI Chinese String Extraction & XML `@string` Externalization (PR #432)**:
+  - Extracted all user-visible UI strings across the repository (Compose UI, Activities/Dialogs/Toasts/Snackbars, Onboarding, home-screen widgets, Shizuku status, Service notification channels and push copy, `SettingsCatalog` titles/descriptions/aliases, `PhantomPrefs` display enums) into `res/values/strings.xml` (2,898 resource keys).
+  - `AndroidManifest.xml` (9 `android:label` entries) and `res/layout/*.xml` (persistent stats notification and 7 widget layouts) converted to `@string/*` references; `AGENTS.md` added Rule 6 "UI String Extraction Discipline" (pure engineering refactor, zero behavior change).
+- **#430 i18n Round 2: Default English UI (`values/` English, `values-zh-rTW/` Traditional Chinese) (PR #433, Behavior Change)**:
+  - Moved the original Traditional Chinese `strings.xml` (2,898 entries) verbatim into `app/src/main/res/values-zh-rTW/strings.xml` (byte-for-byte identical to pre-migration, zero UI change for `zh-TW` users).
+  - Translated the default `app/src/main/res/values/strings.xml` bucket into concise Android UI English (fallback = `en`), unifying core terminology (`PhantomCheck`, `AI Assistant`, `Memo`, `To-do`, `Whitelist`, `Scam Protection`, `Memory Bank`) and ensuring 100% alignment of format placeholders (`%1$s`, `%2$d`, etc.) and `formatted="false"` attributes.
+- **#431 i18n Round 3: Locale-Aware AI Output & Multilingual Scam Lexicon (PR #434, Behavior Change)**:
+  - **AI Prompt Output Language Automatically Follows System Locale**: `AiClient` (message risk analysis, auto-memo `memo`, weekly summary `summarizeWeekly`, deep analysis `deepAnalyzeMessage`, briefing polish `generateBriefingText`, RAG context summary `summarizeRagContext`), `DiaryPolicy` (diary annotations), `ProactiveEngine`, `ProactiveIntelWorker`, `CalendarInsightWorker`, `TaskTemplateEngine`, `MemoryEngine`, and `ChatScreenParts` all switch Traditional Chinese / English output instructions based on system Locale; JSON schema keys and enum values (`risk_label`, `memo_type`, etc.) remain unchanged, with English memos using an equivalent density cap (60 words / 360 chars) and English sentence-ending punctuation continuation detection.
+  - **Rule-Based Scam Layer Adds English Scam-Script Detection**: `IndicatorExtractor`, `MemoryEngine`, and `ContactContext` expand English scam feature lexicons paraphrased from 2025–2026 public advisories by FTC, FBI IC3, FCC, UK Report Fraud, APWG, and FinCEN (covering unpaid toll, package redelivery, bank ATO / fraud department / safe account, Hi Mum number-change impersonation, crypto platform / guaranteed return / seed phrase pig-butchering, and OTP harvesting), enabling bilingual Chinese/English interception even without AI or in Token Saver mode.
+
 ## [4.1.0] - 2026-11-23
 
 - **Tag 對照**：[`v4.0.0...v4.1.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v4.0.0...v4.1.0)（`versionCode = 49`、`versionName = "4.1.0"`）
@@ -60,6 +99,24 @@
 - **#423 設定健檢與搜尋擴展（PR #426）**：catalogue 新增 diary_annotation_in_saver、ai_model_diary_annotation、proactive_intel_enabled、proactive_extract_enabled 條目（皆有對稱讀寫實作）；同義詞組新增「深色／主題」組、健康組擴充距離／熱量；全域設定搜尋改用 SETTINGS_SEARCH 用途 profile。
 - **#424 AI 更智能與主動（PR #426）**：早晚簡報逐段誠實降級（缺資料明確標「無資料」）；回饋驅動節流（近 7 日同主題 👎≥2 等待窗 ×1.5，👍≥2 且無 👎 ×0.75，無回饋不變）；15 分鐘內有對話不投遞主動訊息（標記 dirty 併入下一輪）；聊天室動態建議 chips（狀態驅動、純本機、零 token、最多 4 顆）。
 - **#425 全天行程誤判撞期修復（PR #426）**：全天（ALL_DAY）事件不計入定時行程衝突判定；偵測到全天事件時顯示全天事件資訊卡（新增日曆事件與通知轉日程皆適用）。
+
+### English
+- **Tag Compare**: [`v4.0.0...v4.1.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v4.0.0...v4.1.0) (`versionCode = 49`, `versionName = "4.1.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Added, Changed & Fixed**
+- **#416 Messages Tab Stats Card Redesign (PR #426)**: Single-row 3-segment layout (Today / Unread / Scam) + 1dp vertical dividers; "Mark All Read" moved to the end of the same row with zero height jump from 99→0 unread.
+- **#417 Force-Dark Fix (PR #426)**: Window-level theme switched to `android:Theme.Material` with dark `android:windowBackground` / `android:colorBackground` (`phantom_window_bg #FF0E0A18`), eliminating white flashes during Activity transitions while keeping high contrast in Compose.
+- **#418 Memory Tab Stats Card & Sub-Tab Separation (PR #426)**: Reduced visual weight of "Long-Term / Short-Term / Conflicts / Immunity" stats card (`alpha 0.35`) and clearly separated it from the "Memory | Rules | Scam Immunity" sub-tabs with `10dp` spacing.
+- **#419 Zero-Hallucination AI Health Queries (PR #426)**: Extended Health Connect to read distance (`DistanceRecord`) and calories burned (`TotalCaloriesBurnedRecord`) with per-type permission queries; unauthorized types show "Unauthorized", empty data shows "No records / No data", and AI hallucination-refusal examples + `health_query` action landed.
+- **#420 Stats Tab Health Detail Card (PR #426)**: Day / Week / Month switcher (today's health snapshot, 7-day summary + scrollable daily breakdown table, 30-day summary and trend), pure local aggregation with zero tokens.
+- **#421 AI Diary Annotation Fix (PR #426)**: Added AI purpose `DIARY_ANNOTATION` (`ai_model_diary_annotation` bindable to an independent model, falling back to default profile); 3-state diagnostics when unavailable (Token Saver mode / no provider configured / annotation type disabled) each with shortcut buttons; added "Generate diary annotations even in Token Saver mode" toggle (`diary_annotation_in_saver`, default off).
+- **#422 Proactive vs. Regular Chatroom Switch Overlap Fix (PR #426)**: Clears messages before switching, rebuilds message list with `key(currentSessionId)`, and double-checks inside coroutine to prevent rapid-switch race conditions.
+- **#423 Settings Health Check & Search Expansion (PR #426)**: Added `diary_annotation_in_saver`, `ai_model_diary_annotation`, `proactive_intel_enabled`, and `proactive_extract_enabled` to `SettingsCatalog` (all with symmetric read/write); added "Dark / Theme" synonym group and expanded health synonyms with distance/calories; global Settings search now uses the `SETTINGS_SEARCH` purpose profile.
+- **#424 Smarter & More Proactive AI (PR #426)**: Morning/evening briefings degrade honestly per section (missing data explicitly marked "No data"); feedback-driven throttling (same topic in 7 days with `👎>=2` scales wait window ×1.5, `👍>=2` with no `👎` scales ×0.75, no feedback unchanged); suppresses proactive delivery if a conversation occurred within 15 minutes (marks dirty for next round); dynamic chatroom suggestion chips (state-driven, pure local, zero tokens, max 4).
+- **#425 All-Day Event False Conflict Fix (PR #426)**: `ALL_DAY` events are excluded from timed schedule conflict checks; displays an all-day event info card when detected (applies to both new calendar events and notification-to-schedule).
 
 ## [4.0.0] - 2026-11-23
 
@@ -92,6 +149,28 @@
     - `PhantomMotion.kt` 僅追加 N1–N7 常數（`N1_SHARED_AXIS_ENTER_MS = 260`／`EXIT_MS = 180`、`N2_SHARED_AXIS_SLIDE_DP = 24`、`N3_SEARCH_SCRIM_ENTER_MS = 220`／`EXIT_MS = 160`、`N4_PREDICTIVE_BACK_MIN_SCALE = 0.92f`、`N5_TAB_INDICATOR_SPRING`、`N6_SECONDARY_TAB_SPRING`、`N7_HIGHLIGHT_PULSE_MS = 900`），v3.7.0 既有動效常數零修改；所有動畫均於 `graphicsLayer` draw-phase 執行，系統動畫縮放＝0（`rememberMotionEnabled() == false`）時自動退場為瞬時切換。
     - 採用 `activity-compose:1.13.0` 原生 `PredictiveBackHandler` 實作設定分類子頁與全域搜尋覆蓋層之預測式返回手勢縮放預覽（`1f → 0.92f`）。
   - **純 UI 層改版與零回歸聲明**：本版本 `service/`、`data/`、`network/`、`util/` 四大目錄 **0 diff**，Room 資料庫 schema、背景服務、AI 請求與防詐決策邏輯零修改，純屬 UI 層資訊架構與互動升級，無任何資料或背景行為變更，並 100% 保留 `#402–#408` 修復行為與無障礙 `contentDescription`。
+
+### English
+- **Tag Compare**: [`v3.8.0...v4.0.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.8.0...v4.0.0) (`versionCode = 48`, `versionName = "4.0.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Added & Information Architecture Refactor**
+- **v4.0.0 Global Information Architecture (IA) Overhaul & Search-First Settings Hub (#409 / PR #413)**:
+  - **D1 Navigation 6 Tabs → 5 Tabs ("Insights" merges "Companion | Stats")**: Bottom `LiquidGlassTabBar` consolidated to 5 main tabs: Messages, AI Assistant, Notes, Memory, Insights (`64.dp` height, `N5_TAB_INDICATOR_SPRING` width/offset spring, icon + `labelSmall` + full `contentDescription`); "Stats" merged into "Companion" and renamed "Insights (`MainTab.INSIGHT`)" with a top `PhantomSecondaryTabRow` ("Companion | Stats"); `MainActivity.mapLegacyTabExtra()` seamlessly maps legacy notification, widget, shortcut, and onboarding deep links (`"stats"` / `"STATS"` / `"partner"` / `"PARTNER"` / legacy index `5`).
+  - **D2 Search-First Settings Hub (Search + Pinned + Recent + 8 Categories)**: Added `SettingsHomeScreen` and `SettingsCategoryRegistry`, replacing the 13-card single-page scroll with a 2-tier same-Activity architecture (`SettingsCategoryId?` state with N1/N2 shared X-axis transitions, preserving `highlight_card_key` deep links):
+    - **Top Dual-Mode Search Bar**: `56.dp` height, `28.dp` pill search bar combining local keyword/synonym search and "✨ AI Semantic Search" across all 136 `SettingsCatalog` items (including collapsed advanced settings).
+    - **Pinned Quick Settings (6 default, editable) & Recent Adjustments**: 2-column pinned tiles (up to 6 customizable items; boolean toggles support inline `FluidSwitch`) + "Recently Adjusted" horizontal pill row (up to 5 items).
+    - **8 Categories (merging "Personalization" & "Appearance")**: AI & Models, Anti-Scam & Security, Notifications & Interception, AI Companion & Proactive, Permissions & Background, Appearance & Personalization, Data & Backup, About & Updates, each with a 1-line live summary and in-page filter bar.
+  - **D3 Messages Home Simplification, Segmented Grouped List & Center Stack Preserved (`MessagesTab`)**: `CenterFocusCardStack` retained with **0 diff** in geometry and scroll physics; top stats bar redesigned as a `surfaceContainer` 3-column card (Today / Unread / High Risk); filter bar simplified to 3 smart pills ("All | Unread | High Risk" with badges) + "Filter ▾" sheet; standard list upgraded to Segmented Grouped List.
+  - **D4 Advanced Settings Collapsed by Default & Auto-Expanded on Search (`SettingsAdvancedSection`)**: 24 low-frequency/expert settings and Shizuku watchdog placed in a collapsed "Advanced Settings (N)" section at the bottom of each category, auto-expanding and pulsing (`N7_HIGHLIGHT_PULSE_MS`) on search hits.
+  - **D5 Removed Persistent 22dp Pull Handle Visual, Kept Pull-Down Search Gesture**: Removed the persistent `22dp` `PhantomPullSearchHandle` bar; retained list-top `NestedScrollConnection` overscroll gesture (`>56.dp` with `HapticFeedbackType.LongPress`) on Messages, Notes, and Memory tabs plus a persistent "🔍 Search" pill in the `56.dp` top bar.
+  - **D6 Visual Onboarding Streamlined (Home 20→8 steps, Settings 9→5 steps)**: `Onboarding.kt` streamlined without resetting existing `onboarding_done` / `settings_tour_done` flags; upgrading users see a one-time `PhantomInlineBanner` in Settings.
+  - **D7 Large-Screen (`>= 600.dp`) `NavigationRail`**: Automatically switches to left `NavigationRail` + centered `840.dp` main container on tablets, unfolded foldables, and wide landscape screens.
+  - **New Shared Components & 5-Tab / 11-Subpage Alignment**: Added `PhantomPageScaffold.kt`, `GlobalSearchOverlay.kt`, `SettingsRow.kt`, and `UiLayoutPrefs.kt` (`phantom_ui_v400`, storing only catalog IDs, recent search strings, and v4 tour flag); aligned `ChatScreen`, `NotesTab`, `MemoryTab`, `StatsTab` (local zero-LLM "Weekly Highlights" bar), `SettingsActivity`, and 11 sub-activities.
+  - **Motion Extensions (`PhantomMotion` N1–N7 & `PredictiveBackHandler`)**: Appended N1–N7 draw-phase constants (`graphicsLayer`) with instant fallback when system animation scale = 0, plus `activity-compose:1.13.0` `PredictiveBackHandler` (`1f → 0.92f`).
+  - **Pure UI Overhaul & Zero-Regression Statement**: **0 diff** across `service/`, `data/`, `network/`, and `util/`; Room schema, background services, AI requests, and anti-scam decision logic are untouched, with zero data or background behavior changes, and 100% preservation of `#402–#408` fixes and accessibility `contentDescription`.
 
 ## [3.8.0] - 2026-11-23
 
@@ -127,6 +206,26 @@
   - `PhantomPrefs` 與 `AppUpdateHelper` 新增 `downloadId`＋`targetVersion` 持久化（版本不符時自動清理舊紀錄與殘留 `.apk` 檔案）；除 `BroadcastReceiver` 外新增 `Dispatchers.IO` 協程每 600ms 輪詢 `DownloadManager.query()` 並綁定 `ON_RESUME` 重查，背景或關閉畫面期間下載完成後返回 App 即自動切換為「安裝更新（vX.Y.Z）」並觸發安裝流程。
   - 下載失敗（`STATUS_FAILED`）或 APK 檔案損毀（`< 100 KB`）時顯示具體白話原因（網路中斷、空間不足、HTTP 錯誤等）並提供「重新下載」與「改用瀏覽器下載更新」備援按鈕；Android 8+ 若 `canRequestPackageInstalls()` 未授權，`installApk()` 回傳 `NEEDS_UNKNOWN_SOURCES_PERMISSION` 並於卡片內顯示一步引導鈕跳轉 `ACTION_MANAGE_UNKNOWN_APP_SOURCES`，授權返回後 `ON_RESUME` 自動續接彈出系統安裝器（完整保留 `#374` 稍後提醒 snooze 與 `#391` 更新說明捲動預覽）。
 
+### English
+- **Tag Compare**: [`v3.7.0...v3.8.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.7.0...v3.8.0) (`versionCode = 47`, `versionName = "3.8.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Added & Behavior Changes**
+- **Health Connect Chat Summary Injection & Background Proactive Health Alerts (#403 / PR #410, Privacy Behavior Change)**:
+  - **Privacy Behavior Change (Chat Health Summary Injection)**: When the user asks about sleep, steps, heart rate, fatigue, or exercise in AI Assistant chat and "Allow AI to read health summary" is enabled, `LocalDataConnector.buildHealthContext()` injects 7-day daily aggregated values (`DailyHealthPoint` sleep hours, steps, resting HR, and 7-day average) and today's morning snapshot (`MorningHealthSnapshot`) as `<health_context>` into the prompt sent to the user's configured AI provider; **only 7-day aggregated values are sent—raw physiological sample series never leave the device** (documented in `PRIVACY.md` Section 2.2). When Health Connect is not installed, permission is not granted, or the toggle is off, AI honestly informs the user and guides them to Settings without fabricating data.
+  - **Proactive Health Observation Alerts (`HealthObservationPolicy` in `ProactiveMonitorWorker`)**: Pure local lookup-table rules (zero LLM tokens): 2 consecutive nights sleep `< 6h` (`sleep_2nights_under_6h`), 3 consecutive days steps `< 2000` (`steps_3days_under_2000`), or resting HR `>= 12 bpm` above 7-day average (`hr_elevated_12bpm`, requiring >= 4 valid baseline days); delivers gentle care alerts via `ProactiveEngine.deliverProactiveMessage` (`NotifIds.HEALTH_PROACTIVE = 1014`), strictly capped at 1/day and 2/7 days per rule, respecting DND and daily proactive caps.
+  - **Independent Toggle**: Added "Allow AI to read health summary" (`health_ai_query_enabled`, default on) to `PermissionHubActivity` Health Connect card and `SettingsCatalog` (disabling stops chat injection and background alerts without affecting the local 7-day trend chart in Stats).
+
+**Changed & Fixed**
+- **Fixed Weekly AI Summary Truncation & Added Full-Text Expand in Stats (#402 / PR #410)**: Raised `AiClient.summarizeWeekly()` `maxTokens` from `1400` (Groq `1000`) to `2400` (Groq `1600`, fallback `1400` on HTTP 413), enforced complete-sentence endings, and auto-continues once (`maxTokens = 1200`) when `finishReason` is `length`/`max_tokens` or `endsWithCompleteSentence` is false; removed `.take(70)` hard truncation in `StatsTab` in favor of `maxLines = 2` + "Expand Full Text".
+- **Unified Proactive Message System Notifications, Deep Links & Channel Check (#404 / PR #410)**: Consolidated `ProactiveEngine.deliverBriefing` (`1008`/`1009`) into `deliverProactiveMessage`, sharing dedup, DND, `SESSION_PROACTIVE_BRIEFING`, unread badge, and system notifications; tapping any proactive/briefing notification deep-links directly to the proactive chatroom and clears the unread badge; added `ProactiveEngine.isBriefingChannelBlocked()` one-time banner when `assistant_briefing` is `IMPORTANCE_NONE`.
+- **Fixed Settings AI Semantic Search "Unparseable Response Format" (#405 / PR #410)**: Enabled `response_format: {"type": "json_object"}` (with automatic HTTP 400 fallback) + `parseSettingsSearchIdsLenient()` fallback chain + 1 strict retry, clearly distinguishing empty results (`emptyList()`) from parse failure (`null`).
+- **Settings Local Keyword Search Tokenization, Synonyms & Colloquial Aliases (#406 / PR #410)**: Added `STOP_WORDS`, bigram sliding tokenization, 16 `SYNONYM_GROUPS`, weighted scoring (`+12` title, `+10` aliases, `+6` description), and 3–5 colloquial `aliases` for all 136 `SettingsCatalog` items.
+- **Eliminated Mid-Sentence Truncation in Proactive Messages, Briefings & Continuity Pills (#407 / PR #410)**: Removed `.take(...)` hard truncations in `ProactiveEngine`, `TaskTemplateEngine.runAggregation`, and `PhantomPrefs.saveChatContinuityAnchor` (relaxed to 500 chars); `AiClient.generateBriefingText()` falls back to the full template on truncation; continuity/todo/briefing cards support tap-to-expand.
+- **Fixed Update Download Stuck on "Downloading" & Unknown-Sources Permission Guide (#408 / PR #410)**: Persisted `downloadId` + `targetVersion` in `PhantomPrefs`/`AppUpdateHelper`, added 600ms `DownloadManager.query()` polling + `ON_RESUME` re-check, plain-language failure reasons with retry/browser fallback, and Android 8+ `ACTION_MANAGE_UNKNOWN_APP_SOURCES` one-step guide that auto-resumes the system installer on `ON_RESUME` (fully preserving `#374` snooze reminder and `#391` scrollable release notes preview).
+
 ## [3.7.0] - 2026-11-23
 
 - **Tag 對照**：[`v3.6.0...v3.7.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.6.0...v3.7.0)（`versionCode = 46`、`versionName = "3.7.0"`）
@@ -150,6 +249,29 @@
   - **Markdown 排版精修（`PhantomMarkdownText.kt`）**：引用塊改為右側 `10.dp` 圓角＋左側 `3.5.dp` 圓角膠囊飾條與更舒適內距；程式碼區塊升級 `12.dp` 圓角＋`1.dp` 細邊框與 `12.dp` 內距；表格外框升級 `12.dp` 圓角並新增奇數資料列斑馬紋底色（`headerBg.copy(alpha = 0.35f)`），Markdown 文字與語法解析邏輯零變動。
   - **全域 Activity 視窗轉場（`styles.xml`＋`res/anim/phantom_{open,close}_{enter,exit}.xml`）**：`Theme.PhantomCheck` 新增 `PhantomWindowAnimation` 定義子頁面開啟／返回之輕量水平位移（`8%p`／`-4%p`）與透明度轉場，系統視窗動畫縮放＝0 時由 Android 框架自動省略。
   - **嚴格邊界與零回歸保證**：本輪**零新增第三方依賴**、未使用 `SharedTransitionLayout`／`LookaheadScope`、`CenterFocusCardStack` 中央聚焦堆疊捲動物理與幾何 **0 diff**，全數 37 處檔案變更皆位於 `ui/` 與 `res/`（`data/`、`service/`、`network/`、`util/` 皆 **0 diff**），零功能回歸。
+
+### English
+- **Tag Compare**: [`v3.6.0...v3.7.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.6.0...v3.7.0) (`versionCode = 46`, `versionName = "3.7.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Added & Optimized**
+- **Phantom Aurora Global UI/UX Visual & Motion Overhaul (#398 / PR #399)**:
+  - **Shared Motion Core `PhantomMotion.kt` (New File)**: Centralizes Material 3 Emphasized curves (`EmphasizedDecelerate`, `EmphasizedAccelerate`), unified expand/collapse specs (`ExpandEnter` spring height + fade in, `ExpandExit` accelerated collapse + fade out), staggered list entry (`Modifier.phantomEnter` and `LazyListScope.phantomItem`, delaying the first 8 items by `36ms` each while tracking played keys per tab via `LocalPhantomEnterRegistry` to avoid replay on scroll), pop-in entry (`Modifier.phantomPopIn`), rotating chevron (`PhantomChevron` 0°↔180° spring replacing static `KeyboardArrowUp`/`KeyboardArrowDown`), glass highlight edge (`Modifier.phantomSheen` drawing adaptive light/dark top highlight stroke and top inner glow via `drawWithCache`), press-click wrapper (`Modifier.phantomPressable`), and directional rolling count text (`PhantomAnimatedCount`). Reads system `Settings.Global.ANIMATOR_DURATION_SCALE` via `rememberMotionEnabled()` and automatically disables manual stagger and infinite loops with static fallback when animation scale = 0.
+  - **`FluidSwitch` Fluid Toggle Upgrade (draw-phase)**: Track and thumb colors continuously `lerp`-interpolate with offset/drag progress in `drawBehind`; draws primary-color track outer glow and soft thumb shadow when enabled, and dynamically strokes a rounded checkmark path inside the thumb in the second half (`p > 0.45f`), preserving press squish deformation, half-threshold drag toggle, and `Role.Switch`/`ToggleableState` accessibility semantics.
+  - **`LiquidGlassTabBar` Icon Motion Upgrade**: Selected tab icon performs a `graphicsLayer` spring bounce (`1f → 1.12f`) paired with smooth `animateColorAsState` (`180ms`) color transition.
+  - **`pressableScale` Press Feedback Upgrade (`Glass.kt`)**: Driven by `Animatable` + `graphicsLayer` scaling with optional `glowShape` primary-color edge glow via `drawWithContent`; releases early if finger movement exceeds `touchSlop` or gesture is consumed by scroll (`change.isConsumed`), preventing cards from getting stuck scaled down during list scrolling.
+  - **Shared Cards, Search & Floating Component Polish (`Components.kt`)**: Applied `phantomSheen` highlight stroke to `PhantomGlassCard` (both glass and non-glass branches), `PhantomFloatingSurface`, `MessageCard` (including high-risk scam cards), and `PhantomSearchBarPill`; applied `pressableScale` to OTP copy pills and `PhantomSearchBarPill`; applied `phantomPopIn` to `PhantomDialog` (`0.92f`) and `EmptyStateView` icon (`0.6f`); upgraded `PhantomFullScreenSearchOverlay` to Emphasized enter/exit curves.
+  - **Directional Main-Tab Transitions & Unified Motion Across 5 Tabs, Settings, 12 Subpages & Onboarding**:
+    - `MainActivity.kt`: 6 main tabs use `AnimatedContent` (left/right slide direction based on tab `ordinal` + short fade exit), fully preserving `SaveableStateProvider(tab.name)` state and providing `LocalPhantomEnterRegistry`.
+    - Main Tabs: `MessagesTab` (Today/Unread/Scam stats use `FlowRow` + `PhantomAnimatedCount` supporting `fontScale = 1.3+` wrapping, `PhantomChevron` + `pressableScale` filter toggle, unified offline retry banner expand, `animateItem()` + `phantomEnter` on app groups and message lists), `NotesTab` (`PhantomChevron` + unified expand for todos/local calendar, `animateItem()` + `phantomEnter` on notes), `TodoSection` (`pressableScale` + `graphicsLayer` alpha transition on completion), `MemoryTab` (`PhantomChevron` + unified expand, 10-section `phantomItem` entry), `WatchTopicSheet` (`animateItem()` + `phantomEnter`), `StatsTab` (`PhantomChevron` on briefings/weekly reports, `pressableScale` share button, 13-section `phantomItem` entry), `PartnerTab` (7-section `phantomItem` entry), `DiarySection` (unified AI note expand), `GoalSection` (`pressableScale` + `animateFloatAsState` spring progress bar).
+    - Settings & All 12 Subpages: `SettingsActivity` (`CollapsibleSettingsCard` header `pressableScale` + `PhantomChevron` + unified expand, consistent expand motion across quick commands, local calendar list, hidden calendars, and per-app throttle overrides), `ApiKeySettingsActivity` (profile cards `animateItem()` + `phantomEnter`, purpose model cards `phantomItem`), `AssistantHubActivity` (7-section `phantomItem`), `AutoReplySettingsActivity` (4-card `phantomEnter`), `LinkedAppsActivity` (5-section `phantomItem`), `PermissionHubActivity` (4-section `phantomItem`), `ScamCenterActivity` (`animateItem()` + `phantomEnter`), `TagManagementActivity` (`animateItem()` + `phantomEnter`), `WhitelistManagementActivity` (`PhantomChevron` + unified expand for add form and app groups), `ContactsIntegrationSection` (`pressableScale`), `AppThreadsScreen` (`animateItem()` + `phantomEnter`), `ConversationScreen` (`animateItem()` on date dividers and messages), `MessageDetailActivity` (5-card `phantomEnter`).
+    - Onboarding & Settings Tour (`Onboarding.kt`): Spotlight hole 4-edge coordinates upgraded from linear `tween` to smooth `spring`; tour cards use Emphasized decelerate + spring entry; restricted-settings troubleshooting uses unified expand spec.
+  - **Chatroom Motion & Performance Optimization (`ChatScreen.kt`, `ChatScreenParts.kt`)**: Message bubbles use `animateItem()`; user bubbles add `phantomSheen` highlight edge (100% preserving user-configured `bubbleCornerDp` `8–24dp` and `70%–95%` max width); "Reasoning" collapsible uses `PhantomChevron` + unified expand; send button and side history drawer session rows use `pressableScale`/`animateItem()` (bottom input box never animates position/scale—zero typing jitter); `TypingDotsIndicator` rewritten in draw-phase `graphicsLayer` (phase-driven alpha, scale, and vertical wave bounce), eliminating per-frame composition and falling back to static three dots when system animation scale = 0.
+  - **Markdown Typography Polish (`PhantomMarkdownText.kt`)**: Blockquotes updated with `10.dp` right corner radius + `3.5.dp` rounded left capsule bar and comfortable padding; code blocks upgraded to `12.dp` corner radius + `1.dp` border and `12.dp` padding; tables upgraded to `12.dp` outer corner radius with zebra-striped odd rows (`headerBg.copy(alpha = 0.35f)`), with zero changes to Markdown text/syntax parsing logic.
+  - **Global Activity Window Transitions (`styles.xml` + `res/anim/phantom_{open,close}_{enter,exit}.xml`)**: Added `PhantomWindowAnimation` to `Theme.PhantomCheck` defining lightweight horizontal slide (`8%p` / `-4%p`) and alpha transitions for subpage open/back, automatically omitted by Android when system window animation scale = 0.
+  - **Strict Boundaries & Zero-Regression Guarantee**: Zero new third-party dependencies, no `SharedTransitionLayout`/`LookaheadScope`, **0 diff** in `CenterFocusCardStack` scroll physics and geometry, and all 37 changed files are strictly in `ui/` and `res/` (`data/`, `service/`, `network/`, `util/` have **0 diff**) with zero functional regressions.
 
 ## [3.6.0] - 2026-11-22
 
@@ -191,6 +313,45 @@
   - **GitHub 監控連續失敗誠實通知**：`GitHubMonitorWorker` 新增連續失敗計數與降頻日誌，連續失敗達第 3 次時發出單次誠實提醒通知引導檢查網路或 PAT 權限，成功同步後自動歸零重置。
   - **開機重排 Catch-up 補齊 24 小時地板**：`BootReceiver` 除待辦事項外，對 `scheduled` 訊息提醒（`messageDao().allScheduledReminders()`）同步套用 24 小時 `catchUpFloorMs` 過濾，避免重開機時補發過久以前的歷史逾期訊息提醒；並完成 Room `1→23` 遷移鏈、`PendingIntent` `FLAG_IMMUTABLE`、`Dispatchers.IO` 與五大 OEM 廠牌背景限制相容複驗。
 
+### English
+- **Tag Compare**: [`v3.5.0...v3.6.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.5.0...v3.6.0) (`versionCode = 45`, `versionName = "3.6.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`), for general users and in-place signature upgrades.
+  - `app-debug.apk`: Debug build for development testing and troubleshooting.
+
+**Added**
+- **Proactive Intel Hub Phase A: Watch Topics, Daily AI Extraction & Dedicated Quota (#388 / PR #395)**:
+  - Non-destructive Room upgrade from v22 to v23 (`MIGRATION_22_23` with pure `CREATE TABLE IF NOT EXISTS watch_topics` and `index_watch_topics_status`), adding `WatchTopicEntity` (`category`, `title`, `queryHint`, `source`, `status`, `confidence`, `lastQueriedAt`, `lastDigestHash`, `hitCount`, etc.) and `WatchTopicDao`.
+  - Added `WatchTopicEngine` and daily background extraction `WatchTopicExtractWorker` (`phantom_watch_topic_extract`, `ExistingPeriodicWorkPolicy.KEEP`, `NetworkType.CONNECTED` + `requiresBatteryNotLow`): strictly excludes `🔒 Sensitive` memories via both SQL (`activeNormalMemoriesForPrompt`) and Kotlin (`privacyTier != PRIVACY_SENSITIVE`), sanitizes inputs with `AiClient.sanitizeForPrompt`, and extracts up to 5 pending candidates (`source = "ai_extracted"`, `confidence = "low"`)—**never triggering external queries or push notifications before user confirmation**.
+  - Added `AiPurpose.PROACTIVE` ("Proactive Intel & Watch Extraction") dedicated model purpose with daily quota cap (default 12/day, auto-refunded on failure), plus shared `WatchTopicManagerDialog` in Memory and Settings tabs (one-tap accept all pending candidates, individual confirm / edit `queryHint` / mute / restore / delete, and manual add).
+- **Proactive Intel Hub Phase B: Gemini Grounding Web Search & Chat Toggle (#389 / PR #395)**:
+  - Added optional `tools: List<Map<String, Any>>? = null` to `ChatRequest` (ignored by Gson when `null`, byte-for-byte zero impact on non-web requests) and `AiClient.runGroundedQuery()`.
+  - Injects `tools = [{"google_search": {}}]` only when the target profile is a Gemini OpenAI-compatible endpoint and model is **Gemini 3+**, with multi-path defensive URL parsing (`annotations[].url_citation.url`, `extra_content.google.grounding_metadata.grounding_chunks[].web.uri`, `grounding_metadata`/`groundingMetadata`, `citations[]`, and inline URL fallback); automatically refunds quota and backs off silently on HTTP 429.
+  - Added "🔍 Web Search" toggle chip above `ChatScreen` input bar: native Google Search Grounding is enabled only for Gemini 3+ (other providers like Mistral/Groq without a BYOK external search endpoint are honestly grayed out with tap-to-explain); honestly reports when no results are found or network fails instead of faking real-time results with stale model knowledge.
+- **Proactive Intel Hub Phase C/D/E: Periodic Queries, Dedup Digest, Push, Settings Boundaries & Privacy Docs (#390 / PR #395)**:
+  - Added `WatchQueryPlanner` (pure local zero-token selection of due topics: 6h for `region`, 24h for others, sorted `high > medium > low`, max 3 per round, auto-skipped in token-saver mode), `DigestComposer` (12h local short cache, SHA-256 digest hash dedup to suppress non-novel pushes, strict "no recent updates" anti-hallucination rule with source links), and `ProactiveIntelWorker` (`phantom_proactive_intel`, `ExistingPeriodicWorkPolicy.UPDATE`, `CONNECTED` + `requiresBatteryNotLow`, `BootReceiver` reboot rescheduling), sharing digest, independent DND, daily proactive cap, and `NotifIds.PROACTIVE_INTEL = 1013` push gate with `ProactiveEngine` briefings.
+  - Added "Proactive Intel Hub" Settings card (**master switch off by default**, showing a full privacy & quota dialog on first enable; supports daily auto-extract toggle, 6/12/24h query frequency, watch list management, "Query Now" preview, and "Mistral Daily Analysis + Gemini Proactive Intel" dual-track BYOK/purpose guide), all registered in `SettingsCatalog`; updated `PRIVACY.md` Section 6 stating that **only confirmed short topic strings (`title`/`queryHint`, <= 80 chars) are sent**—never raw notifications, full memories, or sensitive data.
+  - Proactive intel messages are written to the dedicated proactive chatroom with clickable links rendered by `PhantomMarkdownText` and a "💬 Follow Up" button to jump to chat with a prefilled follow-up; system notifications include a "Stop Watching" action (handled by `WatchTopicMuteReceiver` with `exported="false"` + `FLAG_IMMUTABLE`, zero trampoline).
+- **About & Auto-Update Card Release Notes Preview (#391 / PR #395)**:
+  - Extended `AppUpdateHelper`'s `UpdateCheckResult.UpToDate` and `UpdateAvailable` to carry `releaseNotes` (`body`) and `publishedDate` from GitHub `releases/latest` (fetched live without caching).
+  - Added shared scrollable `ReleaseNotesPreviewBox` (`PhantomMarkdownText` rendering + `heightIn(max = 260.dp)` + `verticalScroll`, honestly showing "No release notes for this version" when empty), embedded in both Settings About and the home auto-update dialog.
+- **Partner Tab Cardless Full-Width Header & Custom Region Background (#392 / PR #395)**:
+  - Moved assistant avatar and name in `PartnerTab` to the very top of the page (moving AI Diary and Long-Term Goals below), removed `PhantomGlassCard` framing in favor of a cardless full-width banner (decoupled from Liquid Glass toggle, avatar enlarged to `76.dp`) with a `48.dp` camera/remove button at top-right.
+  - Added a dedicated internal storage slot (`assistant_header.jpg`) in `BackgroundImageHelper` using bounds-first `inSampleSize` downsampling and compression (preventing 50MP OOM and avoiding persistent external URI permissions) with a bottom gradient scrim; registered management entry in `SettingsCatalog` (`assistant_header_background`) and Settings Personalization.
+- **Assistant & UI Customization Extensions (#393 / PR #395)**:
+  - Audited `PhantomPrefs` and `SettingsCatalog` and added 5 high-value customization options under Settings Personalization (all defaults 100% aligned with v3.5.0, with one-tap reset to defaults): (1) AI Chatroom independent font scale (`85%–130%`, default `100%`), (2) Message Center independent font scale (`85%–130%`, default `100%`), (3) chat bubble corner radius (`8–24dp`, default `18dp`), (4) chat bubble max width ratio (`70%–95%`, default `82%`), and (5) Home Favorites app row cap (`All (default) / Max 4 / Max 6 / Max 8`).
+
+**Changed & Fixed**
+- **Fixed Action-Only Chat Replies Showing "AI Returned No Displayable Content" (#386 / PR #395)**:
+  - Extracted shared `hasExtendedProposals()` and `hasAnyProposal()` in `ParsedChatActions` covering `search`, `todoManage`, `vipPin`, `muteApp`, `markRead`, `export`, `whitelistDelete`, `usageQuery`, `openSetting`, `crossApp`, and `demotedQueryHints`; fixed the UI falsely displaying "(AI returned no displayable content, please retry or switch models)" when AI returned only a fenced JSON action block that executed successfully.
+- **Zero-Hallucination Calendar Queries: Always Verbatim from Local Calendar, Honest Refusal When Empty (#387 / PR #395)**:
+  - Expanded `LocalDataConnector.isCalendarQuery()` with schedule/course semantic terms paired with question markers, and used `DateTimeFormatter` + `ZoneOffset.UTC` for accurate all-day event boundaries.
+  - Added `CalendarBridge.queryScheduleSummary()` and `calendar_query` tool action (pure local `CalendarContract.Instances` query returning verbatim start/end times, title, and location); strengthened `ChatScreenParts` system prompt anti-hallucination rules and refusal examples so schedules always come verbatim from local calendar results, honestly refusing and guiding to Permissions/Settings when unauthorized, unselected, or empty.
+- **Global Health Check & OEM Compatibility Re-Verification (#394 / PR #395)**:
+  - **Update Download Receiver Security Flag Fix**: Changed `DownloadManager.ACTION_DOWNLOAD_COMPLETE` receiver registration in `SettingsActivity` from `RECEIVER_EXPORTED` to `ContextCompat.RECEIVER_NOT_EXPORTED` to prevent spoofed download-complete broadcasts from external apps.
+  - **GitHub Monitor Consecutive-Failure Honest Alert**: Added consecutive-failure counter and throttled logging to `GitHubMonitorWorker`, sending a one-time honest alert on the 3rd consecutive failure to check network or PAT permissions, resetting to zero on success.
+  - **Boot Catch-Up 24-Hour Floor**: Applied the 24-hour `catchUpFloorMs` filter to `scheduled` message reminders (`messageDao().allScheduledReminders()`) in `BootReceiver` alongside todos to avoid replaying stale overdue reminders after reboot; completed re-verification of Room `1→23` migration chain, `PendingIntent` `FLAG_IMMUTABLE`, `Dispatchers.IO`, and background restrictions across 5 major OEMs.
+
 ## [3.5.0] - 2026-11-22
 
 ### 新增功能
@@ -225,6 +386,22 @@
   - 修復 `BootReceiver` 於每次重開機或應用更新時對所有歷史逾期待辦無條件呼叫 `deliverTodoReminder` 造成重複通知轟炸的 bug，改為限制 24 小時逾期窗口內且加上每日里程碑去重 key（`boot_todo:<id>:<dayKey>`）。
   - 完成跨頁狀態隔離（`ChatScreen` 確認卡綁定 `sessionId`）、四廠牌受限設定導引、深淺色／`fontScale = 1.3`／窄螢幕防裁切與安全常數清點審計。
 
+### English
+- **Tag Compare**: [`v3.4.0...v3.5.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.4.0...v3.5.0) (`versionCode = 44`, `versionName = "3.5.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk`: Release-signed with R8 code shrinking and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`).
+  - `app-debug.apk`: Debug build for development testing.
+
+**Added & Behavior Changes**
+- **Proactive Alert Milestone Dedup & Feedback (#372, #377 / PR #383, Behavior Change)**: Switched proactive alerts from state-based to event-milestone deduplication (at most once per 24h before / N min before / overdue, plus 10-minute content-hash gate); added 👍/👎 feedback, separate daily caps for briefings and proactive alerts, and configurable lead time, all-day alert time, monitor interval, and dedup cooldown.
+- **Local Calendar Multi-View & Account-Grouped Management (#373 / PR #383)**: Filters visible/synced calendars by default, adds account-grouped batch selection and "Select All Visible" in Settings, plus Day/Week/Month views in Notes tab.
+- **Update Reminder Snooze State Machine (#374 / PR #383, Behavior Change)**: Replaced daily-once gate with `update_snooze_until_ms` state machine (only "Later" sets snooze; dismissing never swallows alerts; max 1 retry per process).
+- **Tightened Auto-Scam Detection & False-Positive Reduction (#375 / PR #383, Behavior Change)**: Separated weak `urlPresent` from strong `intelHit`/`cryptoAddressPresent`; automatic `scam` tagging requires intel hit, crypto address, or concrete scam-operation signals; generic links or conflicts with 30-day high-reputation senders downgrade to confirmation cards; tightened `hasSuspiciousFeature` triggers and added feedback write-back to reputation & encrypted benign-domain LRU.
+- **Chatroom Bottom-Right Timestamps (#376 / PR #383)**: Unified `10sp` `HH:mm` timestamps (`Locale.US`) on user/AI/proactive/system bubbles with large-font/narrow-screen safety and toggle.
+- **AI Diary / Daily Review & Long-Term Goal Tracking (#378, #379 / PR #383)**: Non-destructive Room v21 → v22 (`diary_days`, `goals`, `goal_progress`); daily 00:30 zero-token SQL timeline + monthly overview (optional collapsible AI annotation); long-term goals with recurring sub-todos, auto-downgrade after 3 missed periods, and intimacy integration (100% usable without API key).
+- **Declarative Agentic Capability Table & Blocked-Action Rerouting (#380 / PR #383)**: Added `IntentCapabilityRegistry` (`REMINDER`/`MEMO`/`CALENDAR_ADD`/`OPEN_APP`) with automatic safe fallback paths, plain-language failure reasons, and "Execution Method" on confirmation cards.
+- **Health Connect Integration & Multi-Brand Health Check (#381, #382 / PR #383)**: Added `androidx.health.connect:connect-client:1.1.0` for local morning-briefing lookup rules (raw values never leave device), 7-day sleep/steps trend chart in Stats, Android 13/14+ Health Connect permission entry, and fixed `BootReceiver` duplicate overdue to-do notifications.
+
 ## [3.4.0] - 2026-11-21
 
 ### 新增功能
@@ -244,6 +421,29 @@
 - **白名單全量比對、統一去重寫入與一次性清理（#362 / PR #369）**：`AiRuleDao.activeWhitelistAll()` 解除 `LIMIT 20` 截斷，修正第 21 筆以後白名單靜默失效；`WhitelistRuleHelper.upsertWhitelist` 統一 6 處寫入路徑進行去重與停用規則重新啟用；`MessageDetailActivity`、`PendingAiAnalysisWorker` 與 `NotificationCollectorService` 深度分析重查 DB 白名單並標註手動觸發 provenance；`NotificationCollectorService.dedupWhitelistRulesIfNeeded` 執行一次性精確重複列合併（保留最舊一筆，不改動停用狀態）。
 - **記憶頁篩選 chips 遮擋與大字體適配修復（#363 / PR #369）**：`MemoryTab` 展開模式將批次管理與收合鈕移至獨立頂部控制列，兩排分層 `LazyRow` 獨佔全寬並加上 `clipToBounds()` 與 trailing `contentPadding`；收合模式保留 `8.dp` 明確間距；所有 chip 與膠囊統一採用 `heightIn(min = 34.dp)` 支援 `fontScale = 1.3` 與 `360dp` 窄螢幕不截字、不重疊。
 - **AI 工具調用精度、防幻覺鐵律與本地直連查詢（#364 / PR #369）**：`ChatScreenParts` 注入系統能力宣告與防幻覺約束，實作單意圖單卡優先序（`calendar_free_query > usage_query > search_messages > memory_list > todo_list`）與次要查詢誠實提示；新增 `LocalDataConnector` 直連本機日曆與 `UsageStatsBridge`；實作 `usage_query` 查詢系統 `UsageStatsManager` 真實前景時間與啟動次數（未授權誠實回報並引導至授權頁），同步修復 `PermissionHubActivity` 使用情況權限狀態與跳轉。
+
+### English
+- **Tag Compare**: [`v3.3.0...v3.4.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.3.0...v3.4.0) (`versionCode = 43`, `versionName = "3.4.0"`)
+- **Release Assets (Dual APKs)**:
+  - `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Proactive Calendar Intel Engine (`CalendarInsightEngine`) (#365 / PR #369)**: Added `CalendarInsightWorker` (`PeriodicWork` default 60 min, configurable 30 / 60 / 120 / 180 min via `ExistingPeriodicWorkPolicy.UPDATE`, rescheduled on boot by `BootReceiver`), reading only user-checked local calendars for events in the next 48h, strictly limiting external queries to "event title + date (`<= 60` chars, `sanitizeForPrompt`)" (strictly forbidding attendees, notes, or location), deduplicating by `eventId|beginMs|intelHash` (zero AI calls when no new intel), auto-skipping when BYOK external search is unset or Token Saver is active, and respecting daily proactive cap and independent DND; added `proactive_calendar_insight_enabled`, `proactive_calendar_insight_notif_enabled`, `proactive_calendar_web_search_enabled`, and `calendar_insight_interval_minutes` wired to `SettingsCatalog` and `AssistantHubActivity`.
+- **Proactive Message Chatroom, Auto Memory Extraction, Unresolved Pills & Continuity Anchors (#366 / PR #369)**:
+  - `ProactiveEngine` creates a dedicated proactive chatroom (`PROACTIVE_SESSION_TITLE = "AI Assistant Briefings & Proactive Alerts"`), no longer writing to the first regular session; history drawer collapses it by default with a live unread badge (`99+` over 99, cleared on open) and protects it from "Clear All Conversations"; cross-tab system events can be written with zero AI via `appendSystemEventToCurrentSession`.
+  - Added auto memory extraction (`memory_auto_extract_enabled`, default on): writes up to 2 non-sensitive, conflict-free memories per chat turn with a subtle notice and one-tap delete BottomSheet below the reply bubble; `🔒 Sensitive` memories and conflicts 100% remain confirmation-gated.
+  - Added single-chat continuity components (`chat_pending_capsules_enabled`, default on): displays up to 3 swipeable unresolved-item quick pills at the top plus local compressed continuity anchors (auto-expiring after 7 days, manually closeable).
+- **Dual-Threshold Auto-Decision Layer (`DecisionEngine`) & One-Tap False-Positive Feedback (#367 / PR #369)**:
+  - Added `DecisionEngine` (pure function, zero AI tokens): deterministic signals take priority (whitelist, filter rules, memo rules, acquaintances/VIP, structured time/OTP/URL/amount, known avatars); without local risk signals, AI semantic scoring alone is capped at `confirmThreshold - 10` (configurable via `decision_confirm_threshold`, default 60, range 40–85) and never triggers high-confidence scam popups or irreversible actions alone.
+  - Centralized reversible (auto-execute) vs. irreversible (confirmation- or toggle-gated) action matrix with unified provenance tags; false-positive feedback dialogs in `MessageDetailActivity`, `ScamCenterActivity`, and `Components.kt` support 4-category "This judgment is wrong" feedback written directly back to rules while immediately invalidating caches.
+- **Scheduled Task Templates, Declarative Action Registry & Status Fixes (#368 / PR #369)**:
+  - Non-destructive Room upgrade v20 → v21 (`MIGRATION_20_21`), adding `task_template` table and indexes; added `TaskTemplateEngine` separating pure local zero-token aggregation from optional AI polishing, with a 3-step wizard and live WYSIWYG preview in `AssistantHubActivity`.
+  - Added single-source declarative `LinkedAppActionRegistry` driving both `LinkedAppsActivity` capability cards and `ChatScreenParts` AI capability declarations (including `discord_digest_stats_readonly` read-only demo connector); persisted sync timestamps and error status in `GitHubMonitorWorker` (no longer silently swallowing status).
+
+**Changed & Fixed**
+- **Full-Table Whitelist Matching, Unified Dedup Write & One-Time Cleanup (#362 / PR #369)**: Removed `LIMIT 20` truncation in `AiRuleDao.activeWhitelistAll()`, fixing silent failure from the 21st whitelist entry onward; `WhitelistRuleHelper.upsertWhitelist` unified 6 write paths with dedup and re-enabling disabled rules; deep analysis in `MessageDetailActivity`, `PendingAiAnalysisWorker`, and `NotificationCollectorService` re-queries DB whitelist and marks manual-trigger provenance; `NotificationCollectorService.dedupWhitelistRulesIfNeeded` performed one-time exact duplicate row merging (retaining the oldest entry without altering disabled state).
+- **Memory Tab Filter Chips Overlap & Large-Font Adaptation Fix (#363 / PR #369)**: In `MemoryTab` expanded mode, moved batch management and collapse button to a dedicated top control bar so the two layered `LazyRow`s occupy full width with `clipToBounds()` and trailing `contentPadding`; kept `8.dp` explicit spacing in collapsed mode; unified `heightIn(min = 34.dp)` across all chips and pills so `fontScale = 1.3` and `360dp` narrow screens have zero clipping or overlap.
+- **AI Tool-Calling Precision, Anti-Hallucination Rules & Direct Local Queries (#364 / PR #369)**: `ChatScreenParts` injects system capability declarations and anti-hallucination constraints, implementing single-intent single-card priority (`calendar_free_query > usage_query > search_messages > memory_list > todo_list`) with honest secondary-query hints; added `LocalDataConnector` for local calendar and `UsageStatsBridge`; implemented `usage_query` querying `UsageStatsManager` real foreground time and launch counts (honestly reporting and guiding to permissions when unauthorized), and fixed `PermissionHubActivity` usage-stats permission state and navigation.
 
 ## [3.3.0] - 2026-11-21
 
@@ -269,6 +469,32 @@
 - **深淺色對比度稽核修正（#356 / PR #359）**：`PhantomGlassCard` 統一提供主題與 `CardBgMode.DARK` 感知的 `LocalContentColor`，多個設定／樞紐頁補齊 `Scaffold.contentColor` 與 `TopAppBar` 標題／返回鈕對比色。
 - **整合二檢與小型瑕疵修正（#358 / PR #359）**：修正 `MemoryTab` 局部 `data class` 提升至檔案頂層、`ProactiveEngine` 補齊非機密異常日誌，並完成 `SettingsCatalog` 一致性與 OEM 相容性驗證。
 
+### English
+- **Tag Compare**: [`v3.2.0...v3.3.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.2.0...v3.3.0) (`versionCode = 42`, `versionName = "3.3.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Memory Write Confirmation Toggle (#347 / PR #359)**: Added `memory_write_confirm` (default on); can be turned off so normal AI memories write directly, while `🔒 Sensitive` memories, conflict records, and deletions still always require a confirmation card.
+- **Calendar Write Confirmation Toggle & Collapsible Settings List (#348 / PR #359)**: Added `calendar_write_confirm` (default on); when off, still runs conflict checks and writes directly to checked calendars if authorized and conflict-free; local calendar list in Settings now collapses with an `N/M` checked summary.
+- **Stats "Morning/Evening Briefing Card" (#349 / PR #359)**: Added a briefing card in Stats displaying the latest morning/evening briefing with expand-to-read-full-text and copy support; legacy preference `stats_summary` auto-migrates to `stats_briefing`.
+- **Intimacy Detail Sheet (#350 / PR #359)**: Intimacy card on the Partner tab is now clickable to open details (4-stage journey and point source breakdown), consolidating formula constants into a single source of truth.
+- **Settings Hub Card Consolidation (#354 / PR #359)**: Merged "Permission Hub" and "AI Companion & Proactive Push" into a collapsible "Permissions & AI Companion" card (showing `N/7` granted permissions and briefing status when collapsed), with automatic redirect for legacy deep links.
+- **Memory & Partner Tab Layout Redesign (#357 / PR #359)**: Added a 4-tile visual memory stats overview at the top of `MemoryTab` (Long-term / Short-term / Conflict / Immune, tap-to-filter) and a "Memories / Rules" layered filter bar; updated `PartnerTab` avatar card with pill badges, unified corner radii, and equal-height two-line 7-day horizontal event cards.
+
+**Behavior Changes**
+- **Daily AI Summary Feature Removed (#349 / PR #359)**: Removed scheduling, completion push notifications, dedicated model purpose (`AiPurpose.DAILY_SUMMARY`), and related settings (`ai_daily_summary`, `ai_daily_summary_notif`, `ai_model_daily_summary`, `stats_summary` card); weekly summary is unaffected and its notifications are now gated by token-saver mode; existing `ai_summary` database records are preserved untouched.
+- **Briefing Read Scoring Deduplicated by `messageId` (#349 / PR #359)**: Each briefing scores only once across chat reading, Stats card expansion, and notification tap paths.
+- **Added `PACKAGE_USAGE_STATS` Permission in AndroidManifest (#346 / PR #359)**: Declared usage stats access (`tools:ignore="ProtectedPermissions"`) for Permission Hub checks and guidance.
+
+**Changed & Fixed**
+- **Dynamic Purpose Model Counts & Outdated Copy Fixes (#345 / PR #359)**: Changed purpose model card category count to dynamic counting and fixed token-saver mode and multiple setting descriptions.
+- **Removed Duplicate Quick Toggles from Partner Tab (#351 / PR #359)**: Removed personality/verbosity quick toggles from Partner tab while keeping the direct Settings entry.
+- **Proactive Notification Pre-Send Permission Check & Guidance (#352 / PR #359)**: Checks system notification permission before sending proactive notifications; shows a warning and direct system notification settings link in the Settings hub card and AI Companion settings when unauthorized.
+- **Discord Cloud Alert Payload & Log Security Hardening (#353 / PR #359)**: Switched Discord Webhook payload construction to Gson `JsonObject` (fixing invalid JSON risk from manual escaping) with pre-send authorization check; removed all response content from log outputs.
+- **Onboarding & Settings Tour Recompilation (#355 / PR #359)**: Aligned copy and new IA (with deep-link normalization) for the 20-step Home tour and 9-step Settings tour, and rewrote developer jargon in `SettingsCatalog` into plain language.
+- **Light/Dark Contrast Audit Fixes (#356 / PR #359)**: `PhantomGlassCard` now provides theme- and `CardBgMode.DARK`-aware `LocalContentColor`; fixed `Scaffold.contentColor` and `TopAppBar` title/back button contrast across multiple settings/hub screens.
+- **Integration Re-Check & Minor Polish (#358 / PR #359)**: Hoisted local `data class` in `MemoryTab` to file top level, added non-secret exception logging in `ProactiveEngine`, and completed `SettingsCatalog` consistency and OEM compatibility verification.
+
 ## [3.2.0] - 2026-11-20
 
 ### 行為變更
@@ -287,6 +513,20 @@
 ### 變更與修正
 - **v3.0.0–v3.1.0 全功能健檢與修復（#334 / PR #342）**：修正 `CalendarBridge.queryFreeSlotsSummary` 對 `ALL_DAY` 事件未以 UTC `LocalDate` 邊界對齊與 ±1 日視窗導致 UTC+8 跨日誤判空檔的問題；修正 `ChatScreen` 的 `memory_view`／`memory_list` 關鍵字比對曾涵蓋敏感記憶 `content` 欄位，避免側錄探測。
 - **新手教學 20 步與設定教學 10 步重寫（#341 / PR #342）**：主頁教學重寫為 20 步（涵蓋 `MEMORY`、`PARTNER` 分頁、防詐免疫、通訊錄綁定、日曆建議卡、早晚簡報與權限授予中心，保留 400ms 雙條件 auto-skip 與空資料庫合併步）；設定教學擴充為 10 步（新增「權限授予中心」與「AI 夥伴與主動推播」兩步，同步 `SETTINGS_CARD_ORDER` 與 `BringIntoViewRequester`＋`withFrameNanos`）。
+
+### English
+- **Tag Compare**: [`v3.1.0...v3.2.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.1.0...v3.2.0) (`versionCode = 41`, `versionName = "3.2.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added, Changed & Fixed**
+- **Schedule Memo Routing Fix (#333 / PR #342, Behavior Change)**: Schedule notifications default to creating only local calendar suggestion cards (`schedule_memo_route = suggest_calendar`).
+- **v3.0.0–v3.1.0 Health Check & Fixes (#334 / PR #342)**: Fixed `CalendarBridge.queryFreeSlotsSummary` `ALL_DAY` UTC cross-day bug and excluded sensitive memory `content` matching in `ChatScreen`.
+- **Memory × Anti-Scam Visualization (#335 / PR #342)**: Added "Scam Immunity" filter chip & section in Memory tab with Snackbar jump.
+- **Contacts Integration (#336 / PR #342)**: Room v20 (`contact_aliases`), local nickname binding, zero-token relationship import, VIP whitelist sync, and offline acquaintance-impersonation detection (raw contacts never sent to AI).
+- **Proactive Push & Personal Briefing Engine (#337 / PR #342)**: 08:45/22:25 briefings, 15-min zero-token SHA-256 change detection, "What I Know About You" card, optional `ACCESS_COARSE_LOCATION`, and BYOK external search endpoint.
+- **AI Companion Tab (#338 / PR #342)**: Added 6th tab "AI Companion" with custom name/avatar, companion days, intimacy formula, 7-day activity, and profile card.
+- **Linked Apps Hub & Cross-App Action Cards (#339 / PR #342)**: Added `LinkedAppsActivity` (6 local cards, GitHub PAT 15-min polling, encrypted Discord Webhook) and "Confirm Before Execute" cross-app cards.
+- **Settings Reorganization & 20/10-Step Tours (#340, #341 / PR #342)**: Added `PermissionHubActivity` and `AssistantHubActivity`; rewrote Home (20-step) and Settings (10-step) tours.
 
 ## [3.1.0] - 2026-11-20
 
@@ -313,6 +553,33 @@
   - 頂部搜尋框改由 48dp 搜尋按鈕觸發展開（`AnimatedVisibility`＋`FocusRequester` 自動聚焦），支援有字維持展開、清空失焦收合與 `BackHandler` 先清字再收合，保留「搜尋→全選→批次刪除」完整流程。
   - 統一記憶頁頂部列（標題、搜尋鈕、新增、齒輪）排版與 48dp 觸控目標。
 
+### English
+- **Tag Compare**: [`v3.0.0...v3.1.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v3.0.0...v3.1.0) (`versionCode = 40`, `versionName = "3.1.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Memory × Anti-Scam Cross-Check & Scam Immunity (#328 / PR #330)**:
+  - Added `ContactContext` (L1 offline contacts matching layer): reads `READ_CONTACTS` runtime permission (gracefully falls back to memory-only matching without crashing when denied), caches contact display names via `LruCache` (30-minute TTL), cross-checks contacts with `person` memories (habitual app, late-night/early-morning hours, unknown account claiming acquaintance + urgency), and outputs only anonymous conclusion strings—raw contacts never leave the device.
+  - `MemoryEngine.buildAntiFraudPromptBlock` integrates context-contradiction cross-checking (`schedule`/`routine`/`preference` `normal` memories injected into risk analysis) and `scam_immunity` retrieval priority weighting, while continuing dual hard-exclusion of `privacyTier = sensitive`.
+  - Added `scam_immunity` ("Scam Immunity") memory category: Scam Center `ScamDetailDialog` added one-tap "🛡️ Add to Scam Immunity Memory" confirmation card, plus weekly `ScamImmunitySummaryWorker` (`ScamImmunityPolicy`) scanning 30-day high-risk records to produce confirmation-gated drafts in Memory tab.
+  - `AiClient.analyzeMessage` analysis cache key includes memory/contacts version stamp (`getAntiFraudCacheVersion`) so new immunity memories or permission changes are never masked by stale cache; added "Memory × Anti-Scam Cross-Check" master toggle in Settings (default on; when off, prompt, cache key, and token usage match v3.0.0).
+- **Local Calendar Integration (#329 / PR #330)**:
+  - Added `CalendarBridge` (pure `ContentResolver` on `Dispatchers.IO`, zero third-party dependencies): supports `READ_CALENDAR`/`WRITE_CALENDAR` runtime permissions, selectable calendar list in Settings (none checked by default, showing read/write status), `Instances` free-slot queries (`>=30` min after deducting existing events), and overlap conflict checks.
+  - AI Assistant injects `calendar_free_query`/`calendar_add` instructions only when authorized and calendars are selected: free-slot queries compute locally and report truthfully; adding events always opens a confirmation card showing target writable calendar, time, and non-blocking conflict warnings.
+  - When `NotificationCollectorService` detects a schedule-type notification with successfully parsed time and no same-name concurrent event in selected calendars, `LruCache`-throttled logic shows an editable "📅 Add to Calendar" suggestion card (with conflict check) in `MessageDetailActivity`.
+  - Falls back to `Intent(Intent.ACTION_INSERT)` pre-filling the system Calendar app when write permission or writable calendars are absent.
+
+**Changed & Fixed**
+- **AI Response Compatibility & Collapsible Chain-of-Thought (#326 / PR #330)**:
+  - `AiClient` switched to `ResponseMessage` (`JsonElement`) + `extractJsonTextValue` to parse polymorphic `content`/`reasoning`/`reasoning_content`, fully supporting array chunk lists, objects, and plain strings and fixing `BEGIN_ARRAY` crashes on models like `zai-glm-5-3`.
+  - `ChatScreen` supports chain-of-thought model responses with a default-collapsed "Reasoning" section above the bubble (expands to show full thinking process, clean final reply, plain-text long-press copy, CoT never replayed to API).
+  - Removed `isVisionModelSupported` and image vision false-block gates so attached images are always sent and unsupported providers report honest errors.
+  - Upgraded Room database v18 → v19 (`MIGRATION_18_19`), non-destructively adding `chat_messages.thinkingContent` via `ALTER TABLE` while preserving full chat history.
+- **Memory Tab UI Optimization (#327 / PR #330)**:
+  - 9 `MemoryFilterChip` filter tags support collapse/expand with persisted state (`PhantomPrefs.isMemoryFilterChipsCollapsed`), showing only "All" and active filters when collapsed, matching Messages tab's 34dp circular chevron and pill style.
+  - Top search bar is triggered by a 48dp search button (`AnimatedVisibility` + `FocusRequester` auto-focus), staying open when non-empty, collapsing on empty blur, and clearing text before collapsing on `BackHandler`, preserving the "search → select all → batch delete" flow.
+  - Standardized Memory tab top bar layout (title, search button, add, gear) and `48dp` touch targets.
+
 ## [3.0.0] - 2026-11-20
 
 ### 新增
@@ -334,6 +601,28 @@
 - **教學 auto-skip 雙條件（#316 / PR #320）**：新手教學 auto-skip 延遲 400ms 後仍需 bounds 已量測且目標仍缺席，才自動跳步，避免極慢機型在分頁切換進行中誤跳。
 - **Safe Browsing 卡過時文案移除（#316 / PR #320）**：「Key 狀態：已於 App 加密儲存（優先於 BuildConfig）」改為「Key 狀態：已於 App 加密儲存」，並移除不可達的「Key 狀態：已從 local.properties 注入」分支（`getSafeBrowsingKeySource` 僅回傳 EncryptedPrefs／NONE）。
 
+### English
+- **Tag Compare**: [`v2.20.0...v3.0.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.20.0...v3.0.0) (`versionCode = 39`, `versionName = "3.0.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **AI Memory Bank Core Engine (#314 / PR #319)**:
+  - Upgraded Room database v17 → v18 (`MIGRATION_17_18`), adding `memories` table (with `category`, `subject`, `content`, `layer`, `status`, `confidence`, `sourceType`/`sourceRef`, `privacyTier`, `createdAt`/`updatedAt`, `lastUsedAt`/`useCount`, etc., and 4 indexes: `(status,layer)`, `(category,subject)`, `(updatedAt)`, `(privacyTier)`).
+  - Added `MemoryEngine`: same-`subject` deduplication and conflict detection (`status = conflict` keeps both entries and never overwrites), `resolveConflictGroup` resolution (winner set to `active + confirmed`, loser set to `archived`); short-term memory `expiresAt` defaults to 7 days, archived on startup/query via `lazyArchiveExpiredShortTerm` and daily `MemoryExpiryWorker`.
+  - Pure local deterministic Top-K retrieval (zero extra API calls) scored by keywords, category intent, and time conditions, injected into `buildRagSystemPrompt`'s `[Long-Term Memory]` block (with `AiClient.sanitizeForPrompt` anti-injection), updating `lastUsedAt` and `useCount` on hits.
+  - Dual hard-exclusion gate for `privacyTier = sensitive` (SQL `privacyTier = 'normal'` + Kotlin `.filter { it.privacyTier != PRIVACY_SENSITIVE }`).
+  - `MemoryEngine.loadIntegratedSnapshot` unifies queries for existing memos (`notes (source=auto)`), `ai_rules` (whitelist/tags), `user_tag_rules`, and `memo_rules`, providing unified query, toggle, and delete interfaces (wired to `NotificationCollectorService.invalidateRuleCaches()`, zero extra table migrations).
+- **5th Tab "Memory" (#315 / PR #319)**: `MainTab.MEMORY("Memory")` integrated into `LiquidGlassTabBar` (Standard / Compact / Auto-Hide modes), `saveableStateHolder`, and `PhantomBackgroundBox(layer = GLOBAL)`, with full `MemoryTab` UI: top search bar, 9 filter chips (`FlowRow` adapting to large fonts and narrow screens), 8 collapsible sections (⚠️ Conflicts Pending, Long-Term Memories, Short-Term Memories, Archived Memories, Auto-Memos, Whitelist Rules, Tag Rules, Auto-Note/Todo Rules), source & badge display (`AI Inferred` / `Confirmed` / `🔒 Sensitive` / expiry time), two-button conflict resolution, full add/edit dialog, swipe-left archive/restore/delete, multi-select batch delete confirmation dialog, and top-right settings gear jumping directly to Settings "Memory Bank & AI Assistant" card.
+- **Custom AI Assistant (#315 / PR #319)**: Supports custom name (default "PhantomCheck"), personality presets (Default / Concise & Pro / Friendly & Detailed / Strict Anti-Scam Advisor / Fully Custom) + custom personality field, and response verbosity (Concise / Balanced / Detailed), injected into `[Assistant Settings]` strictly capped at `<= 120` tokens, with circular avatar and name displayed live in `ChatScreen` top bar and assistant reply bubbles.
+- **New Settings Category "Memory Bank & AI Assistant" (#315 / PR #319)**: Collapsible card `card_memory_assistant` (including memory extraction, dual-mode independent injection sliders, custom assistant & circular avatar crop, and privacy tier info), registering 9 settings in `SettingsCatalog` (`memory_chat_capture`, `memory_normal_top_k`, `memory_normal_per_item_chars`, `memory_saver_top_k`, `assistant_custom_name`, `assistant_personality`, `assistant_verbosity`, `assistant_avatar`, `memory_privacy_tier_info`), supporting local search, AI semantic search, and in-chat `setting_toggle` / `setting_adjust` / `open_setting`.
+
+**Changed & Fixed**
+- **Token Saver Quick Toggle (#315 / PR #319)**: Added a Token Saver quick-toggle chip and `Info` button in AI Assistant top bar, synced 100% bidirectionally in real time with Settings via `PhantomSettingsBus`; info dialog maps item-by-item to actual `PhantomPrefs.isEffective*` behavior.
+- **Safe Browsing Key Switched to BYOK (#316 / PR #318, Behavior Change)**: Removed `BuildConfig.SAFE_BROWSING_API_KEY` / `local.properties` fallback path, unifying exclusively on `EncryptedSharedPreferences` input in Settings; honestly skips Safe Browsing when unset with consistent UI hints, and release builds no longer retain any `SAFE_BROWSING_API_KEY` field.
+- **Chat Timestamp Format Fixed to `Locale.US` (#316 / PR #320)**: `CHAT_TIME_FORMATTER` is constructed with `DateTimeFormatter.ofPattern("MM/dd HH:mm", Locale.US)`, keeping `zh-TW` display byte-identical while preventing non-ASCII numeral drift on other system locales.
+- **Onboarding Auto-Skip Dual Conditions (#316 / PR #320)**: Onboarding auto-skip now requires both a 400ms delay with measured bounds and the target still absent before advancing, preventing false skips on slow devices during tab transitions.
+- **Removed Outdated Safe Browsing Card Copy (#316 / PR #320)**: Changed "Key status: Encrypted & stored in App (takes precedence over BuildConfig)" to "Key status: Encrypted & stored in App", and removed the unreachable "Key status: Injected from local.properties" branch (`getSafeBrowsingKeySource` returns only `EncryptedPrefs` / `NONE`).
+
 ## [2.20.0] - 2026-11-20
 
 ### 修正
@@ -341,6 +630,12 @@
   - `NotesTab` 待辦事項展開區（`!todoSectionCollapsed.value`）外層改為 `Column(Modifier.heightIn(max = maxTodoExpandedHeight))`，上限取自 `BoxWithConstraints` 可用高度之 2/3（`maxHeight * 2f / 3f`），避免清單過長時撐高卡片擠壓下方記事區。
   - 篩選膠囊列 `FlowRow` 與 `8.dp` `Spacer` 固定於外層 `Column` 頂部，不隨清單捲動；清單段改為 `Column(Modifier.weight(1f, fill = false).verticalScroll(todoListScrollState))` 支援卡內上下捲動，並以 `key(todoFilter) { rememberScrollState() }` 於切換篩選條件時重置捲動位置至頂部。
   - 短清單或空清單維持依內容 wrap-content 高度呈現，不強制填滿 2/3；收合精簡顯示（`todoSectionCollapsed = true`）與收合狀態持久化維持不變。
+
+### English
+- **Tag Compare**: [`v2.19.0...v2.20.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.19.0...v2.20.0) (`versionCode = 38`, `versionName = "2.20.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+**Fixed**
+- **Scrollable & Height-Capped To-Do Expanded Area in Notes Tab (#310 / PR #311)**: Capped `NotesTab` expanded to-do area to 2/3 of `BoxWithConstraints` available height (short lists still wrap-content); pinned filter pills at top, enabled inner vertical scrolling, and reset scroll position on filter switch.
 
 ## [2.19.0] - 2026-11-20
 
@@ -368,6 +663,15 @@
 - **立即壓縮資料庫等待邏輯修正（#306 / PR #307）**：
   - 修正 `DbMaintenance` 於背景 `VACUUM` 任務已排隊時點擊「立即壓縮資料庫」的等待判斷，避免長時間等待或卡住。
 
+### English
+- **Tag Compare**: [`v2.18.0...v2.19.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.18.0...v2.19.0) (`versionCode = 37`, `versionName = "2.19.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+**Added, Changed & Fixed**
+- **Center Stack v6 Edge-Fill & Short-List Mode (#298 / PR #302)**: Added symmetric `pAbove`/`pBelow` edge-fill compensation and top-pinned short-list layout in `CenterFocusCardStack`, with `edgeGap = 6dp`.
+- **Storage Optimization & Database Maintenance (#299 / PR #303, #306 / PR #307)**: Enabled R8 code/resource shrinking in `release` builds; Room v17 (`MIGRATION_16_17`) indexes; periodic `VACUUM`, 300-entry avatar cache cap, and `intel_cache` cleanup; added storage breakdown and "Compact Database Now" in Settings.
+- **Battery & Stability Optimization (#300 / PR #304)**: Relaxed KeepAlive (15→45 min) and Shizuku (300→600 s) polling, `KEEP` Heartbeat debouncing, `StatsForegroundService` rescue backoff, and screen-off early exit.
+- **UI Component Splitting (#301 / PR #305)**: Split `MainActivity` and `ChatScreen` into `MessagesTab.kt`, `NotesTab.kt`, `StatsTab.kt`, `TodoSection.kt`, and `ChatScreenParts.kt` (zero behavior change).
+
 ## [2.18.0] - 2026-11-19
 
 ### 修正
@@ -377,6 +681,13 @@
   - 快速設定「AI 風險分析」副標改為動態引用 `aiMinTriggerLength` 字數門檻，不再寫死 10 字元。
   - 「每日 AI 額度上限」標題與 `SettingsCatalog.NUMERIC_SPECS` 單位統一為「次」，chip 支援顯示並選中非預設值（0–100 次、步進 10 次）。
   - 省 token 模式生效時，「每則訊息 AI 智慧掃描」與「每日 AI 摘要」副標顯示「已暫停」，「AI 風險分析」副標提示「僅命中可疑特徵才分析」。
+
+### English
+- **Tag Compare**: [`v2.17.0...v2.18.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.17.0...v2.18.0) (`versionCode = 36`, `versionName = "2.18.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+**Changed & Fixed**
+- **Removed Built-in Personalization Defaults for Full Generalization (#292 / PR #293)**: Removed default "My Name" pre-fill and automatic personal AI rules (one-time cleanup of legacy auto-written telecom whitelist & shopping tag rules on upgrade; user rules preserved).
+- **Fixed Conflicting Settings Copy (#292 / PR #293)**: Dynamic trigger character threshold (1–30 chars) in AI Risk Analysis subtitle; aligned daily AI quota (0–100, step 10); marked paused toggles when Token Saver is active.
 
 ## [2.17.0] - 2026-11-19
 
@@ -395,6 +706,14 @@
   - 「前往開啟通知存取權限」升級為直達本 App 專屬通知存取詳情頁（Android 11 以上支援；不支援的系統自動改開總清單頁）。
   - Shizuku 已連線時，可點擊「Shizuku 一鍵授權」直接授予通知存取權限並即時刷新狀態。
 
+### English
+- **Tag Compare**: [`v2.16.0...v2.17.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.16.0...v2.17.0) (`versionCode = 35`, `versionName = "2.17.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+**Added & Fixed**
+- **Home/Settings Onboarding Fixes, OEM Restricted-Settings Guides & One-Tap Shizuku Auth (#288 / PR #289)**: Waits for Android 13+ permission dialogs before showing onboarding; merges 4 empty-DB message steps; adds 4-brand restricted-settings troubleshooting (Xiaomi/Samsung/OPPO/vivo), direct Notification Access detail links, and one-tap Shizuku authorization; fixed 8-step Settings tour.
+- **Privacy Policy & Disclaimer (#284 / PR #286)**: Added `PRIVACY.md` and `DISCLAIMER.md`.
+- **GPL-3.0 Open-Source License (#285 / PR #287)**: Added `LICENSE` (GNU GPL v3.0) and README License section.
+
 ## [2.16.0] - 2026-11-19
 
 ### 變更與修正
@@ -402,6 +721,12 @@
   - 訊息／記事堆疊上下留白緊湊化：`CenterFocusCardStack` 新增 `edgeGap = 4.dp`（取代原 `8.dp`）延伸上下可視範圍；`MessagesHomeTab` 於 `CENTER` 模式外層區塊間距由 `12.dp` 緊湊為 `8.dp`（非 `CENTER` 模式維持 `12.dp`）；記事頁堆疊容器上方 `Spacer` 於 `CENTER` 模式由 `8.dp` 縮為 `4.dp`（`LIST` 模式維持 `8.dp`），Scaffold 共用外層內距、我的最愛列與底部導覽列不變。
   - 阻尼彈簧吸附：改採官方 `snapFlingBehavior`（`SnapLayoutInfoProvider(listState, SnapPosition.Start)` ＋ `rememberSplineBasedDecay` ＋ `spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)`），維持 `s_i = i * exposure` 吸附幾何與互補式 `contentPadding`。
   - 近焦縮放緩衝與焦點陰影漸變：於同一 `graphicsLayer` draw phase 內加入 `FastOutSlowInEasing` 近焦縮放緩衝（`absU <= 1f` 由 `0.94f` 平滑過渡至 `1.0f`，`absU > 1f` 沿 `0.04f` 遞減至下限 `0.82f`，於 `absU = 1` 連續銜接，pivot 維持頂緣 `TransformOrigin(0.5f, 0f)`），並新增 `cardShape = RoundedCornerShape(20.dp)` 與 `focusShadowBoost = 6.dp` 隨 `eased` 漸變陰影；`translationY` 線性鎖定、`alpha` 邊緣淡出與 `zIndex` 連續公式皆維持不變。
+
+### English
+- **Tag Compare**: [`v2.15.0...v2.16.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.15.0...v2.16.0) (`versionCode = 34`, `versionName = "2.16.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+**Changed & Fixed**
+- **Center Stack v5 Polish (#280 / PR #281)**: `edgeGap = 4dp`, official `snapFlingBehavior` with `spring(0.85f, StiffnessMediumLow)`, `FastOutSlowInEasing` near-focus scale (`0.94f → 1.0f` then `0.04f` step-down to `0.82f`), and `6dp` focus shadow gradient.
 
 ## [2.15.0] - 2026-11-19
 
@@ -412,6 +737,12 @@
   - 記事短清單幾何修正：過渡區寬度改為動態 `zone = min(1.5f, (n - 1) / 2f)`，根治 `n <= 4` 時頭尾過渡區重疊造成第 2 則記事沉底；記事頁續用共用堆疊元件、容器高度由 `BoxWithConstraints` 動態計算。
   - 待辦事項到期副標單行：`NotesTodoRow` 到期資訊 `Text` 新增 `maxLines = 1`、`softWrap = false` 與 `TextOverflow.Ellipsis`，不再被右側按鈕擠成兩行（展開／收合兩狀態同時生效）。
 
+### English
+- **Tag Compare**: [`v2.14.0...v2.15.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.14.0...v2.15.0) (`versionCode = 33`, `versionName = "2.15.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+**Changed & Fixed**
+- **Center Stack v4 Continuous Inertial Scroll (#276 / PR #277)**: Replaced step-by-step `Pager` with `LazyColumn` + `rememberSnapFlingBehavior` (`viewportCenterOffset`), keeping `92dp` compact cards, `40dp` peek band, and `0.82f` scale floor.
+
 ## [2.14.0] - 2026-11-19
 
 ### 變更與修正
@@ -421,6 +752,18 @@
 - **自動檢查更新改為每次開啟 App 一次（#271 / PR #273）**：
   - 移除每日檢查 gate 與彈窗去重，開啟開關且網路可用時每次開啟 App 檢查 GitHub 最新版本並提示；通知欄通知維持每日每版本最多一則。
   - 以 process 級 `AtomicBoolean` 旗標防重入，同一行程螢幕旋轉與返回頁面不重複請求 API；無網路、403/429、逾時靜默處理。
+
+### English
+- **Tag Compare**: [`v2.13.0...v2.14.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.13.0...v2.14.0) (`versionCode = 32`, `versionName = "2.14.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Changed & Fixed**
+- **Compact Center Stack Cards (#270 / PR #272)**:
+  - Locked single-card height to `92.dp` (`104.dp` cap when `fontScale >= 1.3f`) with a `12.dp` padded three-part layout filling the card and eliminating empty black background space.
+  - Tuned stack offset and `edgeFade` to `40.dp`, scale decrement `0.04f` per layer (floor `0.82f`), and a `40.dp` bottom peek band displaying app name + unread count / note tags, behaving identically across Messages and Notes tabs.
+- **Auto Update Check Changed to Once Per App Launch (#271 / PR #273)**:
+  - Removed the daily check gate and dialog dedup; when enabled and online, checks GitHub's latest release on each app launch and prompts; notification-shade alerts remain capped at once per version per day.
+  - Added process-level `AtomicBoolean` re-entrancy guard so screen rotations and returning to the page within the same process do not re-request the API; silently handles offline, 403/429, and timeouts.
 
 ## [2.13.0] - 2026-11-19
 
@@ -434,6 +777,21 @@
 - **SMS 雙路徑重複記錄修正（PR #268）**：
   - `SmsAutoReplyReceiver` 專職自動回覆並移除 `db.messageDao().insert` 寫入，簡訊記錄統一由通知攔截路徑（`NotificationCollectorService`）單一記錄與 SHA-256 `dedupKey` 去重；時段判斷、敏感關鍵字、`TW_MOBILE_REGEX`、4 小時冷卻與每日 3 封上限等自動回覆行為維持不變（`shouldSkipReply` 提前 return 省去多餘協程排程）。
   - 附註：issue #106 待實機驗證後關閉。
+
+### English
+- **Tag Compare**: [`v2.12.0...v2.13.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.12.0...v2.13.0) (`versionCode = 31`, `versionName = "2.13.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Messages / Notes Center Stack v3 (#263 / PR #264)**:
+  - Zero whitespace & full card fill: uses dynamic layer count, `8.dp` margins, and dynamic `contentPadding` (`bottom = viewport - exposure`) so all items are reachable with zero bottom whitespace.
+  - Continuous inertial scrolling: switched to `LazyColumn` + `LazyListState` (`cacheWindow 1.0/0.5`) + monotonic `SnapPosition.Start` snapping, removing the one-card-at-a-time limit; `rememberSnapFlingBehavior` supports fast flings across multiple cards with smooth snapping.
+  - Continuous lerp transitions & visual parameters: smoothstep continuous interpolation across top/mid/bottom anchors eliminates jumping on card 0 and the head segment; `44.dp` exposure, top-edge pivot `scaleStep = 0.035f`, opaque inside viewport with edge-pixel fade.
+
+**Changed & Fixed**
+- **Fixed Dual-Path Duplicate SMS Recording (PR #268)**:
+  - `SmsAutoReplyReceiver` now handles auto-reply only and removes `db.messageDao().insert` writes; SMS records are handled solely by the notification interception path (`NotificationCollectorService`) with SHA-256 `dedupKey` deduplication. Time-window checks, sensitive keywords, `TW_MOBILE_REGEX`, 4-hour cooldown, and 3/day cap remain unchanged (`shouldSkipReply` returns early to avoid unnecessary coroutine scheduling).
+  - Note: issue #106 pending on-device verification before closing.
 
 ## [2.12.0] - 2026-11-19
 
@@ -461,6 +819,35 @@
   - `DailySummaryPolicy` 與 `WeeklySummaryPolicy` 新增 `maybeCatchUp(ctx)`，於 `MainActivity.onCreate`、`BootReceiver` 與 `SettingsActivity` 儲存設定後檢查並立即補跑錯過之當日／當週摘要。
   - `DailySummaryWorker` 失敗時改回傳 `Result.retry()`（`BackoffPolicy.EXPONENTIAL, 10min`，最多 3 次）不覆寫重試排程，成功或達上限後再重排明日。
   - `WeeklySummaryPolicy.generateWeeklySummary` 新增 `anchorMs` 參數，以排程錨定週（`between(start, start + 7d)`）計算區間與 `weekKeyFor(anchorMs)`，避免 Doze 延遲至週一時誤抓新週；constraints 移除 `RequiresBatteryNotLow`、改為 `NetworkType.CONNECTED`。
+
+### English
+- **Tag Compare**: [`v2.11.0...v2.12.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.11.0...v2.12.0) (`versionCode = 30`, `versionName = "2.12.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Messages Tab Top-to-Center Stack Refactor (#249)**:
+  - Refactored `Components.kt` `CenterFocusCardStack` (v2): fixed `cardHeight = 112.dp` (message preview `maxLines = 1` + `Ellipsis`, app icon `44.dp`, `contentPadding` `12.dp` / compact `8.dp`), `VerticalPager` using `PageSize.Fixed(cardHeight + 24.dp)` and dynamic bottom `contentPadding` so the last card can scroll to center.
+  - Equidistant stack constants: `exposure = 24.dp`, `scaleStep = 0.06f` (layer n scale `1 - 0.06n`), `maxVisibleLayers = 4` (`3` when screen height `< 640dp`, `alpha = 0` beyond).
+  - Continuous interpolation by scroll progress `f ∈ [0, 1]` between top-aligned (`scroll = 0`, card 0 flush at `topGap = 10.dp` with highest zIndex) and center-aligned (`|scrollOffset| >= 0.5`), computed purely in `graphicsLayer` without recomposition; applied in `MainActivity` Messages tab while preserving Standard List, Unread tab, and tap/long-press gestures.
+- **Notes Tab Shared Center Stack & Removal of "Peek Top" Mode (#250)**:
+  - Notes "Center Stack" now shares the new `CenterFocusCardStack`: `NoteCardItem` fixed at `112.dp` height, body `maxLines = 2` + `Ellipsis`, pin/edit/delete moved to small top-right icon buttons (no bottom button bar); todo collapse and overdue sorting unchanged.
+  - Removed `PhantomPrefs.NoteCardLayoutMode.PEEK_TOP`; `getNoteCardLayoutMode` auto-migrates legacy `"peek_top"` to `CENTER`; removed the card-deck branch from `MainActivity`.
+  - Removed "Peek Top / Card Deck" descriptions and keywords from `SettingsActivity` and `SettingsCatalog`; unified `valueLabels` for `home_card_layout` and `notes_card_layout` to `["Standard List", "Center Stack"]` (`LIST → 0`, `CENTER → 1`).
+- **AI Auto-Todo Smart Time Inference & 30-Minute Lead Reminder (#252)**:
+  - `AiClient.buildSystemPrompt` injects current time in system timezone and instructs AI to infer concrete `yyyy-MM-dd HH:mm` for `todo_due` from message clues (e.g., "tomorrow 9am", "Wednesday night", "before 10/28"), leaving blank only when no clues exist.
+  - `NotificationCollectorService.saveAutoMemoIfPresent` uses a fallback chain: `parseStructuredDueAt(todoDue)` (filtering past times) → `ClientTimeParser.parseNaturalReminderTime` → `msg.timestamp + 2h` (wrapped in `try/catch`); applies `REMINDER_LEAD_MINUTES = 30` when an event time exists (or `max(now + 5min, eventTime - 30min)` if `<= now`).
+  - `ClientTimeParser` handles year-rollover `MM/dd` (e.g., `1/2` received on 12/31 rolls to next year); duplicate-todo update path applies the same rule and reschedules `ReminderScheduler.scheduleTodo` when `dueAt` changes and `> now`.
+
+**Changed & Fixed**
+- **Pinning / Unpinning Notes No Longer Overwrites `updatedAt` (#251)**:
+  - `MainActivity.onTogglePinNote` flips only `pinned` on `NoteEntity`, preserving original `updatedAt` display time and maintaining `NotesWidgetProvider.updateAllIfChanged` sync.
+- **Per-Purpose Binding & Live Sync for Deep Analysis & Daily Summary Model Chips (#253)**:
+  - `MessageDetailActivity` deep-analysis chip and `MainActivity` `StatsTab` daily-summary chip now read `AiClient.getProfileForPurpose` (`DEEP_ANALYSIS` / `DAILY_SUMMARY`), write to `PhantomPrefs.setPurposeProfileId` + `PhantomSettingsBus.notifyChanged()` (no longer overwriting global `setActiveProvider`), and reload on `PhantomSettingsBus.version` and `ON_RESUME`; empty-key check updated to `getProfileForPurpose`.
+  - `ChatScreen.AiProviderSwitcherChip` added `label` parameter (default `"Chat Model:"`), showing "Deep Analysis Model:" and "Daily Summary Model:" respectively.
+- **Daily & Weekly Summary Punctuality Hardening (#254)**:
+  - Added `maybeCatchUp(ctx)` to `DailySummaryPolicy` and `WeeklySummaryPolicy` to check and immediately catch up missed daily/weekly summaries on `MainActivity.onCreate`, `BootReceiver`, and after saving in `SettingsActivity`.
+  - `DailySummaryWorker` returns `Result.retry()` (`BackoffPolicy.EXPONENTIAL, 10min`, max 3 times) on failure without overwriting retry schedules, rescheduling tomorrow only on success or cap.
+  - `WeeklySummaryPolicy.generateWeeklySummary` added `anchorMs` to compute the scheduled week window (`between(start, start + 7d)`) and `weekKeyFor(anchorMs)`, preventing Doze delays to Monday from shifting into the new week; constraints changed from `RequiresBatteryNotLow` to `NetworkType.CONNECTED`.
 
 ## [2.11.0] - 2026-11-18
 
@@ -492,6 +879,38 @@
 - **發佈準備（#247）**：
   - 版號更新：`versionCode` 29、`versionName` "2.11.0"；同步 `CHANGELOG.md` 與 `README.md` 功能總覽。
 
+### English
+- **Tag Compare**: [`v2.10.0...v2.11.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.10.0...v2.11.0) (`versionCode = 29`, `versionName = "2.11.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Home Card Layout Rewritten as "Center-Focus Vertical Wheel Stack" (#240)**:
+  - Simplified `PhantomPrefs.HomeCardLayoutMode` to `LIST` (Standard List) / `CENTER` (Center Stack), auto-migrating legacy `peek_top`/`peek_bottom` and `card_stack_effect_enabled` to `CENTER`; updated `SettingsActivity` to two pill options.
+  - Added `CenterFocusCardStack` in `Components.kt`: `VerticalPager` + `PageSize.FillParentSize` (`beyondViewportPageCount = 2`) where each page uses `graphicsLayer` with `pagerState` offset to compute `translationY` (symmetric vertical stagger), `scale` (`|q|=1 → 0.92f`, `|q|=2 → 0.84f`), `alpha` (hidden beyond distance 2), and `zIndex` (`derivedStateOf`); the focused card stays vertically centered with native Pager snap, and both first and last cards scroll to center.
+  - Stack cards use `PhantomGlassCard(overlapOpaqueBoost = true)` for an opaque dark surface (`#F6161822` >= 0.96, light theme surface 0.96) to prevent bleed-through; removed broken peek mode, negative spacing, and custom snap layout from `MessagesHomeTab`.
+- **Notes Tab Collapsible Todos + Smart Sort & Three Note Card Layout Modes (#241)**:
+  - Added `NoteCardLayoutMode` (`LIST` / `PEEK_TOP` / `CENTER`, key `note_card_layout_mode`) and `notes_todo_collapsed` (default collapsed) in `PhantomPrefs`; refactored `NotesTab` into "search bar + collapsible todo card + `weight(1f)` notes container".
+  - Tapping the todo card header (with 34dp chevron) toggles collapse with `AnimatedVisibility` and persistent state; when collapsed, hides filter chips and shows only the nearest upcoming non-overdue incomplete todo (or earliest overdue if all overdue, or a prompt if none).
+  - Rewrote `ReminderScheduler.sortTodosSmart`: incomplete non-overdue (`dueAt` ascending) → incomplete overdue (`dueAt` ascending) → completed (completion time descending), shared across AI Assistant and home-screen widget.
+  - Note card layout modes: Standard List; "Peek Top" (`LazyColumn` + `SnapLayoutInfoProvider(SnapPosition.Start)` card-deck stack with 52dp `graphicsLayer` offset and descending `zIndex`); "Center Stack" reusing `CenterFocusCardStack`; all sharing extracted `NoteCardItem` (6-line body cap and `overlapOpaqueBoost` in stack modes); notes container fills vertical space when todos are collapsed.
+- **Collapsible Sub-Sections in Settings (#242)**:
+  - "Per-App Throttle Overrides" and "Custom Quick Commands (N)" are now collapsible sub-sections (default collapsed with count summary), persisted via `PhantomPrefs.isSettingsSubCardExpanded`/`setSettingsSubCardExpanded` (`settings_expanded_subcards`) independently of main category cards (`KEY_COLLAPSED_CARDS`).
+- **Home Filter Chip Row Collapsible to Single Line (#245)**:
+  - When collapsed, `MessagesHomeTab` filter row shows only "All, Unread" plus the active filter/tag chip on a single non-wrapping line, toggled by a 34dp rounded chevron on the right and persisted via `home_filter_chips_collapsed`.
+
+**Changed & Fixed**
+- **Eliminated Square Black Corners Outside Floating Surfaces (#243)**:
+  - Added `PhantomDialog` in `Components.kt`: `Dialog(usePlatformDefaultWidth = false)` + `SideEffect` setting window background to `ColorDrawable(TRANSPARENT)` so the opaque dark surface is drawn solely by inner `PhantomFloatingSurface` (`clip → background → border`) with 100% wallpaper transparency outside rounded corners; migrated "Manual Auto-Note Rule" dialog from `AlertDialog` to `PhantomDialog`.
+  - Set `containerColor = Color.Transparent` on all 4 `ModalBottomSheet` instances (`MainActivity` message actions & tag picker, `ConversationScreen` message actions, `ChatScreen` todo reminder list), wrapping content in `PhantomFloatingSurface`.
+- **UI & Settings Model Live Sync (#244)**:
+  - Home/Notes layout modes and collapse states now observe `PhantomSettingsBus.version.collectAsState()` to re-read `PhantomPrefs`, taking effect immediately upon returning from Settings.
+- **On-Time Daily / Weekly Summary Triggers (#246)**:
+  - Switched `DailySummaryPolicy` / `WeeklySummaryPolicy` from `PeriodicWorkRequest` + `UPDATE` (which kept stale anchors after schedule edits) to `OneTimeWorkRequestBuilder` + `enqueueUniqueWork(REPLACE)` with exact `initialDelay` (60s floor) and `try/finally` self-rescheduling in Worker `doWork` to eliminate schedule drift.
+- **AI Assistant / Settings Search Support for New Settings (#247)**:
+  - Updated `SettingsCatalog` with `personal_home_card_layout` description/aliases and added `personal_notes_card_layout`, `personal_notes_todo_collapsed`, and `personal_home_filter_chips`; added `valueLabels` option-type numeric settings in `NumericSettingSpec` for `home_card_layout` (0=Standard List / 1=Center Stack) and `notes_card_layout` (0=Standard List / 1=Peek Top / 2=Center Stack), enabling AI Assistant to switch layout modes directly.
+- **Release Preparation (#247)**:
+  - Bumped version to `versionCode` 29, `versionName` `"2.11.0"`; synced `CHANGELOG.md` and `README.md` feature overview.
+
 ## [2.10.0] - 2026-11-18
 
 ### 新增
@@ -520,6 +939,36 @@
 - **發佈準備（#238）**：
   - 版號更新：`versionCode` 28、`versionName` `"2.10.0"`；復核全依賴為最新穩定版並同步 `CHANGELOG.md` 與 `README.md`。
 
+### English
+- **Tag Compare**: [`v2.9.0...v2.10.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.9.0...v2.10.0) (`versionCode = 28`, `versionName = "2.10.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Three-Way Home Card Layout Mode (#230)**:
+  - Added `HomeCardLayoutMode` in `PhantomPrefs` (`LIST` default / `PEEK_TOP` card-deck 52dp top peek / `PEEK_BOTTOM` folder-style bottom peek with scale), auto-migrating legacy `card_stack_effect_enabled` (`true → PEEK_BOTTOM`, `false → LIST`).
+  - Overlap modes use `MessagesHomeTab` `LazyColumn` + `rememberSnapFlingBehavior` + custom `SnapLayoutInfoProvider` controlling `zIndex` and `graphicsLayer` (`translationY`/`scaleX`) snap, with `PhantomGlassCard(overlapOpaqueBoost = true)` to prevent text bleed-through; removed `StackedAppCard` and legacy toggle, and added 3 side-by-side `FilterChip`s in `SettingsActivity` (wired to `SettingsCatalog` `personal_home_card_layout` and `PhantomSettingsBus`).
+- **Sender Avatar Extraction & Multi-Tier Display (#231)**:
+  - Upgraded Room to v16 (`MIGRATION_15_16`) with `sender_avatars` table; `NotificationCollectorService` extracts `MessagingStyle.Message.getSenderPerson()?.getIcon()` during `EXTRA_MESSAGES` parsing, downsamples to `<=96px` and compresses to `<=16KB` before upserting (auto-cleaning avatars older than 30 days).
+  - Added `SenderAvatarImage` (`LruCache` 128 items) in `AppIconHelper` with priority order `sender_avatars` → circular-cropped app icon → Material colored initial avatar; integrated into `AppThreadsScreen` (40dp) and `ConversationScreen` non-`isOwn` bubbles (28dp top-aligned).
+- **Self-Reply Echo Suppression & Self Display Names (#237)**:
+  - Added `own_reply_echo` table in `MIGRATION_15_16`; writes suppression rows after successful notification quick-reply or SMS fallback sends, and within 3 minutes `NotificationCollectorService` skips duplicate insertion and deletes the suppression row if normalized tail text matches exactly or `diceBigramSimilarity >= 0.9`.
+  - Added `my_display_names` in `PhantomPrefs` (default includes `"Eric Chiu"`, trimmed case-insensitive match) so group notification messages from self are marked `isOwn = true` / `isRead = true` and skip scam alerts; added editor entry in Settings "Messages & Notifications" and `SettingsCatalog` (`notif_my_display_names`).
+
+**Changed & Fixed**
+- **Fixed Floating Layer Black Background Bounds & Scrim (#229)**:
+  - Added `10.dp` vertical insets and `displayCutoutPadding()` to `ChatScreen` history drawer container so `20.dp` rounded corners sit cleanly inside the wallpaper; unified drawer scrim and `MainActivity` auto-note rule full-screen scrim to `0.45f`, and adjusted `PhantomFloatingSurface` dark surface to `0xEB12151E` (~92% opaque).
+- **Left-Aligned Notes Search Pill (#232)**:
+  - Removed `weight(1f)` from `PhantomSearchBarPill` on `notes_search_pill` in `MainActivity` `NotesTab`, making it compact left-aligned with `Spacer(weight(1f))` pushing the right `Tune` button (preserving 48dp touch target and safe-area spacing).
+- **Velocity-Aware Gesture for AI History Drawer (#233)**:
+  - Adjusted `ChatScreen` `AnchoredDraggableState` `positionalThreshold` to `0.35f` and `velocityThreshold` to `400.dp`; drag release uses `VelocityTracker` projection (`offset + velocity * 0.15s`) with `400.dp/s` or `25%` width threshold, keeping deferred lambda `offset {}` reads and zero regression on existing interactions.
+- **Strengthened Auto-Todo Similarity Deduplication (#234)**:
+  - Enhanced `normalizeForSimilarity` (NFKC, lowercase, punctuation/whitespace normalization) in `NotificationCollectorService.saveAutoMemoIfPresent`, added `findRecentPendingByAppLabel` in `TodoDao`, and applied `diceBigramSimilarity >= 0.9` to update existing todos in place and reschedule reminders/widgets without duplicates.
+- **Bottom Tab Bar Liquid Drop & Global Smoothness Optimization (#235, #236)**:
+  - Reused `Path` (`rewind()`) and cached `Stroke`/`Color`/`Brush.verticalGradient` in `LiquidGlassTabBar.kt`, tuned liquid spring to `stiffness = 600f, dampingRatio = 0.8f`, and switched `onHorizontalDrag` to synchronous state-driven updates to eliminate per-frame allocations and coroutine churn.
+  - Preserved tab state in `MainActivity` via `rememberSaveableStateHolder` (`SaveableStateProvider(selectedTab.name)`); completed codebase audit of `LazyColumn` `key`, `derivedStateOf`, `graphicsLayer` lambdas, `StatsDetailWidgetProvider` SQL `GROUP BY`, and `AppIconHelper` `LruCache`.
+- **Release Preparation (#238)**:
+  - Bumped version to `versionCode` 28, `versionName` `"2.10.0"`; verified all dependencies at latest stable versions and synced `CHANGELOG.md` and `README.md`.
+
 ## [2.9.0] - 2026-11-18
 
 ### 新增
@@ -540,6 +989,29 @@
   - `AiClient.buildSystemPrompt` 記事規則段強化為結構化條列（`id`／`App`／`寄件者`／`關鍵字`／`動作`）、明確語意命中定義與反例（如 Gogolook 驗證碼規則不誤殺銀行 OTP），快取 key 升至 `memoV4`，並更新記事規則面板說明文案。
 - **發佈準備（#227）**：
   - 版號更新：`versionCode` 27、`versionName` `"2.9.0"`；復核全依賴為最新穩定版並同步 `CHANGELOG.md` 與 `README.md`。
+
+### English
+- **Tag Compare**: [`v2.8.0...v2.9.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.8.0...v2.9.0) (`versionCode = 27`, `versionName = "2.9.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Live Settings Sync Bus `PhantomSettingsBus` (#225)**:
+  - Added `util/PhantomSettingsBus` (`MutableStateFlow<Long>` version counter + `notifyChanged()`); `SettingsCatalog.applyBooleanSetting` and `applyNumericSetting` emit change notifications immediately after persisting preferences.
+  - `MainActivity` (including `StatsTab`), `ChatScreen`, and `SettingsActivity` (including `FilterSettingsScreen` and sub-components `replyProxyEnabled`/`intelEnabled`/`updateAutoCheck`) collect the bus in real time so changes from AI chat or settings search reflect in UI immediately without re-entering or waiting for `ON_RESUME`.
+
+**Changed & Fixed**
+- **Fixed Opaque Floating Surface Background & Scrims (#222)**:
+  - Added `PhantomFloatingSurface` in `Components.kt` (`.clip(shape)` placed before `.background()`, dark `Color(0xF012151E)`, light `surface.copy(alpha = 0.95f)`, 1dp `outlineVariant` border, without `glassSurface`/blur; in-page glass cards unchanged).
+  - Migrated `ChatScreen` history drawer (`cornerRadius = 20.dp`, session card alpha raised to `0.95f` selected / `0.9f` unselected) and `MainActivity` auto-note rule overlay to `PhantomFloatingSurface`, raising full-screen scrims to `0.65f` (`0.65f * progress` for drawer); completed 4-point floating-layer audit.
+- **Fixed AI History Drawer Drag Performance (#223)**:
+  - Moved `ChatScreen` drawer offset to `Modifier.offset { IntOffset(...) }` lambda reading `drawerState.offset` in layout phase (with `NaN` fallback), scrim alpha to `Modifier.drawBehind` in draw phase, and visibility to `derivedStateOf`; `LaunchedEffect` uses `snapshotFlow` on `currentValue to isAnimationRunning`, eliminating per-frame recomposition during drag.
+- **Strengthened Message Card Stack Edge Contrast (#224)**:
+  - Changed `StackedAppCard` layer color to `lerp(surfaceVariant, onSurface, 0.25f)`, raised alpha to `0.55f` (layer 1) / `0.35f` (layer 2), adjusted scale to `0.96f` / `0.92f`, and added 1dp `outlineVariant.copy(alpha = 0.4f)` border on layer 1 for clear visibility across light/dark themes and custom wallpapers.
+- **Semantic Keyword-Only "Never Auto-Note" & Full-Chain Health Check (#226)**:
+  - Restricted literal `ACTION_NEVER` gate in `NotificationCollectorService.saveAutoMemoIfPresent` to rules with `packageName` or `sender`; keyword-only `ACTION_NEVER` rules are evaluated semantically by AI (covering live notifications and `PendingAiAnalysisWorker` offline queue).
+  - Structured the note-rule section in `AiClient.buildSystemPrompt` (`id`/`App`/`sender`/`keyword`/`action`) with explicit semantic hit definitions and counter-examples (e.g., Gogolook OTP rule does not block bank OTPs), bumped cache key to `memoV4`, and updated rule panel copy.
+- **Release Preparation (#227)**:
+  - Bumped version to `versionCode` 27, `versionName` `"2.9.0"`; verified all dependencies at latest stable versions and synced `CHANGELOG.md` and `README.md`.
 
 ## [2.8.0] - 2026-11-18
 
@@ -566,6 +1038,34 @@
   - 於 `MainTab.ASSISTANT` 內容層單一位置補上 `consumeWindowInsets(padding).imePadding()`（避免 double lift），並於鍵盤彈出且清單貼底時平滑捲動至最新訊息。
 - **發佈準備與依賴版本稽核（#220）**：
   - 版號更新：`versionCode` 26、`versionName` `"2.8.0"`；完成全依賴穩定版稽核並同步 `CHANGELOG.md` 與 `README.md`。
+
+### English
+- **Tag Compare**: [`v2.7.0...v2.8.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.7.0...v2.8.0) (`versionCode = 26`, `versionName = "2.8.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Message Card Stack Effect & Personalization Toggle (#212)**:
+  - Added `StackedAppCard` wrapper in `Components.kt` (keeping `ui/components/` untouched), drawing 0/1/2 `surfaceVariant` stack layers behind the main card based on message count (with subtle scroll parallax, 140ms tap collapse feedback, translucent muted state, and halved spacing in compact mode).
+  - Added "Message Card Stack Effect" `FluidSwitch` (`card_stack_effect_enabled`, default on) under Settings Personalization and registered it in `SettingsCatalog`.
+- **AI Assistant Side History Drawer & Tab-Switch Behavior Setting (#215, #216)**:
+  - Replaced the old `ModalBottomSheet` with a custom `AnchoredDraggableState` left drawer inside `ChatScreen` (swipe right to open, swipe left to close, `BackHandler` priority close, 40% scrim, and smooth `LazyColumn` scrolling).
+  - Added "Resume last conversation when switching to AI Assistant" toggle (`ai_chat_tab_behavior`, default starts new chat) under Settings "AI Assistant & Analysis" and registered it in `SettingsCatalog`.
+- **Floating Note Rules Panel & Semantic Keyword Matching (#217)**:
+  - Removed the inline rules section from `NotesTab`, replacing it with a top-right `Tune` button (48dp + rule count badge) opening a floating glass rules panel (retaining manual add, natural-language parse confirmation card, toggle, and delete).
+  - Upgraded `AiClient.buildSystemPrompt` to semantic category matching (`riskCache` key bumped `memoV2` → `memoV3`), while `MemoRuleEngine` keeps literal `contains` as offline/no-AI fallback.
+- **Stats Leaderboard, Stats Settings Category, Card Customization & 4 New Charts (#218)**:
+  - Added "Today's Top 5 App Message Volume Leaderboard" card (`todayCountsByApp` + relative bars) and a dedicated "Stats" category card in Settings after Personalization (12 individual card visibility toggles persisted in `PhantomPrefs` `StringSet` and registered in `SettingsCatalog`).
+  - Added 4 pure Compose `Canvas` charts: "7-Day Risk Trend Line", "Unread/Read Ratio Donut", "Per-App Share Bars Top 8", and "Todo Completion Rate Donut" (Room stays at v15 with zero migrations, adding only read-only `@Query` methods).
+- **Notes Home-Screen Widget (#219)**:
+  - Added `NotesWidgetProvider` (2x2, resizable to 4x2, `goAsync()`, `PendingIntent.FLAG_IMMUTABLE`, `updateAllIfChanged` diff updates), showing total count and latest 5 notes (pinned first, 36-char truncation + relative time), tapping opens Notes tab; synced across all `noteDao()` add/edit/delete/pin and auto-memo write paths.
+
+**Changed & Fixed**
+- **Fixed Favorites Row Badges & Unread Sort Order (#213)**:
+  - Added `unreadCountsByApp()` (excluding `isOwn`) in `MessageDao`; `AppGroupUi` and Favorites badges now use true unread counts (hidden at 0, `99+` above 99), fixing `HomeSortOrder.UNREAD` sorting.
+- **Fixed AI Assistant Input Bar Keyboard Overlap (#214)**:
+  - Applied `consumeWindowInsets(padding).imePadding()` at a single level in `MainTab.ASSISTANT` (preventing double lift) and smoothly scrolled to the latest message when keyboard opens at list bottom.
+- **Release Preparation & Dependency Version Audit (#220)**:
+  - Bumped version to `versionCode` 26, `versionName` `"2.8.0"`; audited all dependencies to latest stable versions and synced `CHANGELOG.md` and `README.md`.
 
 ## [2.7.0] - 2026-11-18
 
@@ -597,6 +1097,38 @@
   - 補齊全專案有文字輸入之 Activity（`SettingsActivity`、`AutoReplySettingsActivity`、`ApiKeySettingsActivity`、`AppThreadsActivity`、`MessageDetailActivity`、`TagManagementActivity`、`WhitelistManagementActivity`）`windowSoftInputMode="adjustResize"`；完成無障礙 insets、cutout、Room 完整性與 `NotifIds` 互斥稽核。
   - 版號更新：`versionCode` 25、`versionName` `"2.7.0"`。
 
+### English
+- **Tag Compare**: [`v2.6.0...v2.7.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.6.0...v2.7.0) (`versionCode = 25`, `versionName = "2.7.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Auto-Note / To-Do Rule Engine & Management UI (#203)**:
+  - Upgraded Room to v15 (single non-destructive `MIGRATION_14_15`), adding `memo_rules` table and `MemoRuleDao` supporting "Always Note (`note`)", "Always Todo (`todo`)", and "Never Auto-Add (`never`)" (`never > todo > note` priority).
+  - Added pure-function `MemoRuleEngine` running pre-check in `NotificationCollectorService.saveAutoMemoIfPresent` (covering live notifications and `PendingAiAnalysisWorker` offline analysis, 30s TTL cache invalidated on write/toggle/delete), injecting rules into `AiClient.buildSystemPrompt` and `memoRuleSig` into `riskCache` key.
+  - Extended `ChatScreen` `add_rule` with `kind="memo"` (confirmation card to DB); added "Auto-Note Rules" management card in Notes tab (list, toggle, delete, manual add dialog, and natural-language `AiClient.parseMemoRule` + confirmation card).
+- **Noted/Todoed Home Filters, Todo Source Backtracking & 3-Scope Exclusion (#204)**:
+  - Added `Noted` and `Todoed` filters to `MessageFilter`, `ALL_OPTIONAL_HOME_FILTERS`, and Settings custom filter list; added 12dp noted/todoed icons on `MessageCard`.
+  - Added "View Source Message" button (jumps to `MessageDetailActivity`) on Notes tab todo rows and search result todo cards; added "Never Auto-Note/Todo" entry on `MessageDetailActivity` and auto-note long press with a 3-scope dialog (sender / app / keyword writing `memo_rules` `never` rules).
+- **Right-Aligned Self-Reply Bubbles & Persistence (#207)**:
+  - Added `isOwn` column to `messages` (default `0` in `MIGRATION_14_15`); writes `isOwn = true`, `sender = "Me"` records after successful replies in `ConversationScreen` (notification quick reply & SMS fallback), `ChatScreen` `reply_message`, and `ReplyProxyReceiver`.
+  - `ChatBubbleItem` renders `isOwn` as right-aligned 78%-width tinted bubbles (`primary` 0.16 alpha, hiding risk dot, AI tags, and OTP extraction); excluded `isOwn = 0` across all stats counts, unread counts, risk distribution, ScamCenter, daily/weekly summary excerpts, and dedup queries.
+- **Onboarding Tour Expanded to 18 Steps (#209)**:
+  - Expanded Home tour from 15 to 18 steps (`KEY_ONBOARDING_STEP_V2` `coerceIn(1, 18)`), updated `SEARCH_PILL` to "Pull-Down Search" (anchored to top handle), added "Quick Reply", "Auto-Note Rules", and "Noted/Todoed & Source Backtracking" steps, and updated `FILTER_CHIPS` copy for fixed headers; existing completed users are not re-triggered.
+
+**Changed & Fixed**
+- **Fixed Home Header & Independently Scrolling Message List (#206)**:
+  - Refactored `MessagesHomeTab` to an outer `Column` fixed header (offline banner → stats card → category filter row → favorites row) with `LazyColumn(weight(1f))` independently scrolling message list, preserving `listState` and pagination.
+- **Top Pull-Down Search Handle & Stats Card Toolbar Integration (#205)**:
+  - Removed top search pill and toolbar from Home; moved refresh/settings buttons into the right column of the stats card (48dp touch targets); added `PhantomPullSearchHandle` (22dp full-width, centered 4dp×120dp pill supporting `anchoredDraggable` pull-down and tap to open full-screen search, auto-hidden on AI Assistant tab).
+- **Fixed Conversation Page IME Over-Lifting (#207)**:
+  - Added `android:windowSoftInputMode="adjustResize"` for `MainActivity` and `ConversationActivity` in `AndroidManifest.xml`, fixing double lift from `adjustPan` + `.imePadding()`, smoothly scrolling to latest message only when at list bottom.
+- **Fixed Search Page & Codebase Text Contrast (#208)**:
+  - Replaced residual theme-blind `Color.Gray`/`Color.Red` in `MessageCard`, `MessageDetailActivity`, `ScamCenterActivity`, and `SettingsActivity` with `MaterialTheme.colorScheme.onSurfaceVariant`/`error`; explicitly specified `onSurface` for `ChatBubbleItem` and `MessageCard` body text.
+  - Set `PhantomFullScreenSearchOverlay` background to opaque theme color (`alpha = 1.0`); raised `CardBgMode.TRANSPARENT` slider floor to 15% (auto-clamping stored values) and glass-off/battery-saver fallback floor to 0.35.
+- **Global Health Check, OEM Compatibility Audit & Release Preparation (#210)**:
+  - Added `windowSoftInputMode="adjustResize"` to all text-input Activities (`SettingsActivity`, `AutoReplySettingsActivity`, `ApiKeySettingsActivity`, `AppThreadsActivity`, `MessageDetailActivity`, `TagManagementActivity`, `WhitelistManagementActivity`); audited accessibility insets, cutouts, Room integrity, and `NotifIds` mutual exclusion.
+  - Bumped version to `versionCode` 25, `versionName` `"2.7.0"`.
+
 ## [2.6.0] - 2026-11-18
 
 ### 新增
@@ -626,6 +1158,37 @@
   - `TodoDao` 新增 `observeAll(): Flow<List<TodoEntity>>`，`MainActivity` 記事分頁與 `ChatScreen` 待辦選單改採 `collectAsState`＋智慧排序即時觀測，桌面小工具刪除／完成／新增後 App 內立即同步；`MessageDetailActivity` 補齊 `ON_RESUME` 刷新 `remindAt` 顯示。
 - **版號更新**：`versionCode` 24、`versionName` `"2.6.0"`。
 
+### English
+- **Tag Compare**: [`v2.5.0...v2.6.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.5.0...v2.6.0) (`versionCode = 24`, `versionName = "2.6.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Bottom Quick-Reply Input Bar on Conversation Detail Page (#197)**:
+  - Added a persistent reply input box at the bottom of `ConversationScreen` (`OutlinedTextField` + send button, with `navigationBarsPadding().imePadding()`, auto-scroll to latest message on keyboard open, auto-hidden in multi-select mode).
+  - Added optional `conversationKey` parameter to `NotificationCollectorService.sendReplyToNotification`, prioritizing `MessagingStyle` `EXTRA_CONVERSATION_TITLE` (then `EXTRA_TITLE`, then same-package fallback); calls `ReplyProxyManager.startOrRefreshSession` on success to keep continuous notification-shade reply; SMS apps fall back to `SmsManager`, all protected by `try/catch` + `PhantomReply` logcat.
+- **Dedicated Whitelist Management Page & Collapse Persistence (#199)**:
+  - Added `WhitelistManagementActivity` (`android:exported="false"`, using `PhantomCheckTheme` + `PhantomBackgroundBox` and top-bar back button), moving grouped whitelist UI to a standalone page; Settings data section simplified to a "Whitelist Management (N)" button.
+  - Added `whitelist_collapsed_groups` `StringSet` in `PhantomPrefs` to persist per-app group collapse states across navigation and restarts (default all expanded on first run); `SettingsCatalog` `whitelist_management` points to the new Activity.
+
+**Changed & Fixed**
+- **Global Dependencies, Build Toolchain & Target SDK Upgrade (#200)**:
+  - Upgraded Gradle Wrapper to `9.9.1`, AGP to `9.5.1` (using AGP 9 built-in Kotlin, removing `org.jetbrains.kotlin.android` and `kotlinOptions`), Kotlin Compose plugin to `2.4.21`, `compileSdk` to `37` (required by `core-ktx 1.19.1` / `Compose BOM 2026.09.00` / `lifecycle 2.11.0`), and `targetSdk` to `36` (Android 16).
+  - Adopted Jetpack Compose BOM `2026.09.00` (Material 3 `1.4.0`), upgraded `core-ktx` `1.19.1`, `activity-compose` `1.13.0`, `lifecycle-runtime-ktx` `2.11.0`, `work-runtime-ktx` `2.12.0`, `Retrofit` `3.0.0`, and `Room` `2.8.5` (migrated `kapt` → `KSP 2.3.14`).
+  - Upgraded `Haze` to `2.1.0` (`haze` + `haze-blur`), rewriting `Glass.kt` to `Modifier.hazeBlur` + `HazeInput.Sources` + custom `HazeBlurStyle` (replacing discontinued `haze-materials`), preserving all three card surface modes, battery-saver degradation, and API < S fallback.
+  - Added Rule 6 to `AGENTS.md` release checklist: dependencies must be checked and upgraded to latest stable versions on every release.
+- **Fixed Full-Screen Search Overlay Z-Order (#193)**:
+  - Moved `PhantomFullScreenSearchOverlay` in `ConversationScreen` and `AppThreadsScreen` outside `Scaffold` into an outer `Box` wrapping the entire `Scaffold` (matching `MainActivity`), fixing top-bar overlap over the search overlay.
+- **Unified Mini Glass Search Pill & Toolbar Layout (#194)**:
+  - Standardized `PhantomSearchBarPill` to a 36dp visual height pill (left magnifier + "Search" text, >=48dp outer accessibility touch target), moved `MainActivity` refresh and settings gear buttons below the search pill aligned right, unifying search entry visuals across all 4 pages.
+- **Transparent Background for Swipe-Left Delete Row (#195)**:
+  - Removed full-width opaque background from `SwipeToRevealRow` content layer; outer container is now fully transparent and controls right action button `alpha` by swipe progress so custom wallpapers remain visible behind message bubbles.
+- **Crash-Proofed Reply Chain & AI Assistant Actions (#196)**:
+  - Changed `ReplyProxyManager` reply `PendingIntent` to `FLAG_MUTABLE` (per Android `RemoteInput` spec; dismiss/timeout actions remain `FLAG_IMMUTABLE`), and wrapped `ensureChannel`/notification build/scheduling in `try/catch` + `PhantomReply` logcat.
+  - Added `try/catch` to `ReplyProxyReceiver` broadcast and `goAsync()` coroutine; added `try/catch` + `PhantomChatAction` logcat to `ChatScreen` action coroutines and replaced `messages.first()` with `firstOrNull()`.
+- **Todo Flow Real-Time Sync Audit (#198)**:
+  - Added `observeAll(): Flow<List<TodoEntity>>` to `TodoDao`; `MainActivity` Notes tab and `ChatScreen` todo menu now observe via `collectAsState` + smart sort so widget delete/complete/add syncs immediately in-app; added `ON_RESUME` refresh for `remindAt` in `MessageDetailActivity`.
+- **Version Bump**: `versionCode` 24, `versionName` `"2.6.0"`.
+
 ## [2.5.0] - 2026-11-18
 
 ### 新增
@@ -653,6 +1216,36 @@
   - `ReminderScheduler.cancel`／`cancelTodo` 同步呼叫 `NotificationManager.cancel` 清除已發出之 `NotifIds.reminder`／`NotifIds.todoReminder`，並於 `ReminderWidgetProvider` 刪除 `TYPE_MSG` 提醒時補齊呼叫 `ReminderScheduler.cancel`；取消勾選（`done = false`）行為維持不變。
   - `widget_reminder.xml` 動作按鈕放大至 `16sp` bold＋`paddingHorizontal="8dp"`＋`paddingVertical="6dp"`＋`minWidth="28dp"`／`minHeight="32dp"` 與 `?android:attr/selectableItemBackground` 點擊回饋，`reminder_widget_info.xml`（含 `xml-v31`）`minHeight` 調整為 `72dp`。
 - **版號更新**：`versionCode` 23、`versionName` `"2.5.0"`。
+
+### English
+- **Tag Compare**: [`v2.4.0...v2.5.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.4.0...v2.5.0) (`versionCode = 23`, `versionName = "2.5.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Continuous Quick Reply from Notification Shade (#183)**:
+  - Added `ReplyProxyManager` and `ReplyProxyReceiver` (`android:exported="false"`), creating notification channel `phantom_reply_proxy` (`IMPORTANCE_DEFAULT`, "Quick Reply Conversations") and dedicated `NotifIds` range `120000..129999` (`120000 + Math.floorMod(sessionHash, 10000)`).
+  - After `ChatScreen` `reply_message` succeeds, launches/updates a `MessagingStyle` proxy notification (preserving original messages + "Me" replies up to 8 messages; in-memory LRU up to 8 sessions) with "Reply" (`RemoteInput` resultKey `proxy_reply`) and "Dismiss" actions, swipe-dismiss (`deleteIntent`), and `AlarmManager` idle auto-dismiss (15 / 30 / 60 min or never, default 30 min).
+  - When `ReplyProxyReceiver` fails to send (including SMS / `^09\d{8}$` `SmsManager` fallback), honestly appends an error message to the conversation thread instead of faking success; added `reply_proxy_enabled` toggle (default on) and timeout option in Settings "Messages & Notifications", registered in `SettingsCatalog` (`notif_reply_proxy`, `notif_reply_proxy_timeout`).
+- **Pre-AI Duplicate Notification Folding (#185)**:
+  - Added pure-function `NotificationFoldUtil` (without modifying DB or UI lists) folding high-frequency duplicate notifications sharing `packageName`, `sender`, `conversationKey`, `riskLabel`, 24h chained window, and exact `normalized` or Dice bigram >= 0.85 into `[AppLabel] Title (HH:mm–HH:mm repeated N times)` (`N = 1` keeps original format).
+  - Safeguards: `scam`/`suspicious` high-risk messages are never folded; messages containing URLs or differing numeric sequences (order IDs / amounts / OTPs / phone numbers) are not folded. Applied to `ChatScreen` RAG context, `DailySummaryPolicy.buildSummaryExcerpts`, `WeeklySummaryPolicy` excerpts, and `MessageDetailActivity` `senderHistorySummary`.
+- **Auto Update Check on App Launch (#186)**:
+  - `MainActivity` `ON_RESUME` silently checks GitHub's latest release at most once per day (`update_last_check_day`, silent on offline/failure); when a new version is found, posts a once-per-version-per-day notification on channel `app_updates` (`IMPORTANCE_DEFAULT`, `NotifIds.UPDATE_AVAILABLE = 1007`) and shows a foreground `AlertDialog` ("Go to Download" → Settings About + "Later", with opt-out hint).
+  - Added `update_auto_check_enabled` toggle (default on) in Settings About and registered `update_auto_check` in `SettingsCatalog`; manual check and download/install flows unchanged.
+- **Smart Auto-Note / To-Do Routing (#188)**:
+  - Extended `AiClient` single and batch analysis schemas with `memo_type` (`"note" | "todo"`, lenient fallback `"note"`) and `todo_due` (`"yyyy-MM-dd HH:mm"` or empty string), adding `memoV2` flag to `riskCache` key.
+  - `NotificationCollectorService.saveAutoMemoIfPresent` routes by `memo_type`: `todo` creates `TodoEntity` (`priority = 1`, `dueAt` from `todo_due` or fallback `msg.timestamp + 2h`), deduplicates before insert via `TodoDao` `@Query` (Room stays at v14 without migration) on `relatedMessageId` and incomplete same-title within 7 days, and triggers `ReminderScheduler.scheduleTodo` and `ReminderWidgetProvider.updateAllIfChanged`.
+  - Extracted `ClientTimeParser` (including `NaturalTimeParseResult`) shared by `ChatScreen` and auto-todo.
+
+**Changed & Fixed**
+- **Fixed Message Card Black Background Overflow on Conversation Page (#184)**:
+  - Fixed `.clip(shape)` ordering in `ui/Components.kt` `PhantomGlassCard` glass branch to `.glassSurface(...)` followed by `.clip(shape)` before drawing `overlayColor`; aligned all branches of `phantomGlassSurface` (including `overlayColor == null` and API < S) to clip with a single `remember(cornerRadius)` `RoundedCornerShape` after `glassSurface` (`ui/components/` untouched).
+- **Duplicate Auto-Note Deduplication (#187)**:
+  - Added a 7-day window `@Query` in `NoteDao` (Room version unchanged); `saveAutoMemoIfPresent` checks same-`relatedAppLabel` auto-notes within 7 days (exact normalized or Dice bigram >= 0.9) and updates existing notes in place, strictly protecting `pinned` notes and leaving manual notes untouched.
+- **Widget Notification Clear Sync & Enlarged Action Buttons (#189)**:
+  - `ReminderScheduler.cancel`/`cancelTodo` now also calls `NotificationManager.cancel` for `NotifIds.reminder`/`NotifIds.todoReminder`, and `ReminderWidgetProvider` calls `ReminderScheduler.cancel` when deleting `TYPE_MSG` reminders; unchecking (`done = false`) unchanged.
+  - Enlarged `widget_reminder.xml` action buttons to `16sp` bold + `paddingHorizontal="8dp"` + `paddingVertical="6dp"` + `minWidth="28dp"`/`minHeight="32dp"` with `?android:attr/selectableItemBackground`, and adjusted `reminder_widget_info.xml` (including `xml-v31`) `minHeight` to `72dp`.
+- **Version Bump**: `versionCode` 23, `versionName` `"2.5.0"`.
 
 ## [2.4.0] - 2026-11-17
 
@@ -685,6 +1278,39 @@
   - 移除 `Onboarding.kt` 非必要步驟之連鎖自動跳步（僅權限步驟單次自動跳過，缺目標改提示並手動下一步），新增依洞區中心動態上下避讓之字卡定位；主頁教學擴充至 15 步（納入 `SEARCH_PILL`），設定頁導覽由 6 步擴充至 8 步（納入白名單管理、卡片底色、分用途模型與省 token 設定）。
 - **版號更新**：`versionCode` 22、`versionName` `"2.4.0"`。
 
+### English
+- **Tag Compare**: [`v2.3.1...v2.4.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.3.1...v2.4.0) (`versionCode = 22`, `versionName = "2.4.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **AI 5-in-1 Token Saver & Vision Model Fix (#174, #173)**:
+  - `ChatRequest` supports `prompt_cache_key` (stable session key for chat, fixed key for analysis); analysis system prompts and tag/rule lists are deterministically sorted and placed byte-identically at the front; logs `usage.prompt_tokens_details.cached_tokens`.
+  - Refactored `ChatScreen.buildRagSystemPrompt` into a "static prefix (system prompt + rules + full context) + dynamic tail (time, current query)" with RAG messages ordered oldest-to-newest for prefix cache hits; added incremental context summary cache (300–500 tokens, invalidated on day change / RAG limit change).
+  - Added "Dual-Model Confidence Routing" (`ai_dual_routing_enabled` default on, `ai_cheap_model` default `mistral-small-2603`, in `SettingsCatalog`): calls cheap model first; adopts risk < 30 or > 70 directly, escalates 30–70 to primary model and takes higher risk (without double-deducting quota).
+  - Output conciseness & vision token optimization: added concise-reply rules to Chat system prompt; downsampled image encoding and dynamically estimated `imageTokenOverhead` from actual dimensions; deduplicated high-risk excerpts in daily/weekly summaries, backfilled unanalyzed messages, and capped tokens.
+  - Fixed `AiClient.isVisionModelSupported` (#173): switched `knownTextOnly` to an exact list so `mistral-small-2603` (Mistral Small 4 built-in vision) is no longer blocked.
+- **Card Surface Mode Settings (#175)**:
+  - Added `CardBgMode` (Follow Glass Strength / Transparent Mode 0–100% slider / Dark Surface) under Appearance Settings and registered `card_bg_mode` and `card_bg_transparent_alpha` in `SettingsCatalog`.
+- **Comprehensive To-Do Enhancements (#176)**:
+  - Upgraded `AppDatabase` to v14 (`MIGRATION_13_14` registered in `AppDatabaseHolder`); added `completedAt`, `priority` (Low/Medium/High), `notes`, and `repeatRule` (Daily/Weekly, auto-spawning next occurrence and rescheduling reminder on completion) to `TodoEntity`.
+  - Notes tab now supports overdue color-coding with "Overdue X days" / "Due Today" badges, filters (All / Incomplete / Completed / Overdue), smart sorting (overdue > due date > priority, synced with widget), manual "+" add, and full `TodoEditorDialog` (AI-created todos are also editable).
+- **Whitelist Management UI (#177)**:
+  - Added a collapsible app-grouped "Whitelist Management" card in Settings (showing sender, app icon, mode, timestamp, duplicate-preventing manual add, enable toggle, swipe/button delete confirmation, and empty state), registered `whitelist_management` in `SettingsCatalog`, and unified all changes to call `invalidateRuleCaches()`.
+- **Home-Screen 2x1 To-Do Widget Interactive Buttons (#179)**:
+  - Added per-row "Done ✓" (todos only, writes `isDone` + `completedAt`), "Edit ✎" (jumps to Notes tab and opens editor dialog), and "Delete ✕" buttons on `ReminderWidgetProvider` using `PendingIntent.getBroadcast` (request code includes `itemId` to prevent multi-instance collisions) + `goAsync()` async writes and immediate refresh (snapshot key includes all item IDs).
+- **Unified Pull-Down Glass Search Pill & Full-Screen Search (#180)**:
+  - Implemented `PhantomSearchBarPill` and `PhantomFullScreenSearchOverlay` in `ui/Components.kt` (fade+slide animation, auto-focus, IME inset, live `LazyColumn` search, retained last query, AI semantic search quota entry, and >=48dp accessibility touch targets), replacing search bars across Messages, App Threads, Conversation, and Notes tabs.
+
+**Changed & Fixed**
+- **Fixed Card Black Background Overflow (#175)**:
+  - Unified `phantomGlassSurface` and `PhantomGlassCard` in `ui/Components.kt` to share a single `RoundedCornerShape` instance for background and border clipping, and fixed double dark-background stacking on API < S fallback (`ui/components/` directory untouched).
+- **Whitelist Injection & Comprehensive AI Feature Health Check (#177, #178)**:
+  - Permanently injected structured whitelist into `ChatScreen.buildRagSystemPrompt` static prefix (grouped by app when > 20 entries), added `whitelist_delete` confirmation card action and DB read-back verification.
+  - Audited all 7 `AiPurpose`s: `CHAT` supplemented with todos (overdue/completed), memos, VIP senders, muted apps, and reminder keyword context; `DEEP_ANALYSIS` supplemented with sender history and risk summary; unified all AI write actions (todos, whitelist, rules, tags) to "execute → read-back verify → honest success/failure report".
+- **Onboarding & Settings Tour Fixes & Expansion (#181)**:
+  - Removed chained auto-skipping of non-permission steps in `Onboarding.kt` (only permission step auto-skips once; missing targets prompt manual next), added dynamic top/bottom card avoidance around spotlight hole; expanded Home tour to 15 steps (including `SEARCH_PILL`) and Settings tour from 6 to 8 steps (including whitelist, card surface, per-purpose models, and token saver).
+- **Version Bump**: `versionCode` 22, `versionName` `"2.4.0"`.
+
 ## [2.3.1] - 2026-11-17
 
 ### 變更與修正
@@ -700,6 +1326,24 @@
   - 主頁新手教學 `OnboardingStep` 由 10 步擴充為 14 步（新增「記事與自動備忘錄」、「統計、摘要與離線佇列」、「待辦提醒與批次管理」、「背景圖片、外觀與分用途模型」），同步更新 `PhantomPrefs.KEY_ONBOARDING_STEP_V2` 上限（`1..14`）、`OnboardingTargets`（納入 `NOTES_TAB`、`STATS_TAB`）與目標缺失自動跳過防護（含防重入與版面穩定延遲）；修正設定頁「重新播放新手教學」同步重置步驟索引為 1；已完成教學的舊用戶不被重新打擾。
   - 全面校對 4 Tab（「訊息 / AI 助手 / 記事 / 統計」）教學文案，並更新設定頁 6 步導覽（`AI`、`NOTIF`、`APPEARANCE`）納入 v2.3 新功能。
 - **版號更新**：`versionCode` 21、`versionName` `"2.3.1"`。
+
+### English
+- **Tag Compare**: [`v2.3.0...v2.3.1`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.3.0...v2.3.1) (`versionCode = 21`, `versionName = "2.3.1"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Changed & Fixed**
+- **AI Tag Dispatch Parse Tolerance & Failure Notification Improvements (#169)**:
+  - Strengthened fault tolerance in `AiClient.parseAnalysisJson` and `parseBatchAnalysisJson`: strips Markdown fences → string/escape-safe balanced-brace extraction (taking first object with `risk_score`/`risk`) → lenient preprocessing (full-width colon/comma outside strings, trailing commas) only after strict Gson fails, retaining regex fallback and `PhantomAiParse` logcat diagnostics (reason and length only, never message text).
+  - Strengthened `buildSystemPrompt` ("output only one JSON object, no fences or extra text"); OpenAI-compatible endpoints supporting `json_object` (OpenAI/Mistral/Groq/DeepSeek/Gemini) attach `response_format` for single analysis; `analyzeMessageOrThrow` and `testAutoTagDispatch` auto-retry once with a corrective prompt on parse failure (without double-charging daily quota), and test screen shows first 200 chars of raw response on failure.
+  - Changed `NotificationCollectorService` dispatch failure notifications to a 24-hour sliding window (5 failures trigger one `IMPORTANCE_LOW` + `setOnlyAlertOnce` notification with 6h cooldown, single success does not reset count, respects DND); added `ai_tag_failure_notif_enabled` toggle (default on in `PhantomPrefs`, toggleable in Settings AI card, registered in `SettingsCatalog`).
+- **Fixed Background Page Black Screen & Image Picker Reliability (#170)**:
+  - Persisted `pickingLayer` (`layer.name`) and `bgStatusMsg` in `SettingsActivity` via `rememberSaveable` to survive rotation/process recreation during picking; shows explicit prompt instead of silently dropping when `uri` is non-null but layer is lost.
+  - `PhantomBackgroundBox` explicitly draws `MaterialTheme.colorScheme.background` when `bgFile == null`, loading, or decode fails (no transparent black bleed); `BackgroundImageHelper.loadBackgroundBitmap` logs decode failures to `PhantomBackground` logcat.
+  - Added `ActivityResultContracts.OpenDocument("image/*")` fallback button when Photo Picker fails (non-cancellation) or is unavailable, copying downsampled image into internal storage.
+- **Onboarding Tour Expansion & Health Check (#171)**:
+  - Expanded Home `OnboardingStep` from 10 to 14 steps (adding "Notes & Auto-Memo", "Stats, Summaries & Offline Queue", "Todo Reminders & Batch Management", "Backgrounds, Appearance & Per-Purpose Models"), updated `PhantomPrefs.KEY_ONBOARDING_STEP_V2` (`1..14`), `OnboardingTargets` (`NOTES_TAB`, `STATS_TAB`), and missing-target auto-skip guard; fixed Settings "Replay Onboarding" to reset step index to 1 without re-triggering completed users.
+  - Proofread all 4 Tab ("Messages / AI Assistant / Notes / Stats") tour copy and updated the 6-step Settings tour (`AI`, `NOTIF`, `APPEARANCE`) for v2.3 features.
+- **Version Bump**: `versionCode` 21, `versionName` `"2.3.1"`.
 
 ## [2.3.0] - 2026-11-17
 
@@ -724,6 +1368,31 @@
   - 移除 `MainActivity` 訊息頁右上角「清除已讀」按鈕與確認對話框，移至設定頁「訊息與通知」卡片，並於 `SettingsCatalog` 新增 `notif_clear_read` 與同步 `data_export_clear` 描述。
 - **版號更新**：`versionCode` 20、`versionName` `"2.3.0"`。
 
+### English
+- **Tag Compare**: [`v2.2.0...v2.3.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.2.0...v2.3.0) (`versionCode = 20`, `versionName = "2.3.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Per-Purpose AI Model Routing (#163)**:
+  - Supports binding independent AI Profiles or "Follow Default" for 6 AI purposes (`ai_chat`, `ai_message_analysis`, `ai_daily_summary`, `ai_weekly_summary`, `ai_deep_analysis`, `ai_settings_search`; auto-memo follows per-message risk analysis model); `ApiKeySettingsActivity` added a Purpose Models card (6 dropdown rows with per-row connection test).
+  - `ChatScreen` model switcher now switches only `ai_chat` without altering the global default Provider; added 6 entries (`ai_model_chat`, etc.) to `SettingsCatalog`.
+- **Offline AI Retry Queue & Auto-Retry (#164)**:
+  - Upgraded `AppDatabase` to v13 (`MIGRATION_12_13`) adding `pending_ai_analysis` table; enqueues only transient failures (`UnknownHostException`, `SocketTimeoutException`, `ConnectException`, HTTP 5xx, exhausted 429), honestly skipping 401/403/404/413.
+  - Added WorkManager `PendingAiAnalysisWorker` (`NetworkType.CONNECTED`, exponential backoff, unique work `ai_pending_analysis_worker`), retrying up to 20 messages per round and abandoning at `attempts >= 3` with notification; added low-intrusion notification (`NotifIds.AI_OFFLINE_QUEUE`), `AnimatedVisibility` queue banner at top of Messages tab (Pause / Resume / Retry Now), and `ai_offline_retry_enabled` toggle in Settings (default on; disabling clears queue).
+- **"Notes" Tab & AI Auto-Memo (#166)**:
+  - Replaced "Scam Alerts" main tab with "Notes" (keeping 4 Tabs), integrating todos (shared `todos` table) and manual/auto note CRUD, pinning, and color tags (`notes` table included in `MIGRATION_12_13`); Scam Alert Center moved to entry points in Messages risk card and Stats Top 5 card.
+  - Added `ai_auto_memo_enabled` toggle (default off) in Settings; when enabled, `AiClient` generates a <=40-char summary during risk analysis and writes deduplicated auto-memos by `relatedMessageId` (`riskCache` key includes `autoMemo` flag).
+- **Customizable AI Analysis Length Threshold (#167)**:
+  - `PhantomPrefs.getAiMinTriggerLength` (1–30 chars, default 10) replaces hardcoded threshold in `NotificationCollectorService`; added slider in Settings AI card and registered `ai_min_trigger_length` in `SettingsCatalog` (adjustable via AI chat).
+
+**Changed & Fixed**
+- **Dual Fix for Image Vision Upload & Background Image Picker (#162)**:
+  - `ChatScreen.encodeImageUriToDataUri` switched to bounds-first `inSampleSize` downsampling (longest edge <= 1024px, retrying once with doubled `inSampleSize` on OOM), detailed honest error reporting, and `PhantomImage` logging; updated `AiClient.isVisionModelSupported` (added Groq `qwen/qwen3.8-27b` and moved `deepseek` to text-only list).
+  - Fixed `BackgroundImageHelper.saveBackgroundFromUri` always failing due to `inJustDecodeBounds = true` returning `null` in `use { ... } ?: return failure`, restoring all three background layers (Global / AI Chat / Conversation).
+- **Moved "Clear Read" Entry to Settings (#165)**:
+  - Removed "Clear Read" button and confirmation dialog from top-right of `MainActivity` Messages tab, moved to Settings "Messages & Notifications" card, and added `notif_clear_read` in `SettingsCatalog` alongside updated `data_export_clear` description.
+- **Version Bump**: `versionCode` 20, `versionName` `"2.3.0"`.
+
 ## [2.2.0] - 2026-11-17
 
 ### 新增
@@ -744,6 +1413,28 @@
   - `TagRuleEngine` 與 `NotificationCollectorService` 熱路徑 `Regex` 預先編譯為常數；並完成 `ReminderWidgetProvider` 純待辦點擊 fallback、`HeartbeatPolicy` `UPDATE` 策略、`PhantomPrefs` 節流快取、7 日 SQL 聚合、`AppIconHelper` 共用快取與 `BootReceiver` 同 ID 覆蓋驗證。
 - **版號更新**：`versionCode` 19、`versionName` `"2.2.0"`。
 
+### English
+- **Tag Compare**: [`v2.1.0...v2.2.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.1.0...v2.2.0) (`versionCode = 19`, `versionName = "2.2.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **About Card Update Checker & GitHub APK Download (#157)**:
+  - Updated About card author to "Author: Hwanshen (幻神)" and added manual "Check for Updates" button (`GET https://api.github.com/repos/eric11yothelast-Hwanshen/PhantomCheck/releases/latest`, `User-Agent: PhantomCheck-Android`, 10s timeout, semantic comparison with runtime `versionName`; honestly displays errors with "Open GitHub" fallback on offline/timeout/API failure).
+  - When a new release is detected, supports downloading `app-release-X.Y.Z.apk` via `DownloadManager` to app-specific `Download/`, launching system installer via `FileProvider` (`updates` `external-files-path` in `file_paths.xml`) + `ACTION_VIEW` (`application/vnd.android.package-archive` + `FLAG_GRANT_READ_URI_PERMISSION`); declared `REQUEST_INSTALL_PACKAGES` in `AndroidManifest.xml`, checks `canRequestPackageInstalls()` and guides to `ACTION_MANAGE_UNKNOWN_APP_SOURCES`; expanded `SettingsCatalog` `about_section` aliases.
+- **3-Layer Custom Background Images & Visual Fine-Tuning Sliders (#159)**:
+  - Added 3-layer "Background Image" customization in Personalization (Global / AI Chat / Conversation, falling back to Global when unset) using `PickVisualMedia`, power-of-2 `inSampleSize` downsampling to <= screen resolution, and JPEG 85 compression to `filesDir/backgrounds/{global|chat|conversation}.jpg`; `BackgroundImageHelper` uses a single `LruCache(1)` released in `PhantomApplication.onTrimMemory`.
+  - Added page-level `PhantomBackgroundBox` wrapper in `ui/Components.kt` (`ui/components/` untouched) rendering `Image(ContentScale.Crop)` + dark readability scrim (default 35% day / 60% night, 0–100% slider), pixel-identical to v2.1.0 when unset; added "Glass Card Strength" slider (0–100%, default 0%, Android < 12 fallback unchanged) and registered `bg_global`, `bg_chat`, `bg_conversation`, `bg_scrim`, `glass_strength` in `SettingsCatalog`.
+- **AI Assistant Action Capabilities Expansion (#160)**:
+  - Added 9 actions on the existing `parseAllChatActions` / `KNOWN_CHAT_ACTIONS` / confirmation-card queue / `sanitizeForPrompt` framework: read-only `search_messages` (`MessageDao.searchFiltered` defaulting to last 2 days with up to 5 clickable cards opening `MessageDetailActivity`) and `todo_list` (Markdown table); plus confirmation-gated mutating actions `todo_done`, `todo_delete`, `todo_edit` (with fuzzy matching, honest 0/multi-candidate reporting, `ReminderScheduler` reschedule, and widget refresh), `vip_pin` (`PhantomPrefs.toggleVipSender`), `mute_app` (mute list add/remove with candidate hints), `mark_read` (`today`/`app`/`all`, strictly excluding `riskLabel = 'scam'` and refreshing `StatsForegroundService`), and `export_messages` (reusing `MessageExporter.exportToDownloads` CSV export with formula-injection protection).
+
+**Changed & Fixed**
+- **Global Codebase Health Check & Performance Fixes (#158)**:
+  - Fixed `ChatScreen` `pendingTodoQueue` calling `firstOrNull()` before filtering by `sessionId` (which caused cross-session todo confirmation cards to get stuck); now filters `currentSessionId` first and removes processed items by object reference.
+  - Added 30s TTL cache `cachedActiveUserTagRules` in `NotificationCollectorService` cleared by `invalidateRuleCaches()`, and ensured `ChatScreen`, `TagManagementActivity`, `MessageDetailActivity`, `ScamCenterActivity`, and `RiskActionWidgetProvider` call `invalidateRuleCaches()` after writing/toggling/deleting `ai_rules` or `user_tag_rules`.
+  - `ChatScreen` `tag_rule` now honestly skips and logs `Log.w` when target tag does not exist instead of falling back to `tags.firstOrNull()`.
+  - Pre-compiled hot-path `Regex` constants in `TagRuleEngine` and `NotificationCollectorService`; verified `ReminderWidgetProvider` pure-todo click fallback, `HeartbeatPolicy` `UPDATE` policy, `PhantomPrefs` throttle cache, 7-day SQL aggregation, `AppIconHelper` shared cache, and `BootReceiver` same-ID overwrite.
+- **Version Bump**: `versionCode` 19, `versionName` `"2.2.0"`.
+
 ## [2.1.0] - 2026-11-17
 
 ### 新增
@@ -758,6 +1449,23 @@
 - **AI 助手分頁獨立 SnackbarHost（#142）**：`MainActivity` 為 AI 助手分頁配置分頁專屬、內嵌於版面的 `SnackbarHost`（顯示於分頁頂部、脫離 Scaffold 底部 overlay），徹底避免刪除會話等提示遮擋底部輸入框。
 - **Release Notes 自動抽取 CHANGELOG 段落（#112）**：`.github/workflows/release.yml` 於發佈步驟前自動抽取對應版本之 `CHANGELOG.md` 段落並與 GitHub 自動 PR 清單共存（本版 tag 首次生效）。
 - **版號更新**：`versionCode` 18、`versionName` `"2.1.0"`。
+
+### English
+- **Tag Compare**: [`v2.0.0...v2.1.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v2.0.0...v2.1.0) (`versionCode = 18`, `versionName = "2.1.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **AI Natural-Language To-Do Reminders + Home-Screen Widget Integration (#143)**: Upgraded `AppDatabase` to v12 (`MIGRATION_11_12`) adding `todos` table; AI Assistant supports `reminder_add` with deterministic client-side time-parsing fallback, todo confirmation cards, and list Sheet, scheduled via `AlarmManager.setAndAllowWhileIdle` (mutually exclusive `NotifIds` range `110000..119999`), rescheduled on boot by `BootReceiver`, and synced with `ReminderWidgetProvider`.
+- **Manual Multi-Select Batch Management on Conversation & Thread Lists (#144)**: Added multi-select mode (up to 100 items) on `ConversationScreen` and `AppThreadsScreen` supporting batch mark-read / star / delete (disabling `SwipeToRevealRow` and single-item tap during selection); batch delete strictly excludes `riskLabel = 'scam'` and cleans up `message_tags` cross-refs.
+- **AI Assistant Default New Chat + One-Tap Clear All Conversations (#145)**: Opening AI Assistant tab defaults to a new chat (instead of auto-loading the last session); history drawer added "Clear All Conversations" with double confirmation (`ChatDao.clearAllSessions()`, blocked while AI is replying).
+- **Settings "About" Section (#141)**: Added an "About" card at the bottom of "All Settings" displaying `versionName (versionCode)` via runtime `PackageManager.getPackageInfo`, author, GitHub repository link, third-party components, and privacy notice, registered as `about_section` in `SettingsCatalog`.
+- **Quick Commands "Follow Default" Mode & Dynamic Resolution (#146)**: Added `MODE_FOLLOW` (3 built-in default-following commands), `resolveQuickCommandMode` dynamic resolution, and 3-state toggle / live refresh in Settings.
+
+**Changed & Fixed**
+- **Fixed LINE Group Conversation Splitting (#140)**: Upgraded `AppDatabase` to v11 (`MIGRATION_10_11`) adding `conversationKey`, parsing `MessagingStyle` (`EXTRA_CONVERSATION_TITLE`, sender `Person`) to separate group and DM threads while keeping fallback behavior for non-`MessagingStyle` notifications and migrating pinned `vipSenders`.
+- **Dedicated `SnackbarHost` for AI Assistant Tab (#142)**: `MainActivity` now provides an inline, tab-scoped `SnackbarHost` for AI Assistant (displayed at top of tab, detached from Scaffold bottom overlay) so delete-session and other prompts never cover the bottom input box.
+- **Auto-Extract CHANGELOG Sections for Release Notes (#112)**: `.github/workflows/release.yml` automatically extracts the corresponding `CHANGELOG.md` section before release publishing alongside GitHub's auto PR list (first active on this tag).
+- **Version Bump**: `versionCode` 18, `versionName` `"2.1.0"`.
 
 ## [2.0.0] - 2026-11-17
 
@@ -785,6 +1493,34 @@
 - **效能與 M3 版面一致化（#137, #138）**：`NotificationCollectorService` `aiRuleDao().active()` 導入 30 秒 TTL 快取、`PhantomPrefs` 同 key 節流／靜音模式查表導入 30 秒執行緒安全 TTL 快取、`AppIconHelper` 統一為 4 MB 位元組上限 `LruCache`、`StatsForegroundService` 停用時釋放靜態圖示條參照並補齊 Compose `LazyColumn` `contentType`／預計算日期分隔；全專案對齊 M3 12dp 卡片間距與 48dp 最小觸控目標。
 - **版號更新**：`versionCode` 17、`versionName` `"2.0.0"`。
 
+### English
+- **Tag Compare**: [`v1.12.0...v2.0.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.12.0...v2.0.0) (`versionCode = 17`, `versionName = "2.0.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **AI Tag Memory Rules & Priority Order (#131)**:
+  - Upgraded `AppDatabase` to v10 (non-destructive `MIGRATION_9_10`), adding `user_tag_rules` table and `MessageTagCrossRef.SOURCE_USER_RULE = "user_rule"`; built deterministic zero-token `TagRuleEngine` (supporting app package/label, sender, keyword, regex, and semantic categories `otp`/`system`/`bill`/`marketing`/`delivery`).
+  - Tag application strictly follows `manual > user_rule > ai_rules > auto > App category`, and `processBatchAnalysis` never overwrites manual or user-rule tags; supports creating rules and querying hit chains via AI chat `tag_rule` confirmation cards, plus rule management and testing in `TagManagementActivity`.
+- **AI Tag Failure Fallback Notification & Dispatch Test (#132)**:
+  - Auto-tagging automatically falls back to `app_category_rules` on network/HTTP failures without interrupting message ingestion or risk flow; added `NotifIds.AI_TAG_FAILURE` (first failure silent, low-priority notification from 2nd consecutive failure with 6h cooldown).
+  - Added "AI Tag Dispatch Test" button (counts toward daily quota and shows remaining quota) in Settings AI card and `ai_tag_dispatch_test` in `SettingsCatalog`.
+- **AI Assistant Dual-Function Input Menu: Quick Commands + Image Vision (#133)**:
+  - Removed top suggested-question row and added a single 48dp `+` collapsible menu left of the input bar ("Quick Commands" supporting direct-send / prefill modes, manageable in Settings or via chat `quick_command_add`; "Upload Image for AI Vision" using `PickVisualMedia`, downsampling to 1024px max edge, sending in OpenAI-compatible `image_url` format, and honestly blocking non-vision models with token warnings).
+- **AI Assistant Layout Simplification (#134)**:
+  - Smoothly hides the top "PhantomCheck" title bar with `AnimatedVisibility` when switching to AI Assistant, moving search/refresh/settings next to the model switcher; reduced chat input box (`maxLines = 3`) and streamlined send button size.
+- **Customizable Bottom Tab Bar Display Mode (#135)**:
+  - Added 3-way mode in Appearance Settings and `SettingsCatalog`: "Standard" (default), "Compact" (80% height and icons), and "Auto-Hide" (hides on scroll down, reveals on scroll up, preserving `LiquidGlassTabBar` drag gestures).
+- **Three Non-Stats Home-Screen Widgets (#136)**:
+  - Added `AiSummaryWidgetProvider` (2x2 latest AI summary), `RiskActionWidgetProvider` (2x2 one-tap mark scam / whitelist via `goAsync`), and `ReminderWidgetProvider` (2x1 todo reminders), all using standard `RemoteViews`, `updatePeriodMillis="0"`, diff updates, and base + `xml-v31` `previewLayout`.
+
+**Changed & Fixed**
+- **Fixed AI Numeric Setting Chat Execution Chain & Lifecycle (#127)**: Added colloquial aliases for `ai_chat_rag_limit`, `ai_daily_limit`, and `notif_throttle` plus client-side deterministic `resolveNumericIntentFallback`; fixed `appliedSettingCards` merge/append lifecycle.
+- **Bare JSON Action Parsing & Whitelist Fuzzy Lookup (#128)**: Strengthened tokenized fuzzy search fallback for `whitelist` `messageRef`.
+- **Groq Free-Tier TPM Budget Control & 413/429 Auto-Fallback (#129)**: Added token estimation, per-provider budget caps (Groq 6500 / others 32000), Groq default `maxTokens=1800`, multi-stage 413 fallback (RAG → history → maxTokens), 429 `Retry-After` backoff retries, and daily quota refund on analysis failure.
+- **System Prompt Throttling & Conversation History Compression (#130)**: Settings list loaded only on settings-related queries; RAG deduplicates same-sender similar prefixes `(×N)` with dynamic char caps; histories > 10 turns compress into `[Earlier Conversation Summary]` + latest 8 messages.
+- **Performance & M3 Layout Standardization (#137, #138)**: Added 30s TTL cache for `aiRuleDao().active()` in `NotificationCollectorService`, 30s thread-safe TTL cache for per-key throttle/mute lookups in `PhantomPrefs`, unified `AppIconHelper` to 4 MB byte-capped `LruCache`, released static icon bar references when `StatsForegroundService` stops, added Compose `LazyColumn` `contentType` / precomputed date dividers, and aligned M3 12dp card spacing and 48dp minimum touch targets.
+- **Version Bump**: `versionCode` 17, `versionName` `"2.0.0"`.
+
 ## [1.13.1] - 2026-11-17
 
 ### 變更與修正
@@ -801,6 +1537,25 @@
   - 新增 `{"action":"open_setting","settingId":"..."}` 直接開啟 `SettingsActivity` 並定位至目標設定卡；system prompt 附上【全量設定清單摘要】並禁止編造不存在的選單路徑。
   - 未知 `settingId` fallback 改為以 `SettingsCatalog.keywordSearch` 對全目錄關鍵字比對前 5 筆，無匹配則誠實回報；`setting_candidates` 卡對非開關項目顯示「前往」按鈕而非「開／關」；統一 `SettingsCatalog`「AI 風險分析」措辭。
 - **版號更新**：`versionCode` 16、`versionName` `"1.13.1"`。
+
+### English
+- **Tag Compare**: [`v1.13.0...v1.13.1`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.13.0...v1.13.1) (`versionCode = 16`, `versionName = "1.13.1"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Changed & Fixed**
+- **HTTP 413 Payload Too Large Protection & Auto-Retry (#122)**:
+  - Updated `AiClient` `HttpException` branches to report honestly by status code (`413` dedicated message with provider's raw error, plus distinct messages for `401/403`, `404`, `422`, `429`, `5xx`, no longer misleadingly saying "check API Key or model settings" on non-auth errors).
+  - `chatAssistant` halves its per-turn message limit (min `25`) and retries once on `HTTP 413` while honestly noting the reduced scope; `MessageDetailActivity` deep analysis refunds today's quota via `PhantomPrefs.refundTodayAiUsage()` on `413` failure.
+- **AI Chat Multi-Action Parsing & Honest Error Reporting (#123)**:
+  - Updated `ChatScreen` 5-type action parser to support multiple actions via balanced-brace splitting (`splitBalancedJsonObjects`), allowing multiple independent action commands/objects in one reply; multiple `whitelist` proposals merge into a single checkable confirmation card reporting each item.
+  - Invalid actions (empty `messageId`, missing `messageRef`, malformed JSON, or unsupported action) always insert an honest error message instead of being silently dropped; when `cleanReply` is empty with no valid proposals, raw JSON is no longer shown as fallback.
+- **In-Chat Numeric Setting Slider Confirmation Cards (#124)**:
+  - Added `NumericSettingSpec` and `NUMERIC_SPECS` in `SettingsCatalog` (`ai_chat_rag_limit` 50–800 step 10, `ai_daily_limit` 0–100 step 10, `notif_throttle` 0–300 step 10), aligning Settings `ai_chat_rag_limit` slider to step 10.
+  - Added `setting_adjust` action and slider confirmation card in `ChatScreen` (Slider + `+/-` fine-tuning, out-of-range clamping notice, before→after status card), appending `[Adjustable Numeric Settings]` to the system prompt.
+- **Settings Navigation Accuracy & Anti-Hallucination Full Catalog (#125)**:
+  - Added `{"action":"open_setting","settingId":"..."}` to open `SettingsActivity` and scroll to the target card; system prompt includes `[Full Settings Catalog Summary]` and forbids inventing menu paths.
+  - Unknown `settingId` fallback matches top 5 via `SettingsCatalog.keywordSearch` and honestly reports if none match; `setting_candidates` shows "Go" instead of "On/Off" for non-toggle items; standardized `SettingsCatalog` wording to "AI Risk Analysis".
+- **Version Bump**: `versionCode` 16, `versionName` `"1.13.1"`.
 
 ## [1.13.0] - 2026-11-17
 
@@ -832,6 +1587,38 @@
   - 逐卡核對 `SettingsActivity` 實際 UI 與 `SettingsCatalog.ITEMS` / `TOGGLEABLE_IDS`，修正 `ai_daily_summary` 歸屬至 `quick` 卡、補齊 `ai_daily_summary_notif`（每日摘要排程時間與完成推播）與 `appearance_glass_effect`（液態玻璃模糊效果）搜尋與 boolean 切換支援，並驗證本地關鍵字與 AI 語意搜尋雙路徑。
 - **版號更新**：`versionCode` 15、`versionName` `"1.13.0"`。
 
+### English
+- **Tag Compare**: [`v1.12.1...v1.13.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.12.1...v1.13.0) (`versionCode = 15`, `versionName = "1.13.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Enhanced**
+- **PhantomMarkdownText Syntax Completion (#114)**:
+  - Added support for GFM tables (including alignment rows `:-` / `:-:` / `-:`, content-proportional column widths, and horizontal scrolling for wide tables), italics (`*text*` / `_text_`), strikethrough (`~~text~~`), clickable hyperlinks (`[text](url)` with safe `LinkAnnotation.Url` opening), blockquotes (`> quote`), horizontal rules (`---`), task lists (`- [ ]` / `- [x]`), and one-level nested list indentation.
+  - `stripMarkdown()` strips all new syntax (tables converted to `cell / cell`); `buildRagSystemPrompt` encourages tables and rich formatting.
+- **AI Default Model Presets Update (#115)**:
+  - Updated `AiClient.DEFAULT_PROVIDER_PRESETS` (existing user profiles unaffected; applies to new setups only):
+    - **Mistral**: `mistral-small-2603` (default), `mistral-large-4` (previously `mistral-small-latest` / `mistral-large-latest`)
+    - **OpenAI**: `gpt-6.1-terra` (default), `gpt-6.1-sol` (previously `gpt-5.2`)
+    - **Groq**: `openai/gpt-oss-120b` (default), `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` (previously `qwen/qwen3.6-27b`, etc.)
+    - **Gemini**: `gemini-4-hydrogen` (default), `gemini-4-carbon`, `gemini-4-argon`, `gemini-3.8-flash` (previously `gemini-3.8-flash` / `gemini-3.5-flash-lite`)
+    - **DeepSeek / OpenRouter**: Unchanged.
+- **Customizable AI Assistant Per-Turn Message Limit (#116)**:
+  - Added `chatRagMessageLimit` in `PhantomPrefs` (default `400`, range `50–800`); when token-saver mode is enabled, `getEffectiveChatRagMessageLimit()` automatically lowers it to `100` (without overwriting the user's configured value).
+  - Added a slider (step 50) with token-usage notice in Settings AI card and registered `ai_chat_rag_limit` in settings search.
+- **Structured Whitelist Mechanism (#117)**:
+  - Upgraded `AppDatabase` to v9 (non-destructive `MIGRATION_8_9` registered in `AppDatabaseHolder`); added nullable `sender` and `packageName` to `AiRuleEntity`.
+  - Added two-option "Add to Whitelist" flow (all messages from this sender / this message only) in `ScamCenterActivity` and `MessageDetailActivity`; `TagManagementActivity` displays whitelisted sender/app metadata.
+  - AI Assistant supports `{"action":"whitelist",...}`, rendering a confirmation card before writing to DB; whitelist hits automatically mark safe (`riskScore = 10`, `riskLabel = "safe"`) and skip subsequent AI analysis, scam alerts, and threat-intel pre-checks.
+- **Direct Settings Adjustment via AI Chat (#118)**:
+  - Added shared single-source `SettingsCatalog` (shared between `SettingsActivity` search and `ChatScreen` chat adjustments).
+  - AI Assistant supports `setting_toggle` (restricted to whitelisted boolean toggles, applying the exact same setters and foreground/schedule side effects as Settings, showing "Before → After" and "Go to Settings" cards) and `setting_candidates` (listing candidate toggles for fuzzy descriptions; guiding non-boolean settings to Settings).
+- **AI Message Lookup Enhancements & In-Chat Actions (#119)**:
+  - Changed default RAG time range to "Today + Yesterday", added "Day Before Yesterday" and sender-name filtering (`MessageDao.recentSenders()`), with `[id=...]` in excerpts.
+  - Added `reply_message` (matching `NotificationCollectorService` `activeNotifications` for `RemoteInput` quick reply, honestly reporting when unavailable), `open_app`, `delete_message` (strictly protecting `scam` records from deletion), and `tag_message` (`SOURCE_MANUAL`), all gated by confirmation cards and reporting results in chat.
+- **Comprehensive Settings Search Audit (#120)**:
+  - Audited `SettingsActivity` UI against `SettingsCatalog.ITEMS` / `TOGGLEABLE_IDS` card by card, fixed `ai_daily_summary` placement to `quick` card, added `ai_daily_summary_notif` and `appearance_glass_effect` search & boolean toggle support, and verified both local keyword and AI semantic search paths.
+- **Version Bump**: `versionCode` 15, `versionName` `"1.13.0"`.
+
 ## [1.12.1] - 2026-11-16
 
 ### 變更與修正
@@ -849,6 +1636,26 @@
 - **資料管理卡補齊桌面小工具加入說明（#109，PR #110）**：
   - 於資料管理卡「重新播放設定教學」按鈕下方補上「桌面小工具：桌面長按 → 小工具 → 幻訊統計」提示小字。
 - **版號更新**：`versionCode` 14、`versionName` `"1.12.1"`。
+
+### English
+- **Tag Compare**: [`v1.12.0...v1.12.1`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.12.0...v1.12.1) (`versionCode = 14`, `versionName = "1.12.1"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Changed & Fixed**
+- **Fixed Five Misrouted Cards in Settings Search Catalog (#109, PR #110)**:
+  - Renamed `notif_auto_reply` to `ai_auto_reply` (`cardKey = "ai"`, title "SMS Auto-Reply Settings", with `sms`/`reply`/`schedule` aliases), fixing "SMS Auto-Reply" routing to the Notifications card.
+  - Moved `ai_auto_tag` to `cardKey = "quick"`, matching the Quick Settings "Per-Message AI Smart Scan" toggle.
+  - Moved `ai_rules` to `cardKey = "data"`, title "Custom Tag Management".
+  - Split `notif_scam_alert` into `quick_scam_popup` (`cardKey = "quick"`, "Scam Alert Pop-Up") and `ai_alert_keywords` (`cardKey = "ai"`, "Instant Alert Keywords").
+  - Moved `appearance_widget_tour` to `cardKey = "data"`, title "Tour Replay & Home-Screen Widgets".
+- **Added Two Settings Search Entries (#109, PR #110)**:
+  - Added `ai_scam_center` (`cardKey = "ai"`, "Scam Alert Center") and `notif_filter_rules` (`cardKey = "notif"`, "Filter Keyword Rules & Hit Actions").
+- **AI Navigation "Go" Direct Page Launch (#109, PR #110)**:
+  - Added nullable `page` field to `SettingSearchItem` for `AutoReplySettingsActivity`, `ScamCenterActivity`, `TagManagementActivity`, and `ApiKeySettingsActivity` (including `ai_providers`).
+  - `aiSearchNote` banner displays a "Go" `TextButton` when the first hit has `page`, opening the target settings screen directly.
+- **Added Home-Screen Widget Instructions in Data Management Card (#109, PR #110)**:
+  - Added hint text "Home-screen widgets: Long-press home screen → Widgets → PhantomCheck Stats" below "Replay Settings Tour" in the Data Management card.
+- **Version Bump**: `versionCode` 14, `versionName` `"1.12.1"`.
 
 ## [1.12.0] - 2026-11-16
 
@@ -876,6 +1683,34 @@
   - **Widget 圖示共用快取**：新增 `AppIconHelper.loadAppIconAndroidBitmap` 共用 `appIconBitmapCache`（`LruCache`），取代 `StatsDetailWidgetProvider` 重複 decode。
   - **分層解耦**：移除 `PhantomPrefs` 對 `service.NotificationCollectorService` 的反向依賴，改為 `onRuleCachesInvalidated` callback 註冊。
 
+### English
+- **Tag Compare**: [`v1.11.0...v1.12.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.11.0...v1.12.0) (`versionCode = 13`, `versionName = "1.12.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Changed & Fixed**
+- **Fixed Settings Search "Same-Key Throttle" Routing (#99)**:
+  - Split `data_throttle_retention` in `SettingsActivity` `SETTINGS_SEARCH_CATALOG` into `notif_throttle` (`cardKey = "notif"`, with aliases for "same key", "duplicate notification", "missed message", "traffic", "digit micro-change", "override") and `data_retention` (`cardKey = "data"`, "Message Retention & Cleanup").
+  - Updated Settings "Per-App Throttle Overrides" subtitle to clearly indicate `0s = never throttle` and that messaging notifications with updated `postTime` capture identical-content messages.
+- **Retention Cleanup Preserves Scam Evidence & Tag Integrity (#100, No Room Migration)**:
+  - `MessageDao.prune` and `deleteOlderThanCount` directly exclude scam evidence via `AND riskLabel != 'scam'`, removing `RetentionWorker` re-insert logic to preserve original `id`, `message_tags`, and `intel_results` relations.
+  - Added `TagDao.deleteOrphanCrossRefs()` at the end of `RetentionWorker` transaction; added `LEFT JOIN messages` guard to `TagDao.allTagCounts()` matching `todayAiTagCounts()`.
+- **Messaging Apps No Longer Drop Consecutive Identical-Content Messages (#101, Passive Listener Preserved)**:
+  - `NotificationCollectorService` detects messaging notifications (`CATEGORY_MESSAGE` / `EXTRA_MESSAGES` / `MessagingStyle`) and only drops same-key + same-content + unchanged-`postTime` as system re-posts; identical-content messages with updated `postTime` are captured immediately. Non-messaging notifications (e.g., system/traffic monitors) retain `exactSame || digitMicroChange` throttling.
+  - Restricted `dedupCache` blocking to `isSuspectedReplay` (reconnect replay), leaving normal paths to the throttle layer; per-app 0s override bypasses both layers.
+- **Centralized Notification ID Management & Collision Prevention (#102)**:
+  - Added `NotifIds` object managing mutually exclusive ranges: `1001..1004` (persistent stats / boot reminder / daily summary / weekly report), `scamAlert` `2000..21999`, `importantAlert` `22000..41999`, and `reminder` `100000..109999`, eliminating `ReminderReceiver` vs `alertScam` range overlap and magic numbers.
+- **AI Prompt Injection Protection (#103)**:
+  - Added `AiClient.sanitizeForPrompt()` converting `<` in isolation tags (`</message_*`, `</user_*`, `</system`, `</msg`) to full-width `＜` (without affecting raw `cacheKey` hashing), applied across `analyzeMessage`, `analyzeMessageBatch`, `deepAnalyzeMessage`, and `ChatScreen.buildRagSystemPrompt` (`chatAssistant` RAG).
+- **SMS Auto-Reply Loop-Prevention Cooldown (#104)**:
+  - Added `canReplyAndRecord()` in `SmsAutoReplyReceiver` (4-hour per-sender cooldown and 3/day cap stored in `auto_reply_cooldown_prefs`) plus reply-template self-echo matching to prevent infinite two-way auto-reply loops.
+- **Technical Debt Cleanup (#105)**:
+  - **Immediate Boot Trigger for Overdue Reminders**: Added `MessageDao.allScheduledReminders()` and `ReminderScheduler.deliverReminder()`, so `BootReceiver` immediately delivers reminders that expired while powered off and clears `remindAt`; `MessageDetailActivity` checks `remindAt > System.currentTimeMillis()`.
+  - **Self-Healing Schedule Policy**: Changed `HeartbeatPolicy` and `WeeklySummaryPolicy` from `ExistingPeriodicWorkPolicy.KEEP` to `UPDATE`.
+  - **Throttle Lookup Cache**: Added 30s TTL cache to `PhantomPrefs.getAppSameKeyThrottleMap` (invalidated in `setAppSameKeyThrottle`) to reduce repeated Gson deserialization on the notification hot path.
+  - **Stats SQL Aggregation**: Added `MessageDao.countByDaySince` and `countByHourSince`, replacing full-row `dao.since()` loads in `StatsDetailWidgetProvider.loadSevenDayCounts` and `MainActivity` Stats tab.
+  - **Shared Widget Icon Cache**: Added `AppIconHelper.loadAppIconAndroidBitmap` sharing `appIconBitmapCache` (`LruCache`), replacing duplicate decoding in `StatsDetailWidgetProvider`.
+  - **Layer Decoupling**: Removed reverse dependency from `PhantomPrefs` to `service.NotificationCollectorService`, replacing with `onRuleCachesInvalidated` callback registration.
+
 ## [1.11.0] - 2026-11-16
 
 ### 新增
@@ -895,6 +1730,27 @@
   - `WatchdogReceiver` 與 `HeartbeatWorker` 條件化 `requestRebind`（僅於 `!isConnected` 時觸發），並移除 `HeartbeatPolicy.policyScope` 改用 `ExistingPeriodicWorkPolicy.KEEP`。
   - `NotificationCollectorService` 熱路徑導入 `appLabelCache`（`LruCache(64)`）與 30 秒 TTL 過濾規則／App 分類規則／警示關鍵字快取，降低重複資料庫與系統查詢開銷。
 
+### English
+- **Tag Compare**: [`v1.10.0...v1.11.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.10.0...v1.11.0) (`versionCode = 12`, `versionName = "1.11.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- Advanced Same-Key Throttle Settings (#96): Added "Treat digit micro-changes as same update" toggle (default on) and "Per-App Custom Throttle Seconds" (per-app override and picker dialog) in Settings for independent per-app throttling beyond the global slider.
+- Connection State Tracking & Rule Cache Invalidation (#94): Added `isConnected` state tracking and `invalidateRuleCaches()` in `NotificationCollectorService` to refresh caches immediately when rules or keywords change in Settings or Tag Management.
+
+**Changed & Fixed**
+- Fixed Missed Consecutive Messages (#96):
+  - `NotificationCollectorService` uses bounded `sameKeyHistory` (`LruCache(256)`) for content-aware throttling and stacked message tail extraction, ensuring consecutive new messages under the same notification key are not dropped without enabling polling.
+  - Added `MessageDao.existsByDedupKeyInWindow` for DB-windowed replay deduplication (`isSuspectedReplay`), preventing repeated capture by constantly refreshing apps or missed messages on reconnect.
+  - Implemented multi-tier `resolveNotificationTitle` fallback (`EXTRA_TITLE` → `EXTRA_TITLE_BIG` → `"Sender: "` prefix → cached app name), fixing empty-title notification handling.
+- Fixed AI Assistant Response Truncation (#95):
+  - Raised `AiClient.chatAssistant()` `maxTokens` to `4096` with a dedicated `chatOkHttpClient` (`connect 15s / write 30s / read 120s / callTimeout 180s`), keeping other AI paths' `maxTokens` and timeouts unchanged.
+  - `ChatChoice` parses `finish_reason` and honestly appends "⚠ This response was truncated due to length limit" when `finish_reason == "length"`.
+- Performance, Battery & Memory Optimizations (#94):
+  - `ShizukuWatchdogService` uses adaptive backoff (300s steady-state, 60s within 10 min of service restart) to reduce idle wakeups without hurting keep-alive.
+  - Conditionalized `requestRebind` in `WatchdogReceiver` and `HeartbeatWorker` (only when `!isConnected`), and replaced `HeartbeatPolicy.policyScope` with `ExistingPeriodicWorkPolicy.KEEP`.
+  - Added `appLabelCache` (`LruCache(64)`) and 30s TTL caches for filter rules, app category rules, and alert keywords on `NotificationCollectorService` hot path to reduce repeated DB and system queries.
+
 ## [1.10.0] - 2026-11-16
 
 ### 新增
@@ -913,6 +1769,26 @@
 - 全域排版優化（#89）：依 Material 3 規範統一各頁 16dp 水平邊距與 12dp 卡片間距，詐騙中心改用共用 `EmptyStateView`。
 - 資料庫升級：Room 7→8 非破壞性 `MIGRATION_7_8`（新增 `messages.remindAt` 欄位），並補齊 `todayRecentApps` 的 `riskScore` 欄位映射。
 
+### English
+- **Tag Compare**: [`v1.9.0...v1.10.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.9.0...v1.10.0) (`versionCode = 11`, `versionName = "1.10.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- Full Message Tag Display (#83): Extracted shared `MessageTagChipRow` (with `· AI` badge) across message lists, chat bubbles, app threads, and detail screens; tags load via a single `IN` batch query to avoid N+1 scroll lag.
+- Settings Search Bar + AI Semantic Search (#88): Supports local instant keyword/alias filtering and natural-language AI semantic navigation (`<user_query>` isolation and whitelist ID validation; auto-expands, scrolls, and highlights target card without modifying values; honestly degrades when no AI provider is configured).
+- Personalization Settings (#90): Added card density (Comfortable / Compact), Home sort order (Latest / Unread First / Risk First), custom Home filter bar visibility, default-collapsed summary toggle, and 12/24-hour clock toggle (all included in Settings search).
+- Multi-Size Home-Screen Widgets (#87): Added 2x1 Mini (Today / Alerts) and 4x2 Detail (Today / Unread / Alerts + native `RemoteViews` `LinearLayout`/`ImageView` 7-day trend bars + recent source app icons), all supporting `resizeMode`, `xml-v31` `targetCell`, light/dark themes, and diff updates alongside 4x1.
+- One-Tap OTP Verification Code Copy (#91): Strong-signal keyword + 4–8 digit detection displaying a one-tap "Copy Code" pill on message cards, chat bubbles, and detail screens.
+- Stats Report Share Image Card (#91): Pure local Android `Canvas` generates a `1080×1350` static weekly report image shared via `FileProvider` `ACTION_SEND` (zero LLM, zero message upload).
+- Message To-Do Reminders (#91): Supports picking reminder times (30 min / 1 hr / Tonight 20:00 / Tomorrow 09:00) from bottom sheet and detail screen, scheduled via `AlarmManager.setAndAllowWhileIdle` to open detail directly and rebuilt on reboot by `BootReceiver`.
+
+**Changed & Fixed**
+- Daily / Weekly AI Summary Cards Collapsed by Default (#84): Stats summary cards collapse to a single-line preview by default with persistent expand state, keeping generate, copy, and share actions.
+- Home Filter Bar Reflow (#85): Switched to `FlowRow` auto-wrapping with compact chips so all filters and custom tags are visible without horizontal scrolling.
+- Compact Top App Bar (#86): Standardized `TopAppBar` height to 52dp and title to `titleMedium` across screens while preserving 48dp button touch targets.
+- Global Layout Optimization (#89): Standardized 16dp horizontal margins and 12dp card spacing per Material 3 across all screens; Scam Center uses shared `EmptyStateView`.
+- Database Upgrade: Non-destructive Room 7→8 `MIGRATION_7_8` (adding `messages.remindAt`), plus `riskScore` field mapping for `todayRecentApps`.
+
 ## [1.9.0] - 2026-11-16
 
 ### 新增
@@ -926,6 +1802,22 @@
 - 防詐情報四來源連線修復：fraud.tw 改用官方端點 `/api/check?d=`（原先 404）；PhishTank 描述性 UA＋可選 `app_key`（原先 403）；Chainabuse Basic 認證＋`chain` 參數（原先 401）。
 - 常駐統計通知版面：移除左側重複彩色圖示，保留單色小圖示，標題不再被卡；右側圖示條排序不變。
 - 省電優化：常駐通知差異刷新（數據未變跳過重建）、統計查詢合併為單一 SQL、熄屏時跳過閒置刷新（新通知仍即時更新）、圖示快取。
+
+### English
+- **Tag Compare**: [`v1.8.0...v1.9.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.8.0...v1.9.0) (`versionCode = 10`, `versionName = "1.9.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- Home-Screen Widget (4x1): Displays today's message count / unread / scam alerts, opens PhantomCheck on tap, follows system light/dark theme, and updates via diff refresh alongside the persistent notification (no high-frequency alarms).
+- Weekly AI Summary Report: Automatically generates weekly stats and risk trends every Sunday at 22:00; Stats tab supports manual generation, viewing past weekly reports, copying, and sharing (not restricted by token-saver mode).
+- One-Tap AI Deep Message Analysis: Generates paragraph-style risk explanations (scam type, suspicious indicators, recommended actions) on the message detail screen; cancellable and counts toward daily AI quota.
+- Threat-Intel API Key Management: Keys for Safe Browsing / PhishTank / Chainabuse can be entered directly in Settings (encrypted storage, with `local.properties` as fallback).
+
+**Changed & Fixed**
+- Fixed AI Assistant Chat Timeouts: Switched Retrofit to a custom OkHttpClient (read 90s / callTimeout 120s), automatically retrying once on chat timeout with honest notice.
+- Fixed Threat-Intel Four-Source Connections: Switched fraud.tw to official endpoint `/api/check?d=` (previously 404), added descriptive UA + optional `app_key` for PhishTank (previously 403), and Basic auth + `chain` parameter for Chainabuse (previously 401).
+- Persistent Stats Notification Layout: Removed duplicate colored icon on the left, keeping the monochrome small icon so the title is no longer truncated; right-side icon bar ordering unchanged.
+- Battery-Saving Optimizations: Diff-based persistent notification refresh (skips rebuild when data is unchanged), merged stats queries into single SQL, skips idle refresh when screen is off (new notifications still update immediately), and icon caching.
 
 ## [1.8.0] - 2026-11-16
 
@@ -953,42 +1845,125 @@
   - `PowerManager.isPowerSaveMode` 啟用時自動停用玻璃模糊；移除 `StatsForegroundService` 的 `CONNECTIVITY_CHANGE` 動態廣播註冊以降低耗電。
   - `Onboarding.kt` 與 `SettingsTourOverlay` 改用 `MaterialTheme.colorScheme` 並強化卡片底色與遮罩對比，維持洞內觸控穿透。
 
+### English
+- **Tag Compare**: [`v1.7.0...v1.8.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.7.0...v1.8.0) (`versionCode = 9`, `versionName = "1.8.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added**
+- **Public Anti-Scam Threat Intel (`IntelClient`) Zero-Token Pre-Check (#65)**:
+  - `IndicatorExtractor` extracts full URLs (including short links) and cryptocurrency addresses (BTC / ETH / TRON) via regex while preserving token-saver `hasSuspiciousFeature` behavior.
+  - Pluggable intel providers queried in order: `fraud.tw` (165 reports) → Google Safe Browsing Lookup API v4 (`BuildConfig.SAFE_BROWSING_API_KEY` injected from `local.properties`, zero secrets in repo) → optional PhishTank / Chainabuse (off by default).
+  - Local 72-hour intel cache (`intel_cache`, `sha256(indicators + providerSig)`) and per-message verification results (`intel_results`, non-destructive Room Migration 6→7).
+  - Pipeline integration: `NotificationCollectorService` pre-checks before `shouldRunAi`; `ai_rules` whitelist skips pre-check; hits immediately mark high-risk `scam`, bypass LLM and daily quota, and send alerts; misses or offline silently fall back to the standard AI flow (never fabricating hits, sending only indicators and never full text).
+  - Added "Anti-Scam Threat Intel" card in Settings (per-source toggles, Safe Browsing key injection status, live per-source connection test, clear 72h cache); message detail and Scam Center display matched source and query time.
+- **Live Model Switching in AI Chat / Daily Summary & Natural-Language Rule Creation (#71)**:
+  - Added `AiProviderSwitcherChip` to Chat and Stats "Daily AI Summary" card for instant switching among configured AI Providers/models (honestly showing unconfigured state when none are set).
+  - When explicitly asked to add a whitelist or tag rule in chat, AI outputs a structured `add_rule` block; UI hides raw JSON and shows a mandatory confirmation dialog before writing to `ai_rules`; `buildRagSystemPrompt` adds `<message_content>` delimiters and anti-prompt-injection instructions.
+- **Release Process Documentation (#70)**: Created `CHANGELOG.md`, synced `README.md`, and added the release checklist to `AGENTS.md`.
+
+**Changed & Fixed**
+- **Haptic Feedback & Liquid Glass Threshold Fixes (#68)**:
+  - `rememberPhantomHaptic` probes predefined effects via `areAllEffectsSupported` on API 30+, falling back to explicit-amplitude `createWaveform` (tap 25ms/220, long press 40ms/255) when unsupported or on API 29, fixing silent haptics on some devices.
+  - Lowered `Glass.kt` background blur threshold from API 33 to API 31 (Android 12+), keeping translucent tinted fallback on older versions; added OEM haptic settings path hints and Liquid Glass version notes in Settings.
+- **Persistent Stats Notification Layout & Tap Behavior Fixes (#69)**:
+  - Switched to `RemoteViews` (`notif_stats_collapsed.xml`) with fixed PhantomCheck icon on the left and "newest on left" horizontal app icon bar on the right, highlighting the latest app with border and dot; kept swipe-dismiss rebuild and `FLAG_NO_CLEAR` keep-alive.
+  - When tap behavior is "Open Original App", opens the app of the latest message (falling back to PhantomCheck if unresolvable).
+- **Performance, Battery-Saving Fallback & Tour Theme Adaptation (#67)**:
+  - `MainActivity` preserves tab state and 30s TTL data cache; `ConversationScreen` uses keyset pagination (`LIMIT 200` on scroll); `AppIconHelper` adds cross-page `LruCache`; `LazyColumn`s include `key` and `derivedStateOf`.
+  - Automatically disables glass blur when `PowerManager.isPowerSaveMode` is active; removed `StatsForegroundService` dynamic `CONNECTIVITY_CHANGE` broadcast receiver to reduce battery drain.
+  - `Onboarding.kt` and `SettingsTourOverlay` use `MaterialTheme.colorScheme` with stronger card surface and scrim contrast while preserving touch-through inside the spotlight hole.
+
 ## [1.7.0] - 2026-11-15
 
 ### 新增與修正
 - **Shizuku 偵測修復與開關健檢（#64）**：修正 Shizuku binder/授權狀態偵測、新增設定頁 6 步高亮導覽教學、每日摘要複製與分享、氣泡長按複製、AI 回覆 Markdown 渲染（`PhantomMarkdownText`）與助手上下文放寬，以及震動回饋基礎修正。
+
+### English
+- **Tag Compare**: [`v1.6.0...v1.7.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.6.0...v1.7.0) (`versionCode = 8`, `versionName = "1.7.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- **Shizuku Detection Fix & Toggle Health Check (#64)**: Fixed Shizuku binder/authorization state detection; added 6-step spotlight tour in Settings, daily summary copy & share, bubble long-press copy, Markdown rendering for AI replies (`PhantomMarkdownText`), relaxed assistant context limits, and foundational haptic feedback fixes.
 
 ## [1.6.0] - 2026-11-15
 
 ### 新增與修正
 - **保活強化與 Shizuku 整合（#60）**：整合 Shizuku 進階保活與看門狗（`ShizukuKeepAlive` / `ShizukuWatchdogService`）、凍結高風險 App 能力、修正通知圖示渲染，並於介面顯示 AI 標籤。
 
+### English
+- **Tag Compare**: [`v1.5.0...v1.6.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.5.0...v1.6.0) (`versionCode = 7`, `versionName = "1.6.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- **Keep-Alive Hardening & Shizuku Integration (#60)**: Integrated Shizuku advanced keep-alive and watchdog (`ShizukuKeepAlive` / `ShizukuWatchdogService`), high-risk app freezing capability, notification icon rendering fixes, and AI tag display in UI.
+
 ## [1.5.0] - 2026-11-14
 
 ### 新增與修正
 - **AI 助手、10 步教學與規則系統（#55）**：新增「AI 助手」RAG 唯讀分頁、10 步穿透式新手引導、常駐通知 400ms 節流原地重建（`repostDirectly`）、零 token App 分類規則與 `ai_rules` 白名單、省 token 模式與多項外觀/通知微調開關，Room Migration 5→6。
+
+### English
+- **Tag Compare**: [`v1.4.0...v1.5.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.4.0...v1.5.0) (`versionCode = 6`, `versionName = "1.5.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- **AI Assistant, 10-Step Tour & Rule System (#55)**: Added read-only RAG "AI Assistant" tab, 10-step pass-through onboarding tour, 400ms-throttled in-place persistent notification rebuild (`repostDirectly`), zero-token app category rules and `ai_rules` whitelist, token-saver mode, and multiple appearance/notification fine-tuning toggles; Room Migration 5→6.
 
 ## [1.4.0] - 2026-11-13
 
 ### 新增與修正
 - **互動強化、AI 智慧標記與玻璃手感（#52）**：移植 `LiquidGlassTabBar`、`GlassCard`、`FluidSwitch`、`SwipeToRevealRow`；新增勿擾時段、摘要完成推播、可疑連結警告、詐騙週趨勢與搜尋高亮、批次多選與 VIP 置頂，Room Migration 4→5。
 
+### English
+- **Tag Compare**: [`v1.3.0...v1.4.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.3.0...v1.4.0) (`versionCode = 5`, `versionName = "1.4.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- **Interaction Enhancements, AI Smart Tagging & Glass Feel (#52)**: Ported `LiquidGlassTabBar`, `GlassCard`, `FluidSwitch`, and `SwipeToRevealRow`; added Do Not Disturb schedule, summary-complete push notifications, suspicious link warnings, weekly scam trends, search highlighting, batch multi-select, and VIP pinning; Room Migration 4→5.
+
 ## [1.3.0] - 2026-11-12
 
 ### 新增與修正
 - **全面強化與前景統計服務（#50）**：新增 `StatsForegroundService` 常駐統計通知、訊息詳情頁、標籤系統、CSV 匯出與設定頁重構，Room Migration 3→4。
+
+### English
+- **Tag Compare**: [`v1.2.0...v1.3.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.2.0...v1.3.0) (`versionCode = 4`, `versionName = "1.3.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- **Comprehensive Enhancements & Foreground Stats Service (#50)**: Added `StatsForegroundService` persistent stats notification, message detail screen, tag system, CSV export, and Settings refactor; Room Migration 3→4.
 
 ## [1.2.0] - 2026-11-11
 
 ### 新增與修正
 - **訊息中心改版（#48）**：依 App 與寄件者分組對話、聊天式對話頁與群組摘要通知過濾修正。
 
+### English
+- **Tag Compare**: [`v1.1.0...v1.2.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.1.0...v1.2.0) (`versionCode = 3`, `versionName = "1.2.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- **Message Center Overhaul (#48)**: Grouped conversations by app and sender, chat-style conversation screen, and group summary notification filter fixes.
+
 ## [1.1.0] - 2026-11-10
 
 ### 新增與修正
 - 正式簽署版本與基礎 CI/CD 建置發佈管線。
 
+### English
+- **Tag Compare**: [`v1.0.0...v1.1.0`](https://github.com/eric11yothelast-Hwanshen/PhantomCheck/compare/v1.0.0...v1.1.0) (`versionCode = 2`, `versionName = "1.1.0"`)
+- **Release Assets (Dual APKs)**: `app-release.apk` & `app-debug.apk`.
+
+**Added & Fixed**
+- Release-signed build and basic CI/CD build & release pipeline.
+
 ## [1.0.0] - 2026-11-09
 
 ### 新增
 - 幻訊 PhantomCheck 初始版本：`NotificationListenerService` 通知攔截預覽、Mistral AI 詐騙風險分析、關鍵字過濾與 Room 本地資料庫。
+
+### English
+- **Initial Release**: `versionCode = 1`, `versionName = "1.0.0"`.
+
+**Added**
+- Initial release of PhantomCheck: `NotificationListenerService` notification interception preview, Mistral AI scam risk analysis, keyword filtering, and local Room database.
