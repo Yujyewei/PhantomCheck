@@ -25,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -463,8 +464,79 @@ object AiClient {
         return base + path
     }
 
+    /** 目標 AI 端點已退役時拋出（如 GitHub Models 2026-07-30 退役），阻斷無效請求並引導遷移。 */
+    class RetiredAiEndpointException(message: String) : IOException(message)
+
+    /** HTTP 2xx 但回應非有效 JSON（Content-Type 非 JSON 或本文首字非 '{'/'['）時拋出，保留完整診斷資訊。 */
+    class NonJsonAiResponseException(
+        val httpCode: Int,
+        val contentType: String,
+        val bodyPreview: String
+    ) : IOException("HTTP $httpCode 回應非 JSON（Content-Type: $contentType）：$bodyPreview")
+
+    private const val GITHUB_MODELS_RETIREMENT_URL =
+        "https://github.blog/changelog/2026-07-30-github-models-is-now-retired/"
+
+    private val RETIRED_GITHUB_MODELS_HOSTS = setOf(
+        "models.github.ai",
+        "models.inference.ai.azure.com"
+    )
+
+    internal fun isRetiredGitHubModelsHost(host: String): Boolean {
+        val h = host.trim().lowercase(Locale.ROOT)
+        return RETIRED_GITHUB_MODELS_HOSTS.any { retired ->
+            h == retired || h.endsWith(".$retired")
+        }
+    }
+
+    internal fun buildGitHubModelsRetiredMessage(): String =
+        "GitHub Models 已於 2026-07-30 全面退役（inference API 與 BYOK 皆停用），請改用 Microsoft Foundry／各模型官方 API／OpenRouter 等供應商（$GITHUB_MODELS_RETIREMENT_URL）"
+
+    /**
+     * 統一 AI 傳輸層攔截器（供 okHttpClient 與 chatOkHttpClient 共用）：
+     * 1. GitHub Models 退役端點偵測（直接攔截並回報遷移說明）
+     * 2. 自動補齊 Accept: application/json 與 Accept-Charset: utf-8
+     * 3. HTTP 2xx 非 JSON 回應偵測（peekBody 保留狀態碼、Content-Type、前 300 字原始本文）
+     */
+    internal val aiTransportInterceptor: Interceptor = Interceptor { chain ->
+        val original = chain.request()
+        if (isRetiredGitHubModelsHost(original.url.host)) {
+            throw RetiredAiEndpointException(buildGitHubModelsRetiredMessage())
+        }
+        val reqBuilder = original.newBuilder()
+        if (original.header("Accept").isNullOrBlank()) {
+            reqBuilder.header("Accept", "application/json")
+        }
+        if (original.header("Accept-Charset").isNullOrBlank()) {
+            reqBuilder.header("Accept-Charset", "utf-8")
+        }
+        val response = chain.proceed(reqBuilder.build())
+        if (response.isSuccessful) {
+            val contentType = response.header("Content-Type")?.trim().orEmpty()
+            val contentTypeLower = contentType.lowercase(Locale.ROOT)
+            val isJsonContentType = contentTypeLower.contains("application/json") ||
+                contentTypeLower.contains("+json") ||
+                contentTypeLower.contains("text/json")
+            val peeked = runCatching { response.peekBody(8192L).string() }.getOrDefault("")
+            val trimmedStart = peeked.trimStart()
+            val looksLikeJson = trimmedStart.startsWith("{") || trimmedStart.startsWith("[")
+            if (!isJsonContentType || !looksLikeJson) {
+                val ctDisplay = contentType.ifBlank { "(none)" }
+                val preview = peeked.replace(WHITESPACE_REGEX, " ").trim().take(300).ifBlank { "(empty)" }
+                response.close()
+                throw NonJsonAiResponseException(
+                    httpCode = response.code,
+                    contentType = ctDisplay,
+                    bodyPreview = preview
+                )
+            }
+        }
+        response
+    }
+
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor(aiTransportInterceptor)
             .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
@@ -489,6 +561,7 @@ object AiClient {
 
     private val chatOkHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor(aiTransportInterceptor)
             .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
@@ -680,19 +753,23 @@ object AiClient {
         val timestampMs: Long = System.currentTimeMillis()
     )
 
-    /** 取得目前系統語系 BCP-47 標籤（例如 zh-TW、en-US），供 AI prompt 語言指令使用。 */
-    fun resolveLocaleTag(locale: Locale = Locale.getDefault()): String =
+    /** 取得目前 App 生效語系（#438 App 內設定優先於系統語系；跟隨系統時與 v4.2.0 一致）。 */
+    internal fun resolveEffectiveAppLocale(): Locale =
+        com.phantom.checker.util.AppLocaleHelper.resolveEffectiveLocale(resolveContext(null))
+
+    /** 取得目前生效語系 BCP-47 標籤（例如 zh-TW、en-US），供 AI prompt 語言指令使用。 */
+    fun resolveLocaleTag(locale: Locale = resolveEffectiveAppLocale()): String =
         locale.toLanguageTag().takeIf { it.isNotBlank() && it != "und" } ?: "en-US"
 
     /** 判斷是否為繁體中文語系（zh-TW / zh-HK / zh-MO / zh-Hant）；繁體中文維持既有 prompt 原文與 40 字 memo 密度。 */
-    fun isZhTwLocale(locale: Locale = Locale.getDefault()): Boolean {
+    fun isZhTwLocale(locale: Locale = resolveEffectiveAppLocale()): Boolean {
         val tag = resolveLocaleTag(locale).lowercase(Locale.ROOT)
         if (!tag.startsWith("zh")) return false
         return tag.contains("hant") || tag.contains("-tw") || tag.contains("-hk") || tag.contains("-mo") || tag == "zh"
     }
 
     /** 單行輸出語言指令：zh-TW 維持極簡單行（零 token 回歸），非 zh-TW 明確指示以對應語系輸出自然語言欄位。 */
-    internal fun buildLanguageDirective(locale: Locale = Locale.getDefault()): String {
+    internal fun buildLanguageDirective(locale: Locale = resolveEffectiveAppLocale()): String {
         val tag = resolveLocaleTag(locale)
         return if (isZhTwLocale(locale)) {
             "輸出語言：自然語言說明一律使用繁體中文（$tag）。"
@@ -709,7 +786,7 @@ object AiClient {
         includeAutoMemo: Boolean = false,
         memoRules: List<MemoRuleEntity> = emptyList(),
         antiFraudContextBlock: String = "",
-        locale: Locale = Locale.getDefault()
+        locale: Locale = resolveEffectiveAppLocale()
     ): String {
         val isZhTw = isZhTwLocale(locale)
         val base = StringBuilder()
@@ -1758,7 +1835,7 @@ object AiClient {
             null
         }
         val clean = (parsed ?: raw).replace(WHITESPACE_REGEX, " ").trim()
-        return clean.takeIf { it.isNotEmpty() }?.take(220)
+        return clean.takeIf { it.isNotEmpty() }?.take(300)
     }
 
     internal fun estimateTokens(text: String): Int = ((text.length + 3) / 4).coerceAtLeast(1)
@@ -1874,7 +1951,7 @@ object AiClient {
         }
     }
 
-    internal fun buildRagSummaryPrompt(locale: Locale = Locale.getDefault()): String {
+    internal fun buildRagSummaryPrompt(locale: Locale = resolveEffectiveAppLocale()): String {
         return if (isZhTwLocale(locale)) {
             """
                 請將以下手機通知訊息紀錄濃縮為 300~500 字的情境摘要（繁體中文），保留：
@@ -2153,7 +2230,7 @@ object AiClient {
     }
 
 
-    internal fun buildWeeklySystemPrompt(locale: Locale = Locale.getDefault()): String {
+    internal fun buildWeeklySystemPrompt(locale: Locale = resolveEffectiveAppLocale()): String {
         return if (isZhTwLocale(locale)) {
             "你是個人通訊防詐助理，請用繁體中文整理本週訊息統計、風險分布趨勢、最活躍 App 與高風險訊息重點及詐騙提醒。請使用 Markdown 格式（如 ## 標題、**重點粗體**、- 清單）條列呈現，五個段落皆須完整收尾，最後務必以完整句號（。）結束，不得在半句或括號未閉合處中斷。"
         } else {
@@ -2302,7 +2379,7 @@ object AiClient {
         return sb.toString()
     }
 
-    internal fun buildDeepAnalysisSystemPrompt(locale: Locale = Locale.getDefault()): String {
+    internal fun buildDeepAnalysisSystemPrompt(locale: Locale = resolveEffectiveAppLocale()): String {
         return if (isZhTwLocale(locale)) {
             buildString {
                 appendLine("你是專業的台灣繁體中文防詐顧問。請針對使用者收到的單則訊息進行結構化段落式深度風險解說。")
@@ -2963,6 +3040,12 @@ object AiClient {
             } catch (e: CancellationException) {
                 refund()
                 throw e
+            } catch (e: RetiredAiEndpointException) {
+                refund()
+                Result.failure(e)
+            } catch (e: NonJsonAiResponseException) {
+                refund()
+                Result.failure(e)
             } catch (e: Exception) {
                 refund()
                 Result.failure(IllegalStateException("聯網查詢連線失敗（${e.javaClass.simpleName}）。"))

@@ -40,6 +40,7 @@
         android:label="@string/chat_s_8dd976"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:localeConfig="@xml/locales_config"
         android:theme="@style/Theme.PhantomCheck">
 
         <activity
@@ -237,6 +238,55 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/notes_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TodoTodayWidgetProvider"
+            android:label="@string/widget_label_todo_today"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.phantom.checker.widget.ACTION_TODO_TODAY_TOGGLE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/todo_today_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.GoalProgressWidgetProvider"
+            android:label="@string/widget_label_goal_progress"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/goal_progress_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.QuickNoteWidgetProvider"
+            android:label="@string/widget_label_quick_note"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_note_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.HealthSnapWidgetProvider"
+            android:label="@string/widget_label_health_snap"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/health_snap_widget_info" />
         </receiver>
 
         <receiver android:name=".service.ReminderReceiver" android:exported="false" />
