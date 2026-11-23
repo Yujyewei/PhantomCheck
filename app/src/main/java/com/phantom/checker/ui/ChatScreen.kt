@@ -350,10 +350,46 @@ fun ChatAssistantTab(
         withContext(Dispatchers.IO) {
             val db = AppDatabaseHolder.db(appCtx)
             val allSessions = db.chatDao().allSessions()
+            val nowMs = System.currentTimeMillis()
             val startOfDay = NotificationCollectorService.startOfTodayMillis()
             val stats = db.messageDao().statsOverview(startOfDay)
             val topApps = db.messageDao().todayRecentApps(startOfDay)
-            val chips = buildList {
+
+            // #424 狀態驅動動態建議 chips（純本機條件、零 AI、零 token，最多 4 顆，不足以既有靜態 chips 補齊）
+            val dynamicChips = LinkedHashSet<String>()
+            if (stats.unread > 50) {
+                dynamicChips.add("精選今日必讀")
+            }
+            val hasTodayConflict = if (com.phantom.checker.util.CalendarBridge.isCalendarEnabledForAi(appCtx)) {
+                runCatching {
+                    val endOfDay = startOfDay + 24L * 60L * 60L * 1000L
+                    val timed = com.phantom.checker.util.CalendarBridge.queryInstances(appCtx, startOfDay, endOfDay)
+                        .filter { !it.allDay }
+                        .sortedBy { it.beginMs }
+                    timed.zipWithNext().any { (a, b) -> b.beginMs < a.endMs }
+                }.getOrDefault(false)
+            } else false
+            if (hasTodayConflict) {
+                dynamicChips.add("查看今日行程衝突")
+            }
+            val hasHcData = runCatching {
+                com.phantom.checker.util.HealthConnectBridge.hasAnyReadPermission(appCtx) &&
+                    com.phantom.checker.util.HealthConnectBridge.readLast7DaysTrend(appCtx).any {
+                        it.sleepHours > 0f || it.steps > 0L || it.avgHeartRateBpm > 0L || it.distanceMeters > 0.0 || it.caloriesKcal > 0.0
+                    }
+            }.getOrDefault(false)
+            if (hasHcData) {
+                dynamicChips.add("看健康摘要")
+            }
+            val hasOverdueTodo = runCatching {
+                db.todoDao().pendingTodos().any { it.dueAt < nowMs }
+            }.getOrDefault(false)
+            if (hasOverdueTodo) {
+                dynamicChips.add("檢查逾期事項")
+            }
+
+            // Fallback 沿用現行靜態 chips 補齊至最多 4 顆
+            val fallbackChips = buildList {
                 add("昨日簡報")
                 if (stats.today > 0) {
                     add("今天有哪些必看訊息？")
@@ -368,8 +404,13 @@ fun ChatAssistantTab(
                     add("幫我檢查最近的訊息風險")
                 }
             }
+            for (c in fallbackChips) {
+                if (dynamicChips.size >= 4) break
+                dynamicChips.add(c)
+            }
+
             sessions = allSessions
-            suggestionChips = chips
+            suggestionChips = dynamicChips.take(4)
             val loadedProfiles = AiClient.getProfiles(appCtx)
             val loadedActive = AiClient.getProfileForPurpose(appCtx, com.phantom.checker.util.AiPurpose.CHAT)
             profiles = loadedProfiles
@@ -426,9 +467,15 @@ fun ChatAssistantTab(
         }
     }
 
-    LaunchedEffect(messages.size, isSending) {
+    var lastScrolledSessionId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(currentSessionId, messages.size, isSending) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+            if (lastScrolledSessionId != currentSessionId) {
+                listState.scrollToItem(messages.lastIndex)
+                lastScrolledSessionId = currentSessionId
+            } else {
+                listState.animateScrollToItem(messages.lastIndex)
+            }
         }
     }
 
@@ -1625,6 +1672,17 @@ fun ChatAssistantTab(
                             }
                         }
 
+                        // #419 本機健康明細查詢（HealthConnectBridge 純本機聚合，零 token）
+                        if (parsed.healthQueryProposals.isNotEmpty()) {
+                            parsed.healthQueryProposals.forEach { hq ->
+                                val report = com.phantom.checker.util.HealthConnectBridge.buildHealthQueryReport(
+                                    ctx = appCtx,
+                                    days = hq.days
+                                )
+                                immediateExtraReplies.add(report)
+                            }
+                        }
+
                         // #364 單意圖單卡降級提示（不靜默遺漏任何次要查詢意圖）
                         if (parsed.demotedQueryHints.isNotEmpty()) {
                             immediateExtraReplies.add(
@@ -1652,6 +1710,13 @@ fun ChatAssistantTab(
                                         startMs = parsedStart,
                                         endMs = parsedEnd
                                     )
+                                    val allDayEvents = if (conflicts.isEmpty()) {
+                                        com.phantom.checker.util.CalendarBridge.findAllDayEventsInWindow(
+                                            ctx = appCtx,
+                                            startMs = parsedStart,
+                                            endMs = parsedEnd
+                                        )
+                                    } else emptyList()
                                     if (!confirmRequired && hasWritePerm && writableCals.isNotEmpty() && conflicts.isEmpty()) {
                                         val targetCal = writableCals.first()
                                         val res = com.phantom.checker.util.CalendarBridge.insertEvent(
@@ -1667,7 +1732,8 @@ fun ChatAssistantTab(
                                         val startFormatted = formatChatTime(parsedStart)
                                         res.fold(
                                             onSuccess = {
-                                                immediateExtraReplies.add("📅 已直接寫入本機日曆（${targetCal.displayName}）：「${cap.title}」（$startFormatted）。")
+                                                val allDaySuffix = com.phantom.checker.util.CalendarBridge.formatAllDayInfoNote(allDayEvents)?.let { "\n$it" } ?: ""
+                                                immediateExtraReplies.add("📅 已直接寫入本機日曆（${targetCal.displayName}）：「${cap.title}」（$startFormatted）。$allDaySuffix")
                                             },
                                             onFailure = { err ->
                                                 immediateExtraReplies.add("寫入日曆失敗：${err.localizedMessage ?: "未知錯誤"}。")
@@ -1684,7 +1750,8 @@ fun ChatAssistantTab(
                                                 location = cap.location,
                                                 notes = cap.notes,
                                                 writableCalendars = writableCals,
-                                                conflicts = conflicts
+                                                conflicts = conflicts,
+                                                allDayEvents = allDayEvents
                                             )
                                         )
                                     }
@@ -2796,18 +2863,19 @@ fun ChatAssistantTab(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
                     .clickable {
-                        scope.launch {
-                            if (isViewingProactiveRoom) {
-                                isViewingProactiveRoom = false
-                                val restoreId = previousNormalSessionId
-                                currentSessionId = restoreId
-                                if (restoreId != null) {
-                                    loadMessages(restoreId)
-                                } else {
-                                    messages = emptyList()
-                                }
-                            } else {
-                                previousNormalSessionId = currentSessionId
+                        if (isViewingProactiveRoom) {
+                            messages = emptyList()
+                            isViewingProactiveRoom = false
+                            val restoreId = previousNormalSessionId
+                            currentSessionId = restoreId
+                            if (restoreId != null) {
+                                scope.launch { loadMessages(restoreId) }
+                            }
+                        } else {
+                            messages = emptyList()
+                            previousNormalSessionId = currentSessionId
+                            isViewingProactiveRoom = true
+                            scope.launch {
                                 val proactiveSid = withContext(Dispatchers.IO) {
                                     com.phantom.checker.service.ProactiveEngine.getOrCreateProactiveSessionId(
                                         AppDatabaseHolder.db(appCtx)
@@ -2816,9 +2884,10 @@ fun ChatAssistantTab(
                                 val now = System.currentTimeMillis()
                                 PhantomPrefs.setProactiveChatLastReadAt(appCtx, now)
                                 proactiveLastReadAt = now
-                                isViewingProactiveRoom = true
-                                currentSessionId = proactiveSid
-                                loadMessages(proactiveSid)
+                                if (isViewingProactiveRoom) {
+                                    currentSessionId = proactiveSid
+                                    loadMessages(proactiveSid)
+                                }
                             }
                         }
                     }
@@ -2995,6 +3064,7 @@ fun ChatAssistantTab(
                 val showBubbleTimestamp = remember(chatLayoutVer) {
                     PhantomPrefs.isChatTimestampEnabled(appCtx)
                 }
+                androidx.compose.runtime.key(currentSessionId) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -4392,6 +4462,22 @@ fun ChatAssistantTab(
                                             modifier = Modifier.padding(8.dp)
                                         )
                                     }
+                                } else {
+                                    com.phantom.checker.util.CalendarBridge.formatAllDayInfoNote(pendingCal.allDayEvents)?.let { infoNote ->
+                                        Spacer(Modifier.height(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                text = infoNote,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(8.dp)
+                                            )
+                                        }
+                                    }
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 Row(
@@ -5569,6 +5655,7 @@ fun ChatAssistantTab(
                             }
                         }
                     }
+                }
                 }
             }
         }
