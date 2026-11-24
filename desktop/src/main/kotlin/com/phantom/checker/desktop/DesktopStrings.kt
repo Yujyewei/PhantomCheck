@@ -1,13 +1,22 @@
 package com.phantom.checker.desktop
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.util.Locale
 
 /**
- * #468 雙語文案中心（即時讀取 DesktopSettingsStore 語言設定，支援 auto / zh-TW / en 即時切換）。
+ * #468 / #479 雙語文案中心（以 Compose SnapshotState 驅動，切換 auto / zh-TW / en 時全視窗與系統匣即時重組生效）。
  */
 object DesktopStrings {
+    private var languageState by mutableStateOf(DesktopSettingsStore.state.value.language)
+
+    fun syncLanguage(lang: String) {
+        languageState = lang
+    }
+
     private val isZh: Boolean
-        get() = when (DesktopSettingsStore.state.value.language) {
+        get() = when (languageState) {
             "zh-TW" -> true
             "en" -> false
             else -> Locale.getDefault().language.startsWith("zh", ignoreCase = true)
@@ -182,5 +191,171 @@ object DesktopStrings {
         "scam" -> t("詐騙", "SCAM")
         "suspicious" -> t("可疑", "SUSPICIOUS")
         else -> t("安全", "SAFE")
+    }
+
+    // #476 Reversed Desktop WSS Server & Diagnostics
+    val serverStatusTitle get() = t("桌面端 WSS 伺服器狀態", "Desktop WSS Server Status")
+    val statusWaitingForPhone get() = t("等待手機連線中…", "Waiting for phone…")
+    val statusServerStopped get() = t("伺服器已停止", "Server stopped")
+    val statusServerError get() = t("伺服器啟動失敗", "Server error")
+    val serverStartBtn get() = t("啟動伺服器", "Start Server")
+    val serverStopBtn get() = t("停止伺服器", "Stop Server")
+    val serverRestartBtn get() = t("套用埠並重啟", "Apply Port & Restart")
+    val serverPortLabel get() = t("監聽埠（預設 49515）", "Listen Port (default 49515)")
+    val serverLanIpsLabel get() = t("本機區網位址（供手機手動輸入備援）", "Local LAN Addresses (for phone manual fallback)")
+    val mdnsActiveLabel get() = t("mDNS 廣播中", "mDNS Advertising")
+    val mdnsFailedLabel get() = t("mDNS 廣播失敗（請以手動位址或 QR 配對）", "mDNS broadcast failed (use manual address or QR)")
+    val serverFirewallHint get() = t(
+        "Windows 防火牆說明：首次啟動監聽時請在系統彈窗點選「允許存取（私人網路）」。若手機顯示無法連線，請確認 Windows 防火牆已放行 PhantomCheckDesktop.exe 的輸入規則。",
+        "Windows Firewall: Click 'Allow access (Private networks)' on the first prompt. If your phone cannot reach this PC, allow inbound connections for PhantomCheckDesktop.exe in Windows Firewall."
+    )
+    val pairNewPhoneTitle get() = t("配對新手機（單次 6 位碼，3 分鐘有效）", "Pair New Phone (Single-Use 6-Digit Code, 3 min)")
+    val pairCodeRegenerate get() = t("重新產生配對碼", "Regenerate Code")
+    val pairCodeExpired get() = t("配對碼已過期，請重新產生", "Pairing code expired — regenerate")
+    val pairedPhonesTitle get() = t("已配對手機", "Paired Phones")
+    val pairedPhonesEmpty get() = t("尚未配對任何手機（請在手機端「連線」分頁配對）", "No paired phones yet (pair from the Link tab on your phone)")
+    val serverAuditTitle get() = t("伺服器連線與指令審計（上限 200 筆）", "Server Connection & Command Audit (max 200)")
+    val serverAuditEmpty get() = t("尚無審計紀錄", "No audit entries yet")
+    val clearLogsBtn get() = t("清除", "Clear")
+
+    fun serverListeningOn(port: Int, connected: Int): String =
+        t("監聽中（埠 $port）· 已連線 $connected 台手機", "Listening on port $port · $connected phone(s) connected")
+
+    fun serverPortInUse(port: Int): String =
+        t("連接埠 $port 已被其他程式佔用，請更換連接埠並重啟伺服器。", "Port $port is already in use. Change the port and restart the server.")
+
+    fun pairCodeRemaining(mmss: String): String =
+        t("有效剩餘 $mmss（單次有效）", "Valid for $mmss (single-use)")
+
+    fun classifiedError(code: String): String = when (code) {
+        com.phantom.checker.shared.LinkErrorCode.PORT_IN_USE ->
+            t("連接埠已被佔用，請至連線設定更換埠號", "Port is already in use — change port in Connection settings")
+        com.phantom.checker.shared.LinkErrorCode.VERSION_MISMATCH ->
+            t("協定版本不符（桌面為 v${com.phantom.checker.shared.LinkProtocol.PROTOCOL_VERSION}），請更新雙端並重新配對", "Protocol version mismatch (desktop v${com.phantom.checker.shared.LinkProtocol.PROTOCOL_VERSION}) — update both sides and re-pair")
+        com.phantom.checker.shared.LinkErrorCode.FINGERPRINT_MISMATCH ->
+            t("憑證指紋不符，已拒絕連線（請重新配對）", "Certificate fingerprint mismatch — connection rejected (please re-pair)")
+        com.phantom.checker.shared.LinkErrorCode.INVALID_PAIR_CODE ->
+            t("6 位配對碼錯誤", "Invalid 6-digit pairing code")
+        com.phantom.checker.shared.LinkErrorCode.PAIR_CODE_EXPIRED ->
+            t("配對碼已過期，請重新產生", "Pairing code expired — please regenerate")
+        com.phantom.checker.shared.LinkErrorCode.AUTH_FAILED ->
+            t("身分驗證失敗（HMAC 不符），請重新配對", "Authentication failed (HMAC mismatch) — please re-pair")
+        com.phantom.checker.shared.LinkErrorCode.TOO_MANY_CLIENTS ->
+            t("已達同時連線上限（最多 2 台手機）", "Maximum concurrent phones (2) reached")
+        com.phantom.checker.shared.LinkErrorCode.TLS_ERROR ->
+            t("TLS 憑證初始化或握手失敗", "TLS certificate initialization or handshake failed")
+        com.phantom.checker.shared.LinkErrorCode.TIMEOUT ->
+            t("指令等待手機回應逾時，請檢查區網連線", "Command timed out waiting for phone response")
+        else -> t("連線錯誤：$code", "Connection error: $code")
+    }
+
+    // #477 QR Pairing Dialog
+    val qrConfigurePhoneBtn get() = t("配置新手機（顯示 QR Code）", "Configure New Phone (Show QR Code)")
+    val qrDialogTitle get() = t("掃描 QR Code 配對新手機", "Scan QR Code to Pair New Phone")
+    val qrDialogHint get() = t(
+        "請在手機端開啟「幻訊 → 連線 → 掃描電腦 QR Code」，掃描下方條碼並確認電腦名稱與憑證指紋。",
+        "Open PhantomCheck on your phone → Link → Scan Desktop QR Code, then verify the PC name and fingerprint."
+    )
+    val qrSelectNicLabel get() = t("偵測到多張網卡，請選擇手機同區網的 IPv4 位址：", "Multiple network interfaces detected — pick the IPv4 on your phone's Wi-Fi:")
+    val qrNoLanIpError get() = t("尚未偵測到區網 IPv4 位址，請確認電腦已連上區域網路。", "No LAN IPv4 address detected. Check your network connection.")
+    val qrUnavailableHint get() = t("伺服器尚未就緒或無法產生 QR Code", "Server not ready or unable to render QR code")
+
+    // #478 Auto Update & About Tab
+    val settingsTabAbout get() = t("關於", "About")
+    val updateDialogTitle get() = t("發現桌面端新版本", "Desktop Update Available")
+    val updateNoNotes get() = t("（此版本無更新說明）", "(No release notes provided)")
+    val updateOpenReleaseBtn get() = t("前往 Release 頁面", "Open Release Page")
+    val updateDownloadInstallBtn get() = t("下載並執行安裝", "Download & Install")
+    val updateRunInstallerBtn get() = t("啟動安裝程式", "Launch Installer")
+    val updateInstallerLaunched get() = t("已啟動安裝程式", "Installer launched")
+    val updateUpToDate get() = t("目前已是最新版本", "You are up to date")
+    val updateNotifTitle get() = t("PhantomCheck 桌面端有新版本", "PhantomCheck Desktop Update Available")
+    val openLinkFailed get() = t("無法開啟外部連結", "Failed to open external link")
+    val aboutTitle get() = t("關於 PhantomCheck 桌面端", "About PhantomCheck Desktop")
+    val aboutProtocolCompat get() = t("相容手機端協定版本：v${com.phantom.checker.shared.LinkProtocol.PROTOCOL_VERSION}", "Compatible Phone Protocol: v${com.phantom.checker.shared.LinkProtocol.PROTOCOL_VERSION}")
+    val aboutLinksTitle get() = t("專案連結與條款", "Project Links & Legal")
+    val aboutRepoBtn get() = t("GitHub 倉庫", "GitHub Repo")
+    val aboutReleasesBtn get() = t("所有版本 (Releases)", "Releases")
+    val aboutLicenseBtn get() = t("授權條款 (GPL-3.0)", "LICENSE (GPL-3.0)")
+    val aboutPrivacyBtn get() = t("隱私政策 (PRIVACY)", "PRIVACY")
+    val aboutDisclaimerBtn get() = t("免責聲明 (DISCLAIMER)", "DISCLAIMER")
+    val aboutReleaseNotesTitle get() = t("更新內容（最近 10 個版本）", "Release Notes (Recent 10 Releases)")
+    val aboutLoadingNotes get() = t("正在載入更新內容…", "Loading release notes…")
+
+    fun updateDownloading(pct: Int): String = t("正在下載安裝檔… $pct%", "Downloading installer… $pct%")
+    fun updateReadyToLaunch(name: String): String = t("已下載至暫存：$name，點擊「啟動安裝程式」繼續。", "Downloaded to temp: $name. Click 'Launch Installer' to continue.")
+    fun updateNotifBody(ver: String): String = t("桌面端 v$ver 已發佈，開啟設定中心即可檢視更新內容並下載。", "Desktop v$ver is available. Open Settings to view notes and install.")
+
+    // #479 Full Localization & 16 Custom Settings + DND Picker
+    val settingsTabCustom16 get() = t("介面自訂 (16)", "Customize (16)")
+    val langAuto get() = t("跟隨系統 (Auto)", "Follow System (Auto)")
+    val feedbackSettingsReset get() = t("已還原為預設設定", "Settings reset to defaults")
+    val feedbackOpenFailed get() = t("開啟資料夾失敗", "Failed to open folder")
+    val feedbackExportFailed get() = t("匯出診斷報告失敗", "Failed to export diagnostics")
+    fun feedbackAutoStart(enabled: Boolean): String =
+        if (enabled) t("已啟用開機自動啟動", "Windows auto-start enabled") else t("已停用開機自動啟動", "Windows auto-start disabled")
+    fun feedbackExported(path: String): String = t("已匯出診斷報告：$path", "Exported diagnostics: $path")
+
+    val dndStartLabel get() = t("開始時間", "Start Hour")
+    val dndEndLabel get() = t("結束時間", "End Hour")
+    val dndCrossDayHint get() = t("（跨日）", "(overnight)")
+
+    val custCustomHexTitle get() = t("9. 自訂強調色 HEX（留空沿用上方預設）", "9. Custom Accent HEX (blank = preset)")
+    val custCustomHexHint get() = t("例如 #FF6B6B", "e.g. #FF6B6B")
+    val custCustomHexInvalid get() = t("格式須為 #RRGGBB", "Must be #RRGGBB")
+    val custTimeFormatTitle get() = t("10. 時間顯示格式", "10. Time Format")
+    val time24h get() = t("24 小時制", "24-hour")
+    val time12h get() = t("12 小時制 (AM/PM)", "12-hour (AM/PM)")
+    val custCardCornerTitle get() = t("11. 訊息卡圓角", "11. Message Card Corner Radius")
+    val custGlassBlurTitle get() = t("12. 玻璃模糊通透強度", "12. Glass Blur / Translucency")
+    val custChatFontSizeTitle get() = t("13. AI 聊天字級", "13. AI Chat Font Size")
+    val custNotifSoundTitle get() = t("14. 新訊息通知音效", "14. Notification Sound")
+    val custAutoConnectTitle get() = t("15. 啟動時自動啟動伺服器接收已配對手機", "15. Auto-start Server for Paired Phone on Launch")
+    val custDefaultTabTitle get() = t("16. 啟動預設分頁", "16. Default Startup Tab")
+
+    fun densityLabel(d: UiDensity): String = when (d) {
+        UiDensity.COMPACT -> t("緊湊 (Compact)", "Compact")
+        UiDensity.STANDARD -> t("標準 (Standard)", "Standard")
+        UiDensity.COMFORTABLE -> t("舒適 (Comfortable)", "Comfortable")
+    }
+
+    fun cardStyleLabel(s: MessageCardStyle): String = when (s) {
+        MessageCardStyle.CARD -> t("卡片 (Card)", "Card")
+        MessageCardStyle.COMPACT_LIST -> t("精簡列表 (Compact List)", "Compact List")
+    }
+
+    fun mirrorModeLabel(m: MirrorDisplayMode): String = when (m) {
+        MirrorDisplayMode.BANNER -> t("視窗橫幅 (Banner)", "In-App Banner")
+        MirrorDisplayMode.NATIVE -> t("系統通知 (Native)", "System Notification")
+        MirrorDisplayMode.BOTH -> t("兩者皆開 (Both)", "Both")
+    }
+
+    fun bgThemeLabel(b: BgThemePreset): String = when (b) {
+        BgThemePreset.MIDNIGHT -> t("午夜藍 (Midnight)", "Midnight")
+        BgThemePreset.AURORA -> t("極光紫 (Aurora)", "Aurora")
+        BgThemePreset.OBSIDIAN -> t("黑曜石 (Obsidian)", "Obsidian")
+        BgThemePreset.DEEP_OCEAN -> t("深海藍 (Deep Ocean)", "Deep Ocean")
+    }
+
+    fun glassBlurLabel(g: GlassBlurLevel): String = when (g) {
+        GlassBlurLevel.LOW -> t("低 (Low)", "Low")
+        GlassBlurLevel.MEDIUM -> t("中 (Medium)", "Medium")
+        GlassBlurLevel.HIGH -> t("高 (High)", "High")
+    }
+
+    fun chatFontSizeLabel(c: ChatFontSize): String = when (c) {
+        ChatFontSize.SMALL -> t("小 (Small)", "Small")
+        ChatFontSize.STANDARD -> t("標準 (Standard)", "Standard")
+        ChatFontSize.LARGE -> t("大 (Large)", "Large")
+    }
+
+    fun startupTabLabel(key: String): String = when (key) {
+        "MESSAGES" -> navMessages
+        "STATS" -> navStats
+        "TODOS" -> navTodos
+        "CHAT" -> navChat
+        "RULES" -> navRules
+        "SETTINGS" -> navSettings
+        else -> navMessages
     }
 }
