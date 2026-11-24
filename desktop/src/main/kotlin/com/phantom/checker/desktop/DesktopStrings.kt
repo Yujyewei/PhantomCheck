@@ -358,4 +358,45 @@ object DesktopStrings {
         "SETTINGS" -> navSettings
         else -> navMessages
     }
+
+    // #487 Windows Firewall Self-Check & One-Click Allow
+    val firewallSectionTitle get() = t("Windows 防火牆自我檢查與一鍵放行", "Windows Firewall Self-Check & One-Click Allow")
+    val firewallCheckBtn get() = t("檢查防火牆狀態", "Check Firewall Status")
+    val firewallChecking get() = t("檢查中…", "Checking…")
+    val firewallAllowBtn get() = t("一鍵允許防火牆（管理員）", "One-Click Allow Firewall (UAC)")
+    val firewallApplying get() = t("套用中（請確認 UAC 提示）…", "Applying (approve UAC prompt)…")
+    val firewallNonWindows get() = t("非 Windows 系統：請依您的作業系統防火牆設定放行 TCP 輸入連線。", "Non-Windows OS: ensure your OS firewall allows inbound TCP on the listen port.")
+    fun firewallPortRuleOk(port: Int): String = t("✓ 已找到埠規則：TCP $port 輸入允許（Profile: Any）", "✓ Port rule found: Inbound TCP $port allowed (Profile: Any)")
+    fun firewallPortRuleMissing(port: Int): String = t("✕ 尚未建立 TCP $port 輸入允許規則（手機連線將逾時 TIMEOUT）", "✕ No inbound allow rule for TCP $port (phone will TIMEOUT)")
+    val firewallProgRuleOk get() = t("✓ 已找到程式執行檔輸入規則（雙保險）", "✓ App executable inbound rule found (backup)")
+    val firewallProgRuleMissing get() = t("• 尚未建立程式執行檔規則（可一併透過一鍵允許建立）", "• App executable rule not present (created together via One-Click Allow)")
+    val firewallPublicWarning get() = t(
+        "⚠ 偵測到「公用網路（Public）」介面（例如 Windows 行動熱點／ICS 192.168.137.x）：Windows 防火牆預設會靜默丟棄輸入連線導致手機逾時，請點擊下方「一鍵允許防火牆」放行。",
+        "⚠ 'Public' network profile detected (e.g., Windows Mobile Hotspot / ICS 192.168.137.x): Windows Firewall silently drops inbound TCP causing phone TIMEOUT. Click 'One-Click Allow Firewall' below."
+    )
+    val firewallProfilesLabel get() = t("目前網路介面分類：", "Active network profiles:")
+    val firewallSafetyNote get() = t(
+        "安全說明：僅新增 PhantomCheck 專屬的 TCP 輸入允許規則，絕不停用防火牆或修改其他程式規則。",
+        "Safety: Only adds PhantomCheck's dedicated inbound TCP allow rules; never disables Firewall or modifies other rules."
+    )
+    fun firewallAllowSuccess(port: Int): String = t("已新增 PhantomCheck 防火牆允許規則（TCP $port，全設定檔）", "Added PhantomCheck Firewall allow rule (TCP $port, Profile: Any)")
+    fun firewallAllowFailed(err: String): String = t("防火牆設定未完成（可能取消 UAC）：$err", "Firewall update not completed (UAC may have been cancelled): $err")
+
+    // #488 Page Transitions, Surface Depth/Opacity & Custom Background Emergence
+    val custTransitionTitle get() = t("頁面切換動畫樣式（支援關閉動畫退場）", "Page Transition Animation Style")
+    fun transitionStyleLabel(style: PageTransitionStyle): String = when (style) {
+        PageTransitionStyle.FADE -> t("淡入淡出 (Fade)", "Fade")
+        PageTransitionStyle.SLIDE_HORIZONTAL -> t("水平滑動 (Slide)", "Horizontal Slide")
+        PageTransitionStyle.SLIDE_FADE -> t("滑動＋淡入 (Slide+Fade)", "Slide + Fade")
+        PageTransitionStyle.SCALE_FADE -> t("微縮放＋淡入 (Scale+Fade)", "Scale + Fade")
+        PageTransitionStyle.NONE -> t("關閉動畫 (Off)", "Off (No Animation)")
+    }
+    val custSurfaceOpacityTitle get() = t("玻璃卡片不透明度（讓自訂背景浮現）", "Glass Card Opacity (Background Emergence)")
+    val custBgScrimTitle get() = t("背景遮罩深淺（數值越低背景越清晰）", "Background Dim / Scrim Depth (Lower = Clearer Background)")
+    val custHighContrastTitle get() = t("文字對比強化（高亮度背景時提升可讀性）", "High-Contrast Text (Boost readability over custom backgrounds)")
+    val bgPickerBtn get() = t("選擇圖片…", "Choose Image…")
+    val bgPickerTitle get() = t("選擇桌面背景圖片", "Choose Desktop Background Image")
+    val bgPickerSaved get() = t("已套用並複製背景圖片至本機配置目錄", "Background image applied & copied to config folder")
+    fun bgPickerFailed(err: String): String = t("載入背景圖片失敗：$err", "Failed to load background image: $err")
+    val bgRemoved get() = t("已移除自訂背景圖並還原漸層", "Custom background removed; gradient restored")
 }

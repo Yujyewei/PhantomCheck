@@ -76,7 +76,9 @@ data class PhoneLinkStatus(
     val lastErrorCode: String? = null,
     val lastErrorDetail: String? = null,
     val reconnectRemainingSec: Int = 0,
-    val reconnectTotalSec: Int = 0
+    val reconnectTotalSec: Int = 0,
+    val isProbing: Boolean = false,
+    val probeCooldownSec: Int = 0
 )
 
 /**
@@ -85,6 +87,9 @@ data class PhoneLinkStatus(
  * - 嚴守隱私紅線：敏感記憶（PRIVACY_SENSITIVE）絕不外送、訊息預覽上限 200 字、審計與診斷不記訊息與金鑰
  */
 object DesktopLinkClient {
+
+    private const val PROBE_COOLDOWN_MS = 15_000L
+    private const val TCP_PROBE_TIMEOUT_MS = 8_000
 
     private val gson = Gson()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -108,6 +113,15 @@ object DesktopLinkClient {
     private var messagePushJob: Job? = null
 
     @Volatile
+    private var probeJob: Job? = null
+
+    @Volatile
+    private var lastTimeoutTargetKey: String? = null
+
+    @Volatile
+    private var lastTimeoutAtMs: Long = 0L
+
+    @Volatile
     private var shouldKeepConnected: Boolean = false
 
     @Volatile
@@ -127,6 +141,70 @@ object DesktopLinkClient {
 
     @Volatile
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+
+    @Volatile
+    private var discoveryRequested: Boolean = false
+
+    @Volatile
+    private var discoveryAppCtx: Context? = null
+
+    @Volatile
+    private var isScreenOff: Boolean = false
+
+    @Volatile
+    private var screenReceiverRegistered: Boolean = false
+
+    private const val SCREEN_OFF_BACKOFF_CAP_SEC = 60
+    private const val SCREEN_ON_BACKOFF_CAP_SEC = 30
+    private const val MSG_PUSH_INTERVAL_INTERACTIVE_MS = 3_000L
+    private const val MSG_PUSH_INTERVAL_SCREEN_OFF_MS = 10_000L
+
+    private fun ensureScreenReceiverRegistered(appCtx: Context) {
+        if (screenReceiverRegistered) return
+        synchronized(this) {
+            if (screenReceiverRegistered) return
+            runCatching {
+                val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                isScreenOff = pm != null && !pm.isInteractive
+                val receiver = object : android.content.BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        when (intent?.action) {
+                            Intent.ACTION_SCREEN_OFF -> {
+                                isScreenOff = true
+                                pauseDiscoveryForScreenOff()
+                            }
+                            Intent.ACTION_SCREEN_ON -> {
+                                isScreenOff = false
+                                val savedCtx = discoveryAppCtx ?: appCtx
+                                if (discoveryRequested && discoveryListener == null) {
+                                    startDiscoveryInternal(savedCtx)
+                                }
+                                val target = activeTarget
+                                if (shouldKeepConnected && target != null &&
+                                    _status.value.connState == PhoneLinkConnState.RECONNECTING
+                                ) {
+                                    reconnectJob?.cancel()
+                                    reconnectJob = null
+                                    openSocket(appCtx, target, backoffSec = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+                val filter = IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    appCtx.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    @Suppress("UnspecifiedRegisterReceiverFlag")
+                    appCtx.registerReceiver(receiver, filter)
+                }
+                screenReceiverRegistered = true
+            }
+        }
+    }
 
     private data class ConnectTarget(
         val host: String,
@@ -239,7 +317,74 @@ object DesktopLinkClient {
         DesktopLinkStore.removePairedDevice(appCtx, instanceId)
     }
 
+    /**
+     * #487 手動「立即診斷」：繞過 15s 探測冷卻，直接對目標 host:port 執行一次 TCP 連通探測並記錄結果。
+     */
+    fun probeDesktopNow(ctx: Context, host: String, port: Int) {
+        val appCtx = ctx.applicationContext
+        val cleanHost = host.trim().removePrefix("wss://").removePrefix("ws://").substringBefore("/").substringBefore(":")
+        val cleanPort = port.coerceIn(1024, 65535)
+        if (cleanHost.isBlank()) return
+
+        probeJob?.cancel()
+        // 手動診斷繞過同目標冷卻
+        lastTimeoutTargetKey = null
+        lastTimeoutAtMs = 0L
+        _status.value = _status.value.copy(isProbing = true, probeCooldownSec = 0)
+
+        probeJob = scope.launch {
+            val startedAt = System.currentTimeMillis()
+            DesktopLinkStore.recordDiagnostic(appCtx, "PROBE", "START", "$cleanHost:$cleanPort")
+            try {
+                java.net.Socket().use { socket ->
+                    socket.connect(java.net.InetSocketAddress(cleanHost, cleanPort), TCP_PROBE_TIMEOUT_MS)
+                }
+                val elapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(1L)
+                DesktopLinkStore.recordDiagnostic(appCtx, "PROBE", "TCP_OK", "$cleanHost:$cleanPort (${elapsed}ms)")
+                _status.value = _status.value.copy(
+                    isProbing = false,
+                    probeCooldownSec = 0,
+                    lastErrorCode = if (_status.value.lastErrorCode == LinkErrorCode.TIMEOUT) null else _status.value.lastErrorCode,
+                    lastErrorDetail = if (_status.value.lastErrorCode == LinkErrorCode.TIMEOUT) null else _status.value.lastErrorDetail
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.net.SocketTimeoutException) {
+                lastTimeoutTargetKey = "$cleanHost:$cleanPort"
+                lastTimeoutAtMs = System.currentTimeMillis()
+                val detail = e.message ?: "failed to connect to $cleanHost:$cleanPort after ${TCP_PROBE_TIMEOUT_MS}ms"
+                DesktopLinkStore.recordDiagnostic(appCtx, "TCP", LinkErrorCode.TIMEOUT, detail)
+                _status.value = _status.value.copy(
+                    isProbing = false,
+                    lastErrorCode = LinkErrorCode.TIMEOUT,
+                    lastErrorDetail = detail,
+                    probeCooldownSec = (PROBE_COOLDOWN_MS / 1000L).toInt()
+                )
+            } catch (e: ConnectException) {
+                val detail = e.message ?: "Connection refused"
+                DesktopLinkStore.recordDiagnostic(appCtx, "TCP", "REFUSED", detail)
+                _status.value = _status.value.copy(
+                    isProbing = false,
+                    lastErrorCode = LinkErrorCode.TCP_UNREACHABLE,
+                    lastErrorDetail = detail,
+                    probeCooldownSec = 0
+                )
+            } catch (e: Throwable) {
+                val (stage, code) = classifyThrowable(e)
+                val detail = e.message ?: e.javaClass.simpleName
+                DesktopLinkStore.recordDiagnostic(appCtx, stage, code, detail)
+                _status.value = _status.value.copy(
+                    isProbing = false,
+                    lastErrorCode = code,
+                    lastErrorDetail = detail,
+                    probeCooldownSec = 0
+                )
+            }
+        }
+    }
+
     private fun startConnectionFlow(appCtx: Context, target: ConnectTarget) {
+        ensureScreenReceiverRegistered(appCtx)
         reconnectJob?.cancel()
         reconnectJob = null
         closeActiveSocket("Switching target")
@@ -303,6 +448,8 @@ object DesktopLinkClient {
 
         val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                lastTimeoutTargetKey = null
+                lastTimeoutAtMs = 0L
                 DesktopLinkStore.recordDiagnostic(appCtx, "TLS", "OPEN", "fp=${observedCertFp.take(8)}…")
             }
 
@@ -536,9 +683,10 @@ object DesktopLinkClient {
                     isSubscribedToMessages = false
                 }
                 DesktopLinkStore.recordDiagnostic(appCtx, "TCP", "CLOSED", "code=$code $reason")
+                val maxCap = if (isScreenOff) SCREEN_OFF_BACKOFF_CAP_SEC else SCREEN_ON_BACKOFF_CAP_SEC
                 val nextTarget = activeTarget
                 if (shouldKeepConnected && nextTarget != null && nextTarget.hmacSecret != null) {
-                    scheduleReconnect(appCtx, nextTarget, if (sessionAuthed) 1 else (backoffSec * 2).coerceAtMost(30))
+                    scheduleReconnect(appCtx, nextTarget, if (sessionAuthed) 1 else (backoffSec * 2).coerceAtMost(maxCap))
                 } else {
                     _status.value = _status.value.copy(connState = PhoneLinkConnState.DISCONNECTED)
                 }
@@ -552,8 +700,13 @@ object DesktopLinkClient {
                     isSubscribedToMessages = false
                 }
                 val (stage, code) = classifyThrowable(t)
+                val diagCode = if (t is ConnectException || t.cause is ConnectException) "REFUSED" else code
                 val detail = t.message ?: t.javaClass.simpleName
-                DesktopLinkStore.recordDiagnostic(appCtx, stage, code, detail)
+                if (code == LinkErrorCode.TIMEOUT) {
+                    lastTimeoutTargetKey = "${target.host}:${target.port}"
+                    lastTimeoutAtMs = System.currentTimeMillis()
+                }
+                DesktopLinkStore.recordDiagnostic(appCtx, stage, diagCode, detail)
 
                 // Do not auto-retry pairing failures or TLS/fingerprint failures
                 val nextTarget = activeTarget
@@ -566,11 +719,13 @@ object DesktopLinkClient {
                 _status.value = _status.value.copy(
                     connState = if (canAutoRetry) PhoneLinkConnState.RECONNECTING else PhoneLinkConnState.DISCONNECTED,
                     lastErrorCode = code,
-                    lastErrorDetail = detail
+                    lastErrorDetail = detail,
+                    probeCooldownSec = if (code == LinkErrorCode.TIMEOUT) (PROBE_COOLDOWN_MS / 1000L).toInt() else 0
                 )
 
                 if (canAutoRetry && nextTarget != null) {
-                    scheduleReconnect(appCtx, nextTarget, if (sessionAuthed) 1 else (backoffSec * 2).coerceAtMost(30))
+                    val maxCap = if (isScreenOff) SCREEN_OFF_BACKOFF_CAP_SEC else SCREEN_ON_BACKOFF_CAP_SEC
+                    scheduleReconnect(appCtx, nextTarget, if (sessionAuthed) 1 else (backoffSec * 2).coerceAtMost(maxCap))
                 } else {
                     shouldKeepConnected = false
                 }
@@ -581,16 +736,38 @@ object DesktopLinkClient {
 
     private fun scheduleReconnect(appCtx: Context, target: ConnectTarget, delaySec: Int) {
         reconnectJob?.cancel()
-        val capped = delaySec.coerceIn(1, 30)
+        val maxCap = if (isScreenOff) SCREEN_OFF_BACKOFF_CAP_SEC else SCREEN_ON_BACKOFF_CAP_SEC
+        val targetKey = "${target.host}:${target.port}"
+        val cooldownRemainSec = if (lastTimeoutTargetKey == targetKey) {
+            val remainMs = PROBE_COOLDOWN_MS - (System.currentTimeMillis() - lastTimeoutAtMs)
+            if (remainMs > 0L) ((remainMs + 999L) / 1000L).toInt() else 0
+        } else {
+            0
+        }
+        val capped = maxOf(delaySec, cooldownRemainSec).coerceIn(1, maxCap)
         reconnectJob = scope.launch {
-            for (rem in capped downTo 1) {
-                if (!shouldKeepConnected) return@launch
+            if (isScreenOff) {
+                // #489 熄屏時不做每秒 UI 倒數喚醒，整段退避睡眠（亮屏由 ACTION_SCREEN_ON 立即中斷並重連）
                 _status.value = _status.value.copy(
                     connState = PhoneLinkConnState.RECONNECTING,
-                    reconnectRemainingSec = rem,
+                    reconnectRemainingSec = capped,
                     reconnectTotalSec = capped
                 )
-                delay(1000L)
+                delay(capped * 1000L)
+            } else {
+                for (rem in capped downTo 1) {
+                    if (!shouldKeepConnected) return@launch
+                    if (isScreenOff) {
+                        delay(rem * 1000L)
+                        break
+                    }
+                    _status.value = _status.value.copy(
+                        connState = PhoneLinkConnState.RECONNECTING,
+                        reconnectRemainingSec = rem,
+                        reconnectTotalSec = capped
+                    )
+                    delay(1000L)
+                }
             }
             if (shouldKeepConnected) {
                 openSocket(appCtx, target, capped)
@@ -1265,7 +1442,7 @@ object DesktopLinkClient {
         messagePushJob = scope.launch {
             val db = AppDatabaseHolder.db(appCtx)
             while (activeWs != null && isSubscribedToMessages) {
-                delay(3_000L)
+                delay(if (isScreenOff) MSG_PUSH_INTERVAL_SCREEN_OFF_MS else MSG_PUSH_INTERVAL_INTERACTIVE_MS)
                 val ws = activeWs ?: break
                 if (!isSubscribedToMessages) break
                 val recent = runCatching { db.messageDao().paged(20, 0) }.getOrDefault(emptyList())
@@ -1293,45 +1470,102 @@ object DesktopLinkClient {
         }
     }
 
-    // ---- Android NsdManager LAN Discovery for Desktop WSS Servers ----
+    // ---- Android NsdManager LAN Discovery for Desktop WSS Servers (#490 E1 serialized resolve queue) ----
+
+    private val resolveLock = Any()
+    private val resolveQueue = ArrayDeque<Pair<NsdServiceInfo, Int>>()
+
+    @Volatile
+    private var isResolvingService: Boolean = false
 
     @Synchronized
     fun startDiscovery(ctx: Context) {
-        if (discoveryListener != null) return
         val appCtx = ctx.applicationContext
+        ensureScreenReceiverRegistered(appCtx)
+        discoveryRequested = true
+        discoveryAppCtx = appCtx
+        if (isScreenOff) return
+        startDiscoveryInternal(appCtx)
+    }
+
+    private fun enqueueServiceResolve(appCtx: Context, mgr: NsdManager, serviceInfo: NsdServiceInfo, attempt: Int = 0) {
+        synchronized(resolveLock) {
+            if (resolveQueue.size >= 16) return
+            if (resolveQueue.none { it.first.serviceName == serviceInfo.serviceName }) {
+                resolveQueue.addLast(serviceInfo to attempt)
+            }
+        }
+        drainResolveQueue(appCtx, mgr)
+    }
+
+    private fun drainResolveQueue(appCtx: Context, mgr: NsdManager) {
+        val next: Pair<NsdServiceInfo, Int> = synchronized(resolveLock) {
+            if (isResolvingService || resolveQueue.isEmpty() || discoveryListener == null) return
+            isResolvingService = true
+            resolveQueue.removeFirst()
+        }
+        val (serviceInfo, attempt) = next
+        @Suppress("DEPRECATION")
+        runCatching {
+            mgr.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
+                    DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "RESOLVE_FAILED", "code=$errorCode attempt=$attempt")
+                    synchronized(resolveLock) { isResolvingService = false }
+                    if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE && attempt < 3 && discoveryListener != null) {
+                        val backoffMs = 500L * (1L shl attempt)
+                        scope.launch {
+                            delay(backoffMs)
+                            val curMgr = nsdManager ?: return@launch
+                            if (discoveryListener != null) {
+                                enqueueServiceResolve(appCtx, curMgr, info, attempt + 1)
+                            }
+                        }
+                    } else {
+                        drainResolveQueue(appCtx, mgr)
+                    }
+                }
+
+                override fun onServiceResolved(info: NsdServiceInfo) {
+                    @Suppress("DEPRECATION")
+                    val host = info.host?.hostAddress
+                    if (!host.isNullOrBlank()) {
+                        val port = info.port.takeIf { it in 1024..65535 } ?: LinkProtocol.DEFAULT_PORT
+                        val attrs = info.attributes
+                        val fn = attrs["fn"]?.toString(Charsets.UTF_8).orEmpty().ifBlank { info.serviceName }
+                        val fp = attrs["fp"]?.toString(Charsets.UTF_8).orEmpty()
+                        val ver = attrs["v"]?.toString(Charsets.UTF_8)?.toIntOrNull() ?: 1
+                        val item = DiscoveredDesktop(
+                            serviceName = info.serviceName,
+                            friendlyName = fn,
+                            host = host,
+                            port = port,
+                            fingerprintPrefix = fp,
+                            protocolVersion = ver
+                        )
+                        _discoveredDesktops.value = _discoveredDesktops.value
+                            .filterNot { it.serviceName == item.serviceName } + item
+                    }
+                    synchronized(resolveLock) { isResolvingService = false }
+                    drainResolveQueue(appCtx, mgr)
+                }
+            })
+        }.onFailure { err ->
+            android.util.Log.w("DesktopLinkClient", "NsdManager.resolveService threw: ${err.javaClass.simpleName}")
+            synchronized(resolveLock) { isResolvingService = false }
+            drainResolveQueue(appCtx, mgr)
+        }
+    }
+
+    @Synchronized
+    private fun startDiscoveryInternal(appCtx: Context) {
+        if (discoveryListener != null) return
         runCatching {
             val mgr = appCtx.getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return
             val listener = object : NsdManager.DiscoveryListener {
                 override fun onDiscoveryStarted(regType: String) {}
                 override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                     if (!serviceInfo.serviceType.contains("_phantomcheck", ignoreCase = true)) return
-                    @Suppress("DEPRECATION")
-                    runCatching {
-                        mgr.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-                            override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
-                                DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "RESOLVE_FAILED", "code=$errorCode")
-                            }
-                            override fun onServiceResolved(info: NsdServiceInfo) {
-                                @Suppress("DEPRECATION")
-                                val host = info.host?.hostAddress ?: return
-                                val port = info.port.takeIf { it in 1024..65535 } ?: LinkProtocol.DEFAULT_PORT
-                                val attrs = info.attributes
-                                val fn = attrs["fn"]?.toString(Charsets.UTF_8).orEmpty().ifBlank { info.serviceName }
-                                val fp = attrs["fp"]?.toString(Charsets.UTF_8).orEmpty()
-                                val ver = attrs["v"]?.toString(Charsets.UTF_8)?.toIntOrNull() ?: 1
-                                val item = DiscoveredDesktop(
-                                    serviceName = info.serviceName,
-                                    friendlyName = fn,
-                                    host = host,
-                                    port = port,
-                                    fingerprintPrefix = fp,
-                                    protocolVersion = ver
-                                )
-                                _discoveredDesktops.value = _discoveredDesktops.value
-                                    .filterNot { it.serviceName == item.serviceName } + item
-                            }
-                        })
-                    }
+                    enqueueServiceResolve(appCtx, mgr, serviceInfo, attempt = 0)
                 }
                 override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                     _discoveredDesktops.value = _discoveredDesktops.value.filterNot { it.serviceName == serviceInfo.serviceName }
@@ -1339,7 +1573,7 @@ object DesktopLinkClient {
                 override fun onDiscoveryStopped(serviceType: String) {}
                 override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
                     DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "DISCOVERY_START_FAILED", "code=$errorCode")
-                    stopDiscovery()
+                    pauseDiscoveryForScreenOff()
                 }
                 override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
                     DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "DISCOVERY_STOP_FAILED", "code=$errorCode")
@@ -1354,13 +1588,26 @@ object DesktopLinkClient {
     }
 
     @Synchronized
-    fun stopDiscovery() {
+    private fun pauseDiscoveryForScreenOff() {
         val mgr = nsdManager
         val listener = discoveryListener
         nsdManager = null
         discoveryListener = null
+        synchronized(resolveLock) {
+            resolveQueue.clear()
+            isResolvingService = false
+        }
         if (mgr != null && listener != null) {
             runCatching { mgr.stopServiceDiscovery(listener) }
+                .onFailure { err ->
+                    android.util.Log.w("DesktopLinkClient", "stopServiceDiscovery failed: ${err.javaClass.simpleName}")
+                }
         }
+    }
+
+    @Synchronized
+    fun stopDiscovery() {
+        discoveryRequested = false
+        pauseDiscoveryForScreenOff()
     }
 }
