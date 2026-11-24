@@ -847,7 +847,7 @@
     <string name="chat_s_3193f7">Images consume more tokens; pair with a concise question</string>
     <string name="chat_s_3e9b6f">Remove image</string>
     <string name="chat_s_93e855">Switched chat model: %1$s · %2$s</string>
-    <string name="chat_s_ea28d8">Current provider doesn\'t support web search (use a Gemini 3+ preset or configure a BYOK external search endpoint in Settings)</string>
+    <string name="chat_s_ea28d8">Configure an AI provider API key or BYOK external search endpoint to use web search (free mode uses DuckDuckGo / Wikipedia; paid Gemini keys support Google Search)</string>
     <string name="chat_s_89f22e">🔍 Web On</string>
     <string name="chat_s_c5c547">🔍 Web</string>
     <string name="chat_s_987c2c">Quick commands &amp; image upload</string>
@@ -1685,7 +1685,7 @@
     <string name="settings_s_3cbf66">Off by default | Zero AI calls, zero external queries</string>
     <string name="settings_s_30d213">Enable proactive intel queries</string>
     <string name="settings_s_76d807">Only sends search keywords (queryHint) from your watched topics; never sends raw messages, contacts, or sensitive memories.</string>
-    <string name="settings_s_02bba4">Routing tip (pick one): When using Mistral as primary, bind \"Proactive intel extraction &amp; summary\" in API Key Settings to a Gemini 3+ profile (native Google Search grounding), or configure a BYOK external search endpoint.</string>
+    <string name="settings_s_02bba4">Routing tip: Free mode uses DuckDuckGo / Wikipedia with your active AI provider; paid Gemini 3+ keys use native Google Search grounding, or you can configure a BYOK external search endpoint.</string>
     <string name="settings_s_9495a3">Extracts up to 5 candidate topics for confirmation at most once daily from recent non-sensitive items (never pushed directly; sensitive memories strictly excluded).</string>
     <string name="settings_s_3a10f2">Background query frequency (runs only when online with sufficient battery)</string>
     <string name="settings_s_5aba96">Every 6 hours</string>
@@ -2934,4 +2934,37 @@
     <string name="widget_health_snap_unauth_msg">Health Connect not authorized. Tap to open permission settings</string>
     <string name="widget_health_snap_steps_label">Today\'s Steps</string>
     <string name="widget_health_snap_sleep_label">Sleep</string>
+
+    <!-- #449 Desktop Link Hub -->
+    <string name="catalog_desktop_link_title">Desktop Link (LAN)</string>
+    <string name="catalog_desktop_link_desc">Pair and connect PhantomCheck Desktop over local Wi-Fi (wss TLS + pairing code)</string>
+    <string name="catalog_desktop_link_aliases">desktop|computer|pc|link|lan|pair|qr|連線|電腦|桌面|連結</string>
+    <string name="link_hub_title">Desktop Link</string>
+    <string name="link_hub_back">Back</string>
+    <string name="link_hub_master_title">Enable Desktop Link Server</string>
+    <string name="link_hub_master_desc">Runs a local wss:// server on your Wi-Fi network (auto-stops after 30 min idle)</string>
+    <string name="link_hub_status_title">Connection Status</string>
+    <string name="link_hub_status_running">Running on port %1$d · %2$d connected</string>
+    <string name="link_hub_status_stopped">Stopped</string>
+    <string name="link_hub_manual_address_label">Manual address (fallback)</string>
+    <string name="link_hub_copy_address">Copy</string>
+    <string name="link_hub_copied_toast">Address copied</string>
+    <string name="link_hub_fingerprint_label">Cert SHA-256: %1$s…</string>
+    <string name="link_hub_pair_title">Pair New Desktop</string>
+    <string name="link_hub_qr_desc">Desktop pairing QR code</string>
+    <string name="link_hub_code_ttl">Valid for %1$s (single-use)</string>
+    <string name="link_hub_code_expired">Code expired</string>
+    <string name="link_hub_regenerate_code">Regenerate Code</string>
+    <string name="link_hub_paired_devices_title">Paired Desktops</string>
+    <string name="link_hub_paired_empty">No paired desktops yet</string>
+    <string name="link_hub_last_seen">Last seen: %1$s</string>
+    <string name="link_hub_unpair">Unpair</string>
+    <string name="link_hub_unknown_title">Unknown Connection Attempts</string>
+    <string name="link_hub_unknown_empty">No rejected attempts recorded</string>
+    <string name="link_hub_clear">Clear</string>
+    <string name="link_hub_doze_title">Background &amp; Doze Notice</string>
+    <string name="link_hub_doze_desc">Android Doze or screen-off power saving may pause LAN connections. You can exempt PhantomCheck from battery optimization if you need longer background sessions.</string>
+    <string name="link_hub_battery_exempt_btn">Battery Optimization Exemption</string>
+    <string name="link_hub_audit_title">Command Audit Log (max 200)</string>
+    <string name="link_hub_audit_empty">No desktop commands recorded yet</string>
 </resources>

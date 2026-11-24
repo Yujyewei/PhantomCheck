@@ -847,7 +847,7 @@
     <string name="chat_s_3193f7">圖片會消耗較多 token，建議搭配簡短提問</string>
     <string name="chat_s_3e9b6f">移除圖片</string>
     <string name="chat_s_93e855">已切換對話模型：%1$s・%2$s</string>
-    <string name="chat_s_ea28d8">目前供應商不支援聯網查詢（請使用 Gemini 3+ 預設檔，或於設定填寫 BYOK 外部搜尋端點）</string>
+    <string name="chat_s_ea28d8">請先設定任一 AI 供應商 API 金鑰或 BYOK 外部搜尋端點即可使用聯網查詢（免費模式使用 DuckDuckGo／Wikipedia；付費 Gemini key 可用 Google Search）</string>
     <string name="chat_s_89f22e">🔍 聯網中</string>
     <string name="chat_s_c5c547">🔍 聯網</string>
     <string name="chat_s_987c2c">常用指令與圖片上傳</string>
@@ -1685,7 +1685,7 @@
     <string name="settings_s_3cbf66">預設關閉｜零 AI 呼叫、零外部查詢</string>
     <string name="settings_s_30d213">啟用主動情報查詢</string>
     <string name="settings_s_76d807">僅外送關注清單中的查詢詞（queryHint），絕不送原始訊息、聯絡人或敏感記憶。</string>
-    <string name="settings_s_02bba4">路由建議（二選一）：主力使用 Mistral 時，可於「API 金鑰設定」將「主動情報萃取與摘要」用途單獨綁定一個 Gemini 3+ 設定檔（原生 Google Search grounding），或填寫 BYOK 外部搜尋端點。</string>
+    <string name="settings_s_02bba4">路由建議：免費模式使用 DuckDuckGo／Wikipedia 搭配目前 AI 供應商查詢；付費 Gemini 3+ key 可用原生 Google Search grounding，亦可於設定填寫 BYOK 外部搜尋端點。</string>
     <string name="settings_s_9495a3">每日至多一次從近期非敏感素材萃取最多 5 個待確認候選（絕不直接推播；敏感記憶硬排除）。</string>
     <string name="settings_s_3a10f2">背景查詢頻率（僅連網且電量充足時執行）</string>
     <string name="settings_s_5aba96">每 6 小時</string>
@@ -2934,4 +2934,37 @@
     <string name="widget_health_snap_unauth_msg">尚未授權 Health Connect，點此開啟權限設定</string>
     <string name="widget_health_snap_steps_label">今日步數</string>
     <string name="widget_health_snap_sleep_label">睡眠時數</string>
+
+    <!-- #449 桌面端區網連線 -->
+    <string name="catalog_desktop_link_title">桌面端連線（區網）</string>
+    <string name="catalog_desktop_link_desc">透過區網 Wi-Fi 與 PhantomCheck 桌面端配對連線（wss TLS＋配對碼）</string>
+    <string name="catalog_desktop_link_aliases">電腦|桌面|連結|連線|desktop|link|pc|lan|pair|qr</string>
+    <string name="link_hub_title">桌面端連線</string>
+    <string name="link_hub_back">返回</string>
+    <string name="link_hub_master_title">啟用桌面端連線伺服器</string>
+    <string name="link_hub_master_desc">在區網 Wi-Fi 開啟 wss:// 伺服器（無連線閒置 30 分鐘自動停止）</string>
+    <string name="link_hub_status_title">連線狀態</string>
+    <string name="link_hub_status_running">執行中（埠 %1$d）· 已連線 %2$d 台</string>
+    <string name="link_hub_status_stopped">已停止</string>
+    <string name="link_hub_manual_address_label">手動位址（mDNS 不可用時備援）</string>
+    <string name="link_hub_copy_address">複製</string>
+    <string name="link_hub_copied_toast">已複製位址</string>
+    <string name="link_hub_fingerprint_label">憑證 SHA-256：%1$s…</string>
+    <string name="link_hub_pair_title">配對新電腦</string>
+    <string name="link_hub_qr_desc">桌面端配對 QR Code</string>
+    <string name="link_hub_code_ttl">有效剩餘 %1$s（單次有效）</string>
+    <string name="link_hub_code_expired">配對碼已過期</string>
+    <string name="link_hub_regenerate_code">重新產生配對碼</string>
+    <string name="link_hub_paired_devices_title">已配對電腦</string>
+    <string name="link_hub_paired_empty">尚未配對任何電腦</string>
+    <string name="link_hub_last_seen">最後連線：%1$s</string>
+    <string name="link_hub_unpair">移除配對</string>
+    <string name="link_hub_unknown_title">未知連線嘗試紀錄</string>
+    <string name="link_hub_unknown_empty">尚無遭拒絕的連線紀錄</string>
+    <string name="link_hub_clear">清除</string>
+    <string name="link_hub_doze_title">休眠與省電說明</string>
+    <string name="link_hub_doze_desc">Android Doze 休眠或關閉螢幕時，系統可能暫停區網伺服器連線（屬平台限制）。若需較長時間連線，可引導加入電池最佳化豁免。</string>
+    <string name="link_hub_battery_exempt_btn">電池最佳化豁免設定</string>
+    <string name="link_hub_audit_title">指令審計紀錄（上限 200 筆）</string>
+    <string name="link_hub_audit_empty">尚無桌面端操作紀錄</string>
 </resources>
