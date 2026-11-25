@@ -47,7 +47,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -107,14 +106,14 @@ import java.util.Locale
 import java.util.UUID
 
 private enum class DesktopTab {
-    MESSAGES, STATS, TODOS, CHAT, RULES, SETTINGS
+    MESSAGES, STATS, TODOS, CHAT, RULES, SETTINGS, REPORTS, TOOLS, HOME
 }
 
 private const val MAX_CACHED_MESSAGES = 240
 private const val MAX_CACHED_CHAT_BUBBLES = 120
 private const val FULL_REFRESH_COOLDOWN_MS = 10_000L
 
-private data class ConversationSummary(
+internal data class ConversationSummary(
     val groupKey: String,
     val packageName: String,
     val conversationKey: String,
@@ -128,22 +127,27 @@ private data class ConversationSummary(
     val messageCount: Int
 )
 
-private fun conversationGroupKey(m: MessageSummaryDto): String =
+internal fun conversationGroupKey(m: MessageSummaryDto): String =
     if (m.conversationKey.isNotBlank()) "${m.packageName}::${m.conversationKey}"
     else "${m.packageName}::${m.sender}"
 
-private fun formatRelativeConvTime(timestamp: Long, use24Hour: Boolean): String {
+private val CONV_TIME_24_FMT = ThreadLocal.withInitial { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+private val CONV_TIME_12_FMT = ThreadLocal.withInitial { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
+private val CONV_DATE_FMT = ThreadLocal.withInitial { SimpleDateFormat("MM/dd", Locale.getDefault()) }
+private val TODO_DUE_FMT = ThreadLocal.withInitial { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+
+internal fun formatRelativeConvTime(timestamp: Long, use24Hour: Boolean): String {
     if (timestamp <= 0L) return ""
     val nowCal = java.util.Calendar.getInstance()
     val msgCal = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
     val sameDay = nowCal.get(java.util.Calendar.YEAR) == msgCal.get(java.util.Calendar.YEAR) &&
         nowCal.get(java.util.Calendar.DAY_OF_YEAR) == msgCal.get(java.util.Calendar.DAY_OF_YEAR)
-    val pattern = if (sameDay) {
-        if (use24Hour) "HH:mm" else "hh:mm a"
+    val fmt = if (sameDay) {
+        if (use24Hour) CONV_TIME_24_FMT.get() else CONV_TIME_12_FMT.get()
     } else {
-        "MM/dd"
+        CONV_DATE_FMT.get()
     }
-    return SimpleDateFormat(pattern, Locale.getDefault()).format(Date(timestamp))
+    return fmt.format(Date(timestamp))
 }
 
 /**
@@ -178,6 +182,8 @@ fun DesktopApp(
     }
     var batchSelectMode by remember { mutableStateOf(false) }
     var selectedBatchKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var latestReceivedClipboard by remember { mutableStateOf("") }
+    var groupReports by remember { mutableStateOf<List<GroupReportSummaryDto>>(emptyList()) }
     val customBgBitmap = remember(settings.customBgImagePath) { DesktopPalette.loadBackgroundImage(settings.customBgImagePath) }
     val cardPad = DesktopPalette.cardPadding(settings.density)
     val listSpace = DesktopPalette.listSpacing(settings.density)
@@ -194,7 +200,7 @@ fun DesktopApp(
 
     var activeTab by remember {
         val initial = runCatching { DesktopTab.valueOf(settings.defaultStartupTab) }.getOrDefault(DesktopTab.MESSAGES)
-        mutableStateOf(if (uiState.isPaired) initial else DesktopTab.SETTINGS)
+        mutableStateOf(if (uiState.isPaired) initial else DesktopTab.HOME)
     }
 
     // Messages Master-Detail state (#494 conversation-grouped)
@@ -583,7 +589,23 @@ fun DesktopApp(
                     }
                 }
                 LinkMsgType.PHONE_STATUS_RES -> {
-                    phoneStatus = runCatching { gson.fromJson(env.payloadJson, PhoneStatusDto::class.java) }.getOrNull() ?: phoneStatus
+                    val ps = runCatching { gson.fromJson(env.payloadJson, PhoneStatusDto::class.java) }.getOrNull()
+                    if (ps != null) {
+                        phoneStatus = ps
+                        DesktopDeviceStatusHolder.updateFromLegacy(ps)
+                    }
+                }
+                LinkMsgType.DEVICE_STATUS -> {
+                    val ds = runCatching { gson.fromJson(env.payloadJson, DeviceStatusPush::class.java) }.getOrNull()
+                    if (ds != null) {
+                        DesktopDeviceStatusHolder.update(ds)
+                        phoneStatus = PhoneStatusDto(
+                            batteryPercent = ds.batteryLevel,
+                            isCharging = ds.isCharging,
+                            serverUptimeMs = phoneStatus?.serverUptimeMs ?: 0L,
+                            deviceName = ds.deviceName.ifBlank { phoneStatus?.deviceName.orEmpty() }
+                        )
+                    }
                 }
                 LinkMsgType.CHAT_SESSIONS_LIST_RES -> {
                     val res = runCatching { gson.fromJson(env.payloadJson, ChatSessionsListRes::class.java) }.getOrNull() ?: return@collect
@@ -637,6 +659,33 @@ fun DesktopApp(
                     val res = runCatching { gson.fromJson(env.payloadJson, TagMutateRes::class.java) }.getOrNull() ?: return@collect
                     actionFeedback = res.message
                     scope.launch { server.sendCommand(LinkMsgType.TAGS_LIST, reqId(), emptyMap<String, String>()) }
+                }
+                LinkMsgType.CLIPBOARD_SYNC -> {
+                    val payload = runCatching { gson.fromJson(env.payloadJson, ClipboardSyncPayload::class.java) }.getOrNull() ?: return@collect
+                    if (settings.clipboardSyncEnabled && payload.text.isNotBlank()) {
+                        if (settings.clipboardOnlyWhenFocused && !isWindowVisible) return@collect
+                        val text = payload.text.take(settings.clipboardMaxChars)
+                        if (settings.clipboardOtpGuard && DesktopClipboardGuard.looksLikeOtp(text)) return@collect
+                        latestReceivedClipboard = text
+                        runCatching {
+                            Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+                        }
+                    }
+                }
+                LinkMsgType.OPEN_URL_ON_PEER -> {
+                    val req = runCatching { gson.fromJson(env.payloadJson, OpenUrlReq::class.java) }.getOrNull() ?: return@collect
+                    val url = req.url.trim().take(2048)
+                    if (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) {
+                        runCatching {
+                            if (java.awt.Desktop.isDesktopSupported()) {
+                                java.awt.Desktop.getDesktop().browse(java.net.URI(url))
+                            }
+                        }
+                    }
+                }
+                LinkMsgType.GROUP_REPORTS_LIST_RES -> {
+                    val res = runCatching { gson.fromJson(env.payloadJson, GroupReportsListRes::class.java) }.getOrNull() ?: return@collect
+                    groupReports = res.items
                 }
                 LinkMsgType.ERROR -> {
                     val err = runCatching { gson.fromJson(env.payloadJson, ErrorPayload::class.java) }.getOrNull() ?: return@collect
@@ -789,12 +838,15 @@ fun DesktopApp(
                             actionFeedback = null
                             true
                         }
+                        tabMod && ev.key == Key.Zero -> { activeTab = DesktopTab.HOME; true }
                         tabMod && ev.key == Key.One -> { activeTab = DesktopTab.MESSAGES; true }
                         tabMod && ev.key == Key.Two -> { activeTab = DesktopTab.STATS; true }
                         tabMod && ev.key == Key.Three -> { activeTab = DesktopTab.TODOS; true }
                         tabMod && ev.key == Key.Four -> { activeTab = DesktopTab.CHAT; true }
                         tabMod && ev.key == Key.Five -> { activeTab = DesktopTab.RULES; true }
                         tabMod && ev.key == Key.Six -> { activeTab = DesktopTab.SETTINGS; true }
+                        tabMod && ev.key == Key.Seven -> { activeTab = DesktopTab.REPORTS; true }
+                        tabMod && ev.key == Key.Eight -> { activeTab = DesktopTab.TOOLS; true }
                         ev.isCtrlPressed && ev.key == Key.F -> {
                             activeTab = DesktopTab.MESSAGES
                             runCatching { searchFocusRequester.requestFocus() }
@@ -823,16 +875,32 @@ fun DesktopApp(
                     )
                 }
 
+                androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val windowClass = remember(maxWidth) { DesktopWindowClass.fromWidth(maxWidth) }
+                    var compactManualExpand by remember(windowClass) { mutableStateOf(false) }
+                    val effectiveSidebarCollapsed = if (windowClass == DesktopWindowClass.COMPACT) {
+                        !compactManualExpand
+                    } else {
+                        settings.sidebarCollapsed
+                    }
+                    val totalUnread = remember(stats.unread, conversations) {
+                        maxOf(stats.unread, conversations.sumOf { it.unreadCount })
+                    }
+
                 Row(modifier = Modifier.fillMaxSize()) {
-                    // Left Sidebar (collapsible + configurable width)
-                    val sidebarW = if (settings.sidebarCollapsed) 76.dp else settings.sidebarWidthDp.dp
+                    // Left Sidebar (COMPACT auto-collapses to 76dp; MEDIUM caps at 210dp; EXPANDED/LARGE uses setting)
+                    val sidebarW = when {
+                        effectiveSidebarCollapsed -> 76.dp
+                        windowClass == DesktopWindowClass.MEDIUM -> settings.sidebarWidthDp.coerceAtMost(210).dp
+                        else -> settings.sidebarWidthDp.dp
+                    }
                     Column(
                         modifier = Modifier
                             .width(sidebarW)
                             .fillMaxHeight()
                             .background(tokens.sidebarBg)
                             .border(width = 1.dp, color = tokens.border)
-                            .padding(horizontal = if (settings.sidebarCollapsed) 10.dp else 16.dp, vertical = 20.dp),
+                            .padding(horizontal = if (effectiveSidebarCollapsed) 10.dp else 16.dp, vertical = 20.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(
@@ -840,7 +908,7 @@ fun DesktopApp(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (!settings.sidebarCollapsed) {
+                            if (!effectiveSidebarCollapsed) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = DesktopStrings.appTitle,
@@ -857,19 +925,28 @@ fun DesktopApp(
                                 }
                             }
                             TextButton(
-                                onClick = { DesktopSettingsStore.update { it.copy(sidebarCollapsed = !it.sidebarCollapsed) } }
+                                onClick = {
+                                    if (windowClass == DesktopWindowClass.COMPACT) {
+                                        compactManualExpand = !compactManualExpand
+                                    } else {
+                                        DesktopSettingsStore.update { it.copy(sidebarCollapsed = !it.sidebarCollapsed) }
+                                    }
+                                }
                             ) {
-                                Text(if (settings.sidebarCollapsed) "»" else "«", color = accentColor)
+                                Text(if (effectiveSidebarCollapsed) "»" else "«", color = tokens.accentText)
                             }
                         }
 
                         HorizontalDivider(color = tokens.border, modifier = Modifier.padding(vertical = 4.dp))
 
                         val navItems = listOf(
+                            Triple(DesktopTab.HOME, DesktopStrings.tabHome, DesktopIcons.Messages),
                             Triple(DesktopTab.MESSAGES, DesktopStrings.navMessages, DesktopIcons.Messages),
+                            Triple(DesktopTab.REPORTS, DesktopStrings.tabReports, DesktopIcons.Stats),
                             Triple(DesktopTab.STATS, DesktopStrings.navStats, DesktopIcons.Stats),
                             Triple(DesktopTab.TODOS, DesktopStrings.navTodos, DesktopIcons.Todos),
                             Triple(DesktopTab.CHAT, DesktopStrings.navChat, DesktopIcons.Chat),
+                            Triple(DesktopTab.TOOLS, DesktopStrings.tabTools, DesktopIcons.Rules),
                             Triple(DesktopTab.RULES, DesktopStrings.navRules, DesktopIcons.Rules),
                             Triple(DesktopTab.SETTINGS, DesktopStrings.navSettings, DesktopIcons.Settings)
                         )
@@ -883,7 +960,7 @@ fun DesktopApp(
                                 label = "nav_scale_${tab.name}"
                             )
                             val navBg by animateColorAsState(
-                                targetValue = if (selected) accentColor.copy(alpha = 0.18f) else Color.Transparent,
+                                targetValue = if (selected) tokens.selectedBg else Color.Transparent,
                                 animationSpec = tween(if (settings.animationsEnabled) 150 else 0),
                                 label = "nav_bg_${tab.name}"
                             )
@@ -892,6 +969,7 @@ fun DesktopApp(
                                 animationSpec = tween(if (settings.animationsEnabled) 150 else 0),
                                 label = "nav_border_${tab.name}"
                             )
+                            val showUnreadBadge = tab == DesktopTab.MESSAGES && totalUnread > 0
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -899,36 +977,68 @@ fun DesktopApp(
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(navBg)
                                     .border(1.dp, navBorder, RoundedCornerShape(12.dp))
-                                    .clickable(interactionSource = navInteraction, indication = null) { activeTab = tab }
-                                    .padding(horizontal = if (settings.sidebarCollapsed) 8.dp else 14.dp, vertical = 11.dp),
-                                contentAlignment = if (settings.sidebarCollapsed) Alignment.Center else Alignment.CenterStart
+                                    .clickable(interactionSource = navInteraction, indication = null) {
+                                        activeTab = tab
+                                        if (windowClass == DesktopWindowClass.COMPACT) compactManualExpand = false
+                                    }
+                                    .padding(horizontal = if (effectiveSidebarCollapsed) 8.dp else 14.dp, vertical = 11.dp),
+                                contentAlignment = if (effectiveSidebarCollapsed) Alignment.Center else Alignment.CenterStart
                             ) {
-                                if (settings.sidebarCollapsed) {
-                                    Icon(
-                                        imageVector = tabIcon,
-                                        contentDescription = label,
-                                        tint = if (selected) accentColor else tokens.textSecondary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                if (effectiveSidebarCollapsed) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = tabIcon,
+                                            contentDescription = label,
+                                            tint = if (selected) tokens.accentText else tokens.textSecondary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        if (showUnreadBadge) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(tokens.error)
+                                            )
+                                        }
+                                    }
                                 } else {
                                     Row(
+                                        modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
                                             imageVector = tabIcon,
                                             contentDescription = null,
-                                            tint = if (selected) accentColor else tokens.textSecondary,
+                                            tint = if (selected) tokens.accentText else tokens.textSecondary,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Text(
                                             text = label,
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                            color = if (selected) accentColor else tokens.textSecondary,
+                                            color = if (selected) tokens.accentText else tokens.textSecondary,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        if (showUnreadBadge) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(CircleShape)
+                                                    .background(accentColor)
+                                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = if (totalUnread > 99) "99+" else totalUnread.toString(),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = tokens.onAccent
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -936,12 +1046,28 @@ fun DesktopApp(
 
                         Spacer(Modifier.weight(1f))
 
+                        // #513 一鍵勿擾開關（靜音彈窗/懸浮球氣泡/音效，記錄不中斷，與 Tray 同步）
+                        FilterChip(
+                            selected = settings.quickDndActive,
+                            onClick = { DesktopSettingsStore.update { it.copy(quickDndActive = !it.quickDndActive) } },
+                            label = {
+                                Text(
+                                    text = if (effectiveSidebarCollapsed) "☾" else if (settings.quickDndActive) "☾ ${DesktopStrings.quickDndOn}" else "☾ ${DesktopStrings.quickDndOff}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(6.dp))
+
                         // Persistent Connection Status Card
                         val isPulsing = uiState.connState == LinkConnState.WAITING_FOR_PHONE
                         val dotColor = when (uiState.connState) {
-                            LinkConnState.CONNECTED -> DesktopPalette.GlassSuccess
+                            LinkConnState.CONNECTED -> tokens.success
                             LinkConnState.WAITING_FOR_PHONE -> accentColor
-                            LinkConnState.ERROR -> DesktopPalette.GlassError
+                            LinkConnState.ERROR -> tokens.error
                             LinkConnState.STOPPED -> tokens.textMuted
                         }
                         val statusText = when (uiState.connState) {
@@ -952,9 +1078,9 @@ fun DesktopApp(
                         }
                         GlassCard(modifier = Modifier.fillMaxWidth(), containerColor = tokens.surfaceElevated) {
                             Column(
-                                modifier = Modifier.fillMaxWidth().padding(if (settings.sidebarCollapsed) 8.dp else 12.dp),
+                                modifier = Modifier.fillMaxWidth().padding(if (effectiveSidebarCollapsed) 8.dp else 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
-                                horizontalAlignment = if (settings.sidebarCollapsed) Alignment.CenterHorizontally else Alignment.Start
+                                horizontalAlignment = if (effectiveSidebarCollapsed) Alignment.CenterHorizontally else Alignment.Start
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     PulsingStatusDot(
@@ -962,26 +1088,64 @@ fun DesktopApp(
                                         pulsing = isPulsing && isWindowVisible,
                                         animationsEnabled = settings.animationsEnabled
                                     )
-                                    if (!settings.sidebarCollapsed) {
+                                    if (!effectiveSidebarCollapsed) {
                                         Text(statusText, style = MaterialTheme.typography.labelSmall, color = tokens.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
-                                if (!settings.sidebarCollapsed) {
+                                if (!effectiveSidebarCollapsed) {
+                                    val ds by DesktopDeviceStatusHolder.status.collectAsState()
                                     val ps = phoneStatus
-                                    if (uiState.connState == LinkConnState.CONNECTED && ps != null && ps.batteryPercent >= 0) {
-                                        val chargeTag = if (ps.isCharging) " · ${DesktopStrings.charging}" else ""
-                                        Text("${DesktopStrings.phoneBattery}: ${ps.batteryPercent}%$chargeTag", style = MaterialTheme.typography.labelSmall, color = DesktopPalette.GlassSuccess)
+                                    val batPct = ds?.batteryLevel?.takeIf { it >= 0 } ?: ps?.batteryPercent ?: -1
+                                    val isChg = ds?.isCharging ?: ps?.isCharging ?: false
+                                    if (batPct >= 0) {
+                                        val chargeLabel = if (isChg) {
+                                            when (ds?.chargeType) {
+                                                "usb" -> " ⚡USB"
+                                                "wireless" -> " ⚡${DesktopStrings.chargeWireless}"
+                                                else -> " ⚡${DesktopStrings.charging}"
+                                            }
+                                        } else ""
+                                        val netTag = when (ds?.networkType) {
+                                            "wifi" -> " · Wi-Fi"
+                                            "cellular" -> " · 5G/4G"
+                                            else -> ""
+                                        }
+                                        val isOnline = uiState.connState == LinkConnState.CONNECTED
+                                        val statusLine = if (isOnline) {
+                                            "${DesktopStrings.phoneBattery}: $batPct%$chargeLabel$netTag"
+                                        } else {
+                                            val lastAt = ds?.updatedAtMs?.takeIf { it > 0L }?.let { formatRelativeConvTime(it, settings.use24HourTime) }.orEmpty()
+                                            "${DesktopStrings.phoneBattery}: $batPct% (${DesktopStrings.lastKnownAt} $lastAt)"
+                                        }
+                                        Text(
+                                            statusLine,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isOnline) tokens.success else tokens.textMuted,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (isOnline && ds != null && ds!!.storageAvailMb > 0L) {
+                                            val gb = String.format("%.1f GB", ds!!.storageAvailMb / 1024.0)
+                                            val dndTag = if (ds!!.isDndActive) " · ${DesktopStrings.dndShort}" else ""
+                                            Text(
+                                                "${DesktopStrings.storageAvail}: $gb$dndTag",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = tokens.textMuted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                     uiState.lastError?.takeIf { it.isNotBlank() }?.let { err ->
-                                        Text(err, style = MaterialTheme.typography.labelSmall, color = DesktopPalette.GlassError, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                        Text(err, style = MaterialTheme.typography.labelSmall, color = tokens.error, maxLines = 3, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Right Main Content Area
-                    Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(24.dp)) {
+                    // Right Main Content Area (responsive pagePadding from DesktopWindowClass)
+                    Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(windowClass.pagePadding)) {
                         // #497 A: Top Mirror Notification Banner (auto-dismiss + hover-pause + overwrite latest + click to jump)
                         val bannerEvent by DesktopNotificationBus.latestBanner.collectAsState()
                         val bannerHoverSource = remember { MutableInteractionSource() }
@@ -1069,7 +1233,7 @@ fun DesktopApp(
                             }
                         }
 
-                        if (uiState.connState != LinkConnState.CONNECTED && activeTab != DesktopTab.SETTINGS) {
+                        if (uiState.connState != LinkConnState.CONNECTED && activeTab != DesktopTab.SETTINGS && activeTab != DesktopTab.HOME) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 GlassCard {
                                     Column(
@@ -1078,8 +1242,16 @@ fun DesktopApp(
                                         verticalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
                                         Text(DesktopStrings.notConnectedHint, style = MaterialTheme.typography.titleMedium, color = tokens.textPrimary)
-                                        SpringButton(onClick = { activeTab = DesktopTab.SETTINGS }, animationsEnabled = settings.animationsEnabled) {
-                                            Text(DesktopStrings.navSettings)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            SpringButton(onClick = { activeTab = DesktopTab.HOME }, animationsEnabled = settings.animationsEnabled, containerColor = accentColor) {
+                                                Text(DesktopStrings.tabHome)
+                                            }
+                                            SpringOutlinedButton(onClick = { server.restart(uiState.port) }, animationsEnabled = settings.animationsEnabled) {
+                                                Text(DesktopStrings.serverRestartBtn)
+                                            }
+                                            SpringOutlinedButton(onClick = { activeTab = DesktopTab.SETTINGS }, animationsEnabled = settings.animationsEnabled) {
+                                                Text(DesktopStrings.navSettings)
+                                            }
                                         }
                                     }
                                 }
@@ -1088,1040 +1260,222 @@ fun DesktopApp(
                             val renderTab: @Composable (DesktopTab) -> Unit = { tab ->
                                 when (tab) {
                                     DesktopTab.MESSAGES -> {
-                                        // #494 Conversation-Grouped Master-Detail Messages Layout
-                                        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                listOf(
-                                                    "all" to DesktopStrings.filterAll,
-                                                    "unread" to DesktopStrings.filterUnread,
-                                                    "starred" to DesktopStrings.filterStarred,
-                                                    "group" to DesktopStrings.filterGroup,
-                                                    "scam" to DesktopStrings.filterScam
-                                                ).forEach { (key, label) ->
-                                                    FilterChip(
-                                                        selected = msgFilter == key,
-                                                        onClick = {
-                                                            msgFilter = key
-                                                            if (key in setOf("unread", "starred", "scam")) {
-                                                                scope.launch {
-                                                                    sendOrNotify(
-                                                                        LinkMsgType.MESSAGES_LIST,
-                                                                        MessagesListReq(filter = key, offset = 0, limit = 60, sinceCursor = 0L)
-                                                                    )
-                                                                }
-                                                            }
-                                                        },
-                                                        label = { Text(label) }
+                                        DesktopMessagesPage(
+                                            windowClass = windowClass,
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            cardPad = cardPad,
+                                            listSpace = listSpace,
+                                            timeFmt = timeFmt,
+                                            conversations = conversations,
+                                            messages = messages,
+                                            tags = tags,
+                                            conversationThread = conversationThread,
+                                            msgFilter = msgFilter,
+                                            onMsgFilterChange = { msgFilter = it },
+                                            msgSearch = msgSearch,
+                                            onMsgSearchChange = { msgSearch = it },
+                                            searchFocusRequester = searchFocusRequester,
+                                            selectedConvKey = selectedConvKey,
+                                            onSelectConversation = { convKey, msgId ->
+                                                selectedConvKey = convKey
+                                                selectedMsgId = msgId
+                                            },
+                                            selectedMsg = selectedMsg,
+                                            selectedConv = selectedConv,
+                                            onSelectMessageId = { selectedMsgId = it },
+                                            batchSelectMode = batchSelectMode,
+                                            onToggleBatchSelectMode = {
+                                                batchSelectMode = !batchSelectMode
+                                                if (!batchSelectMode) selectedBatchKeys = emptySet()
+                                            },
+                                            selectedBatchKeys = selectedBatchKeys,
+                                            onSelectedBatchKeysChange = { selectedBatchKeys = it },
+                                            onClearBatchAndExit = {
+                                                selectedBatchKeys = emptySet()
+                                                batchSelectMode = false
+                                            },
+                                            deepAnalyzingMsgId = deepAnalyzingMsgId,
+                                            onSetDeepAnalyzingMsgId = { deepAnalyzingMsgId = it },
+                                            replyText = replyText,
+                                            onReplyTextChange = { replyText = it },
+                                            messagesListState = messagesListState,
+                                            threadListState = threadListState,
+                                            onRefreshMessages = {
+                                                messages = emptyList()
+                                                scope.launch {
+                                                    sendOrNotify(
+                                                        LinkMsgType.MESSAGES_LIST,
+                                                        MessagesListReq(filter = "all", offset = 0, limit = 60, sinceCursor = 0L)
                                                     )
                                                 }
-                                                OutlinedTextField(
-                                                    value = msgSearch,
-                                                    onValueChange = { msgSearch = it },
-                                                    leadingIcon = { Icon(DesktopIcons.Search, contentDescription = null, tint = tokens.textMuted, modifier = Modifier.size(18.dp)) },
-                                                    placeholder = { Text(DesktopStrings.searchMessagesHint, style = MaterialTheme.typography.bodySmall) },
-                                                    singleLine = true,
-                                                    modifier = Modifier.weight(1f).focusRequester(searchFocusRequester)
-                                                )
-                                                SpringOutlinedButton(
-                                                    onClick = { scope.launch { sendOrNotify(LinkMsgType.MESSAGES_MARK_READ, MarkReadReq(all = true)) } },
-                                                    animationsEnabled = settings.animationsEnabled
-                                                ) {
-                                                    Icon(DesktopIcons.MarkRead, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text(DesktopStrings.markAllRead)
-                                                }
-                                                SpringOutlinedButton(
-                                                    onClick = {
-                                                        batchSelectMode = !batchSelectMode
-                                                        if (!batchSelectMode) selectedBatchKeys = emptySet()
-                                                    },
-                                                    animationsEnabled = settings.animationsEnabled
-                                                ) {
-                                                    Text(if (batchSelectMode) DesktopStrings.batchDoneBtn else DesktopStrings.batchSelectBtn)
-                                                }
-                                                SpringOutlinedButton(
-                                                    onClick = {
-                                                        messages = emptyList()
-                                                        scope.launch {
-                                                            sendOrNotify(
-                                                                LinkMsgType.MESSAGES_LIST,
-                                                                MessagesListReq(filter = "all", offset = 0, limit = 60, sinceCursor = 0L)
-                                                            )
-                                                        }
-                                                    },
-                                                    animationsEnabled = settings.animationsEnabled
-                                                ) {
-                                                    Icon(DesktopIcons.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text(DesktopStrings.refresh)
-                                                }
-                                            }
-                                            Text(DesktopStrings.markReadNote, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-
-                                            val visibleConversations = remember(conversations, msgFilter, msgSearch) {
-                                                val byFilter = when (msgFilter) {
-                                                    "unread" -> conversations.filter { it.unreadCount > 0 }
-                                                    "starred" -> conversations.filter { it.hasStarred }
-                                                    "group" -> conversations.filter { it.isGroup }
-                                                    "scam" -> conversations.filter { it.highestRisk.equals("scam", ignoreCase = true) }
-                                                    else -> conversations
-                                                }
-                                                val q = msgSearch.trim()
-                                                if (q.isBlank()) byFilter
-                                                else byFilter.filter { conv ->
-                                                    conv.appLabel.contains(q, ignoreCase = true) ||
-                                                        conv.sender.contains(q, ignoreCase = true) ||
-                                                        conv.latestMessage.preview.contains(q, ignoreCase = true) ||
-                                                        conv.packageName.contains(q, ignoreCase = true)
-                                                }
-                                            }
-
-                                            // #504 Batch Multi-Select Action Bar
-                                            AnimatedVisibility(visible = batchSelectMode && selectedBatchKeys.isNotEmpty()) {
-                                                Row(
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    SpringButton(
-                                                        onClick = {
-                                                            val targets = visibleConversations.filter { it.groupKey in selectedBatchKeys }
-                                                            scope.launch {
-                                                                targets.forEach { c ->
-                                                                    sendOrNotify(
-                                                                        LinkMsgType.MESSAGES_MARK_READ,
-                                                                        MarkReadReq(packageName = c.packageName, conversationKey = c.conversationKey)
-                                                                    )
-                                                                }
-                                                                selectedBatchKeys = emptySet()
-                                                                batchSelectMode = false
-                                                            }
-                                                        },
-                                                        animationsEnabled = settings.animationsEnabled
-                                                    ) { Text("${DesktopStrings.batchMarkReadBtn} (${selectedBatchKeys.size})") }
-                                                    SpringOutlinedButton(
-                                                        onClick = {
-                                                            val pkgs = visibleConversations
-                                                                .filter { it.groupKey in selectedBatchKeys }
-                                                                .map { it.packageName }
-                                                                .distinct()
-                                                            scope.launch {
-                                                                pkgs.forEach { pkg ->
-                                                                    sendOrNotify(LinkMsgType.MUTED_APPS_TOGGLE, MutedAppToggleReq(packageName = pkg, muted = true))
-                                                                }
-                                                                selectedBatchKeys = emptySet()
-                                                                batchSelectMode = false
-                                                            }
-                                                        },
-                                                        animationsEnabled = settings.animationsEnabled
-                                                    ) { Text(DesktopStrings.batchMuteAppsBtn) }
-                                                }
-                                            }
-
-                                            Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                                // Left Master List: Conversation List
-                                                Box(modifier = Modifier.weight(0.46f).fillMaxHeight()) {
-                                                    if (visibleConversations.isEmpty()) {
-                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                            Text(DesktopStrings.emptyMessages, color = tokens.textMuted)
-                                                        }
-                                                    } else {
-                                                        LazyColumn(
-                                                            state = messagesListState,
-                                                            verticalArrangement = Arrangement.spacedBy(if (settings.messageCardStyle == MessageCardStyle.COMPACT_LIST) 4.dp else listSpace)
-                                                        ) {
-                                                            items(visibleConversations, key = { it.groupKey }) { conv ->
-                                                                val isSelected = conv.groupKey == selectedConvKey
-                                                                val isBatchChecked = conv.groupKey in selectedBatchKeys
-                                                                val cardBg = if (isSelected || isBatchChecked) accentColor.copy(alpha = 0.16f) else tokens.surface
-                                                                val corner = if (settings.messageCardStyle == MessageCardStyle.COMPACT_LIST) {
-                                                                    (settings.messageCardCornerDp - 4).coerceAtLeast(8).dp
-                                                                } else {
-                                                                    settings.messageCardCornerDp.dp
-                                                                }
-                                                                val avatarColor = DesktopAppLabels.resolveColor(conv.packageName)
-                                                                val riskDotColor = when (conv.highestRisk.lowercase()) {
-                                                                    "scam" -> DesktopPalette.GlassError
-                                                                    "suspicious" -> DesktopPalette.GlassWarning
-                                                                    else -> DesktopPalette.GlassSuccess
-                                                                }
-                                                                val relTime = formatRelativeConvTime(conv.latestMessage.timestamp, settings.use24HourTime)
-                                                                Row(
-                                                                    modifier = Modifier
-                                                                        .fillMaxWidth()
-                                                                        .clip(RoundedCornerShape(corner))
-                                                                        .background(cardBg)
-                                                                        .border(
-                                                                            1.dp,
-                                                                            if (isSelected || isBatchChecked) accentColor.copy(alpha = 0.5f) else tokens.border,
-                                                                            RoundedCornerShape(corner)
-                                                                        )
-                                                                        .clickable {
-                                                                            if (batchSelectMode) {
-                                                                                selectedBatchKeys = if (isBatchChecked) selectedBatchKeys - conv.groupKey else selectedBatchKeys + conv.groupKey
-                                                                            } else {
-                                                                                selectedConvKey = conv.groupKey
-                                                                                selectedMsgId = conv.latestMessage.id
-                                                                            }
-                                                                        }
-                                                                        .padding(if (settings.messageCardStyle == MessageCardStyle.COMPACT_LIST) 10.dp else cardPad),
-                                                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                                                    verticalAlignment = Alignment.CenterVertically
-                                                                ) {
-                                                                    if (batchSelectMode) {
-                                                                        Checkbox(
-                                                                            checked = isBatchChecked,
-                                                                            onCheckedChange = { checked ->
-                                                                                selectedBatchKeys = if (checked) selectedBatchKeys + conv.groupKey else selectedBatchKeys - conv.groupKey
-                                                                            }
-                                                                        )
-                                                                    }
-                                                                    // Circular Avatar with risk indicator dot
-                                                                    Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {
-                                                                        Box(
-                                                                            modifier = Modifier
-                                                                                .size(36.dp)
-                                                                                .clip(CircleShape)
-                                                                                .background(avatarColor.copy(alpha = 0.24f))
-                                                                                .border(1.dp, avatarColor.copy(alpha = 0.65f), CircleShape),
-                                                                            contentAlignment = Alignment.Center
-                                                                        ) {
-                                                                            Text(
-                                                                                text = DesktopAppLabels.avatarInitial(conv.sender, conv.appLabel),
-                                                                                style = MaterialTheme.typography.titleSmall,
-                                                                                fontWeight = FontWeight.Bold,
-                                                                                color = avatarColor
-                                                                            )
-                                                                        }
-                                                                        Box(
-                                                                            modifier = Modifier
-                                                                                .align(Alignment.BottomEnd)
-                                                                                .size(10.dp)
-                                                                                .clip(CircleShape)
-                                                                                .background(riskDotColor)
-                                                                                .border(1.5.dp, tokens.surface, CircleShape)
-                                                                        )
-                                                                    }
-
-                                                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                                        Row(
-                                                                            modifier = Modifier.fillMaxWidth(),
-                                                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                                                            verticalAlignment = Alignment.CenterVertically
-                                                                        ) {
-                                                                            Row(
-                                                                                modifier = Modifier.weight(1f),
-                                                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                                                verticalAlignment = Alignment.CenterVertically
-                                                                            ) {
-                                                                                Text(
-                                                                                    text = "${if (conv.hasStarred) "★ " else ""}${conv.sender}",
-                                                                                    fontWeight = if (conv.unreadCount > 0) FontWeight.Bold else FontWeight.Medium,
-                                                                                    style = MaterialTheme.typography.bodyMedium,
-                                                                                    color = tokens.textPrimary,
-                                                                                    maxLines = 1,
-                                                                                    overflow = TextOverflow.Ellipsis,
-                                                                                    modifier = Modifier.weight(1f, fill = false)
-                                                                                )
-                                                                                Text(
-                                                                                    text = conv.appLabel,
-                                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                                    color = avatarColor,
-                                                                                    maxLines = 1,
-                                                                                    overflow = TextOverflow.Ellipsis
-                                                                                )
-                                                                                if (conv.isGroup) {
-                                                                                    Text(
-                                                                                        text = DesktopStrings.groupBadge,
-                                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                                        color = accentColor,
-                                                                                        modifier = Modifier
-                                                                                            .clip(RoundedCornerShape(6.dp))
-                                                                                            .background(accentColor.copy(alpha = 0.14f))
-                                                                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                                                                    )
-                                                                                }
-                                                                            }
-                                                                            Spacer(Modifier.width(6.dp))
-                                                                            Text(
-                                                                                text = relTime,
-                                                                                style = MaterialTheme.typography.labelSmall,
-                                                                                color = if (conv.highestRisk.equals("scam", ignoreCase = true)) DesktopPalette.GlassError else tokens.textMuted
-                                                                            )
-                                                                        }
-
-                                                                        Row(
-                                                                            modifier = Modifier.fillMaxWidth(),
-                                                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                                                            verticalAlignment = Alignment.CenterVertically
-                                                                        ) {
-                                                                            Text(
-                                                                                text = conv.latestMessage.preview.take(settings.previewLength),
-                                                                                style = MaterialTheme.typography.bodySmall,
-                                                                                color = tokens.textSecondary,
-                                                                                maxLines = 1,
-                                                                                overflow = TextOverflow.Ellipsis,
-                                                                                modifier = Modifier.weight(1f)
-                                                                            )
-                                                                            if (conv.unreadCount > 0) {
-                                                                                Spacer(Modifier.width(8.dp))
-                                                                                Box(
-                                                                                    modifier = Modifier
-                                                                                        .clip(CircleShape)
-                                                                                        .background(accentColor)
-                                                                                        .padding(horizontal = 7.dp, vertical = 2.dp),
-                                                                                    contentAlignment = Alignment.Center
-                                                                                ) {
-                                                                                    Text(
-                                                                                        text = if (conv.unreadCount > 99) "99+" else conv.unreadCount.toString(),
-                                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                                        fontWeight = FontWeight.Bold,
-                                                                                        color = Color(0xFF0A0E17)
-                                                                                    )
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                // Right Detail Pane (Conversation Header + Actions + Chronological Thread + Quick Reply)
-                                                GlassCard(modifier = Modifier.weight(0.54f).fillMaxHeight()) {
-                                                    val detail = selectedMsg
-                                                    val conv = selectedConv
-                                                    if (detail == null) {
-                                                        Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                                                            Text(DesktopStrings.selectMessageHint, color = tokens.textMuted)
-                                                        }
-                                                    } else {
-                                                        val resolvedApp = conv?.appLabel ?: DesktopAppLabels.resolveLabel(detail.packageName, detail.appLabel)
-                                                        val appColor = DesktopAppLabels.resolveColor(detail.packageName)
-                                                        Column(
-                                                            modifier = Modifier.fillMaxSize().padding(18.dp),
-                                                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                        ) {
-                                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                    Box(
-                                                                        modifier = Modifier
-                                                                            .size(34.dp)
-                                                                            .clip(CircleShape)
-                                                                            .background(appColor.copy(alpha = 0.24f))
-                                                                            .border(1.dp, appColor.copy(alpha = 0.65f), CircleShape),
-                                                                        contentAlignment = Alignment.Center
-                                                                    ) {
-                                                                        Text(
-                                                                            text = DesktopAppLabels.avatarInitial(detail.sender, resolvedApp),
-                                                                            style = MaterialTheme.typography.labelLarge,
-                                                                            fontWeight = FontWeight.Bold,
-                                                                            color = appColor
-                                                                        )
-                                                                    }
-                                                                    Column(modifier = Modifier.weight(1f)) {
-                                                                        Text(detail.sender, style = MaterialTheme.typography.titleMedium, color = tokens.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                                        Text("$resolvedApp · ${timeFmt.format(Date(detail.timestamp))}", style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                                                    }
-                                                                }
-                                                                Text(
-                                                                    text = DesktopStrings.riskLabelText(detail.riskLabel),
-                                                                    style = MaterialTheme.typography.labelMedium,
-                                                                    color = when (detail.riskLabel.lowercase()) {
-                                                                        "scam" -> DesktopPalette.GlassError
-                                                                        "suspicious" -> DesktopPalette.GlassWarning
-                                                                        else -> DesktopPalette.GlassSuccess
-                                                                    }
-                                                                )
-                                                            }
-
-                                                            // Action Row
-                                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                if ((conv?.unreadCount ?: 0) > 0 && detail.conversationKey.isNotBlank()) {
-                                                                    TextButton(onClick = {
-                                                                        scope.launch {
-                                                                            sendOrNotify(
-                                                                                LinkMsgType.MESSAGES_MARK_READ,
-                                                                                MarkReadReq(packageName = detail.packageName, conversationKey = detail.conversationKey)
-                                                                            )
-                                                                        }
-                                                                    }) {
-                                                                        Text(DesktopStrings.conversationMarkRead)
-                                                                    }
-                                                                } else if (!detail.isRead) {
-                                                                    TextButton(onClick = { scope.launch { sendOrNotify(LinkMsgType.MESSAGES_MARK_READ, MarkReadReq(ids = listOf(detail.id))) } }) {
-                                                                        Text(DesktopStrings.markRead)
-                                                                    }
-                                                                }
-                                                                TextButton(onClick = {
-                                                                    scope.launch { sendOrNotify(LinkMsgType.MESSAGES_STAR_TOGGLE, StarToggleReq(id = detail.id, starred = !detail.isStarred)) }
-                                                                }) { Text(if (detail.isStarred) "★ ${DesktopStrings.unstar}" else "☆ ${DesktopStrings.star}", color = if (detail.isStarred) DesktopPalette.GlassWarning else accentColor) }
-                                                                TextButton(
-                                                                    enabled = deepAnalyzingMsgId != detail.id,
-                                                                    onClick = {
-                                                                        scope.launch {
-                                                                            if (sendOrNotify(LinkMsgType.MESSAGE_DEEP_ANALYZE, DeepAnalyzeReq(id = detail.id))) {
-                                                                                deepAnalyzingMsgId = detail.id
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                ) { Text(if (deepAnalyzingMsgId == detail.id) DesktopStrings.deepAnalyzing else DesktopStrings.deepAnalyze) }
-                                                                TextButton(onClick = {
-                                                                    scope.launch { sendOrNotify(LinkMsgType.NOTE_ADD, NoteAddReq(content = "[${detail.sender}] ${detail.preview}", relatedMessageId = detail.id)) }
-                                                                }) { Text(DesktopStrings.addNote) }
-                                                            }
-
-                                                            // Tags row
-                                                            if (tags.isNotEmpty()) {
-                                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                                    tags.forEach { tg ->
-                                                                        val applied = tg.id in detail.tagIds
-                                                                        FilterChip(
-                                                                            selected = applied,
-                                                                            onClick = {
-                                                                                scope.launch {
-                                                                                    val cmd = if (applied) LinkMsgType.MESSAGES_TAG_REMOVE else LinkMsgType.MESSAGES_TAG_APPLY
-                                                                                    sendOrNotify(cmd, MessageTagReq(messageId = detail.id, tagId = tg.id))
-                                                                                }
-                                                                            },
-                                                                            label = { Text(tg.name) }
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            HorizontalDivider(color = tokens.border)
-                                                            Text(DesktopStrings.conversationTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
-                                                            val threadItems = remember(conversationThread, messages, conv?.groupKey) {
-                                                                val raw = conversationThread?.items?.takeIf { it.isNotEmpty() }
-                                                                    ?: if (conv != null) messages.filter { conversationGroupKey(it) == conv.groupKey } else emptyList()
-                                                                raw.sortedBy { it.timestamp }
-                                                            }
-                                                            if (threadItems.isEmpty()) {
-                                                                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                                                    Text(DesktopStrings.conversationEmpty, style = MaterialTheme.typography.bodySmall, color = tokens.textMuted)
-                                                                }
-                                                            } else {
-                                                                LazyColumn(
-                                                                    state = threadListState,
-                                                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                                                ) {
-                                                                    items(threadItems, key = { it.id }) { item ->
-                                                                        val itemSelected = item.id == detail.id
-                                                                        Column(
-                                                                            modifier = Modifier
-                                                                                .fillMaxWidth()
-                                                                                .clip(RoundedCornerShape(10.dp))
-                                                                                .background(if (itemSelected) accentColor.copy(alpha = 0.14f) else tokens.surfaceElevated.copy(alpha = 0.65f))
-                                                                                .border(
-                                                                                    width = 1.dp,
-                                                                                    color = if (itemSelected) accentColor.copy(alpha = 0.45f) else Color.Transparent,
-                                                                                    shape = RoundedCornerShape(10.dp)
-                                                                                )
-                                                                                .clickable { selectedMsgId = item.id }
-                                                                                .padding(10.dp)
-                                                                        ) {
-                                                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                                                Text(
-                                                                                    text = "${if (item.isStarred) "★ " else ""}${item.sender}",
-                                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                                    fontWeight = FontWeight.SemiBold,
-                                                                                    color = accentColor
-                                                                                )
-                                                                                Text(
-                                                                                    text = "${DesktopStrings.riskLabelText(item.riskLabel)} · ${formatRelativeConvTime(item.timestamp, settings.use24HourTime)}",
-                                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                                    color = if (item.riskLabel.equals("scam", ignoreCase = true)) DesktopPalette.GlassError else tokens.textMuted
-                                                                                )
-                                                                            }
-                                                                            Spacer(Modifier.height(3.dp))
-                                                                            Text(item.preview.take(settings.previewLength), style = MaterialTheme.typography.bodySmall, color = tokens.textPrimary)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            // Quick Reply Bar
-                                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                OutlinedTextField(
-                                                                    value = replyText,
-                                                                    onValueChange = { replyText = it },
-                                                                    label = { Text(DesktopStrings.replyPlaceholder) },
-                                                                    singleLine = true,
-                                                                    modifier = Modifier.weight(1f)
-                                                                )
-                                                                SpringButton(
-                                                                    enabled = replyText.isNotBlank(),
-                                                                    animationsEnabled = settings.animationsEnabled,
-                                                                    onClick = {
-                                                                        val txt = replyText.trim()
-                                                                        if (txt.isNotBlank()) {
-                                                                            scope.launch {
-                                                                                if (sendOrNotify(
-                                                                                        LinkMsgType.QUICK_REPLY_SEND,
-                                                                                        QuickReplySendReq(
-                                                                                            packageName = detail.packageName,
-                                                                                            sender = detail.sender,
-                                                                                            conversationKey = detail.conversationKey,
-                                                                                            text = txt
-                                                                                        )
-                                                                                    )
-                                                                                ) {
-                                                                                    replyText = ""
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                ) { Text(DesktopStrings.sendReply) }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                            },
+                                            sendOrNotify = { type, payload -> sendOrNotify(type, payload) }
+                                        )
                                     }
 
                                     DesktopTab.STATS -> {
-                                        Column(
-                                            modifier = Modifier.fillMaxSize().verticalScroll(statsScrollState),
-                                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                                        ) {
-                                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                                                StatBox(DesktopStrings.statsTotal, stats.total.toString(), Modifier.weight(1f), icon = DesktopIcons.Messages, iconTint = accentColor)
-                                                StatBox(DesktopStrings.statsToday, stats.today.toString(), Modifier.weight(1f), icon = DesktopIcons.Stats, iconTint = DesktopPalette.GlassSuccess)
-                                                StatBox(DesktopStrings.statsUnread, stats.unread.toString(), Modifier.weight(1f), icon = DesktopIcons.Bell, iconTint = DesktopPalette.GlassWarning)
-                                                StatBox(DesktopStrings.statsScam, stats.scam.toString(), Modifier.weight(1f), icon = DesktopIcons.Warning, iconTint = DesktopPalette.GlassError)
+                                        DesktopStatsPage(
+                                            windowClass = windowClass,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            stats = stats,
+                                            scrollState = statsScrollState,
+                                            onNavigateMessagesWithFilter = { filterKey ->
+                                                msgFilter = filterKey
+                                                activeTab = DesktopTab.MESSAGES
+                                                if (filterKey in setOf("unread", "starred", "scam")) {
+                                                    scope.launch {
+                                                        sendOrNotify(
+                                                            LinkMsgType.MESSAGES_LIST,
+                                                            MessagesListReq(filter = filterKey, offset = 0, limit = 60, sinceCursor = 0L)
+                                                        )
+                                                    }
+                                                }
                                             }
-                                            DesktopStatsCharts(stats = stats, accentColor = accentColor)
-                                        }
+                                        )
                                     }
 
                                     DesktopTab.TODOS -> {
-                                        val nowMs = System.currentTimeMillis()
-                                        val noteColorChoices = listOf("", "#A78BFA", "#6EA8FE", "#34D399", "#FBBF24", "#FB7185")
-                                        Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                            // Left: Todos Full CRUD (#499)
-                                            Column(modifier = Modifier.weight(0.55f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                    OutlinedTextField(
-                                                        value = newTodoTitle,
-                                                        onValueChange = { newTodoTitle = it },
-                                                        label = { Text(DesktopStrings.todoAddHint) },
-                                                        singleLine = true,
-                                                        modifier = Modifier.weight(1f)
-                                                    )
-                                                    SpringButton(onClick = {
-                                                        val title = newTodoTitle.trim()
-                                                        if (title.isNotBlank()) {
-                                                            scope.launch {
-                                                                if (sendOrNotify(LinkMsgType.TODOS_ADD, TodoAddReq(title = title))) newTodoTitle = ""
-                                                            }
-                                                        }
-                                                    }, animationsEnabled = settings.animationsEnabled) { Text(DesktopStrings.add) }
-                                                    SpringOutlinedButton(onClick = {
-                                                        editTodoTitle = newTodoTitle.trim()
-                                                        editTodoNotes = ""
-                                                        editTodoDueAt = System.currentTimeMillis() + 60L * 60L * 1000L
-                                                        editTodoDueCustom = formatDueTime(editTodoDueAt)
-                                                        editTodoPriority = 1
-                                                        editTodoRepeat = ""
-                                                        editingTodo = null
-                                                        showNewTodoDialog = true
-                                                    }, animationsEnabled = settings.animationsEnabled) { Text(DesktopStrings.todoAddFull) }
-                                                }
-                                                if (todos.isEmpty()) {
-                                                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                                        Text(DesktopStrings.todosEmpty, color = tokens.textMuted)
-                                                    }
-                                                } else {
-                                                    LazyColumn(state = todosListState, verticalArrangement = Arrangement.spacedBy(listSpace), modifier = Modifier.weight(1f)) {
-                                                        items(todos, key = { it.id }) { t ->
-                                                            val isOverdue = !t.isDone && t.dueAt > 0L && t.dueAt < nowMs
-                                                            val prioColor = when (t.priority) {
-                                                                2 -> DesktopPalette.GlassError
-                                                                0 -> DesktopPalette.GlassSuccess
-                                                                else -> DesktopPalette.GlassWarning
-                                                            }
-                                                            GlassCard(modifier = Modifier.fillMaxWidth()) {
-                                                                Row(modifier = Modifier.fillMaxWidth().padding(cardPad), verticalAlignment = Alignment.CenterVertically) {
-                                                                    Checkbox(
-                                                                        checked = t.isDone,
-                                                                        onCheckedChange = { checked ->
-                                                                            scope.launch { sendOrNotify(LinkMsgType.TODOS_TOGGLE, TodosToggleReq(id = t.id, done = checked)) }
-                                                                        }
-                                                                    )
-                                                                    Box(
-                                                                        modifier = Modifier
-                                                                            .size(8.dp)
-                                                                            .clip(CircleShape)
-                                                                            .background(prioColor)
-                                                                    )
-                                                                    Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
-                                                                        Text(
-                                                                            text = t.title,
-                                                                            style = MaterialTheme.typography.bodyMedium,
-                                                                            textDecoration = if (t.isDone) TextDecoration.LineThrough else null,
-                                                                            color = if (t.isDone) tokens.textMuted else if (isOverdue) DesktopPalette.GlassError else tokens.textPrimary
-                                                                        )
-                                                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                            if (t.dueAt > 0L) {
-                                                                                val duePrefix = if (isOverdue) "${DesktopStrings.todoOverdue} · " else ""
-                                                                                Text(
-                                                                                    text = "$duePrefix${formatDueTime(t.dueAt)}",
-                                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                                    color = if (isOverdue) DesktopPalette.GlassError else tokens.textMuted
-                                                                                )
-                                                                            }
-                                                                            if (t.repeatRule.isNotBlank()) {
-                                                                                Text(
-                                                                                    text = when (t.repeatRule) {
-                                                                                        "daily" -> DesktopStrings.todoRepeatDaily
-                                                                                        "weekly" -> DesktopStrings.todoRepeatWeekly
-                                                                                        else -> t.repeatRule
-                                                                                    },
-                                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                                    color = accentColor
-                                                                                )
-                                                                            }
-                                                                        }
-                                                                        if (t.notes.isNotBlank()) {
-                                                                            Text(
-                                                                                text = t.notes,
-                                                                                style = MaterialTheme.typography.labelSmall,
-                                                                                color = tokens.textSecondary,
-                                                                                maxLines = 2,
-                                                                                overflow = TextOverflow.Ellipsis
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                    TextButton(onClick = {
-                                                                        editingTodo = t
-                                                                        editTodoTitle = t.title
-                                                                        editTodoNotes = t.notes
-                                                                        editTodoDueAt = if (t.dueAt > 0L) t.dueAt else System.currentTimeMillis() + 3600_000L
-                                                                        editTodoDueCustom = formatDueTime(editTodoDueAt)
-                                                                        editTodoPriority = t.priority
-                                                                        editTodoRepeat = t.repeatRule
-                                                                        showNewTodoDialog = true
-                                                                    }) { Text(DesktopStrings.todoEdit) }
-                                                                    TextButton(onClick = { scope.launch { sendOrNotify(LinkMsgType.TODOS_DELETE, TodoDeleteReq(id = t.id)) } }) {
-                                                                        Text(DesktopStrings.todoDelete, color = DesktopPalette.GlassError)
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // Right: Notes Full CRUD Panel (#499)
-                                            GlassCard(modifier = Modifier.weight(0.45f).fillMaxHeight()) {
-                                                Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                            Icon(DesktopIcons.Note, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                                                            Text(DesktopStrings.notesTitle, style = MaterialTheme.typography.titleMedium, color = tokens.textPrimary)
-                                                        }
-                                                        FilterChip(
-                                                            selected = newNotePinned,
-                                                            onClick = { newNotePinned = !newNotePinned },
-                                                            label = { Text(DesktopStrings.notePin, style = MaterialTheme.typography.labelSmall) }
-                                                        )
-                                                    }
-                                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                        OutlinedTextField(
-                                                            value = newNoteContent,
-                                                            onValueChange = { newNoteContent = it },
-                                                            label = { Text(DesktopStrings.noteInputHint) },
-                                                            singleLine = true,
-                                                            modifier = Modifier.weight(1f)
-                                                        )
-                                                        SpringButton(onClick = {
-                                                            val c = newNoteContent.trim()
-                                                            if (c.isNotBlank()) {
-                                                                scope.launch {
-                                                                    if (sendOrNotify(LinkMsgType.NOTE_ADD, NoteAddReq(content = c, pinned = newNotePinned, colorHex = newNoteColor))) {
-                                                                        newNoteContent = ""
-                                                                        newNotePinned = false
-                                                                    }
-                                                                }
-                                                            }
-                                                        }, animationsEnabled = settings.animationsEnabled) { Text(DesktopStrings.add) }
-                                                    }
-                                                    // Color palette dots for new note
-                                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(DesktopStrings.noteColorLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                                        noteColorChoices.forEach { hex ->
-                                                            val selected = newNoteColor == hex
-                                                            val swatch = DesktopPalette.parseHexColor(hex) ?: tokens.border
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .size(if (selected) 20.dp else 16.dp)
-                                                                    .clip(CircleShape)
-                                                                    .background(swatch)
-                                                                    .border(if (selected) 2.dp else 1.dp, if (selected) tokens.textPrimary else tokens.border, CircleShape)
-                                                                    .clickable { newNoteColor = hex }
-                                                            )
-                                                        }
-                                                    }
-                                                    if (notes.isEmpty()) {
-                                                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                                            Text(DesktopStrings.notesEmpty, color = tokens.textMuted)
-                                                        }
-                                                    } else {
-                                                        val sortedNotes = remember(notes) {
-                                                            notes.sortedWith(compareByDescending<NoteItemDto> { it.pinned }.thenByDescending { it.updatedAt })
-                                                        }
-                                                        LazyColumn(state = notesListState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                            items(sortedNotes, key = { it.id }) { n ->
-                                                                val noteAccent = DesktopPalette.parseHexColor(n.colorHex)
-                                                                Row(
-                                                                    modifier = Modifier
-                                                                        .fillMaxWidth()
-                                                                        .clip(RoundedCornerShape(10.dp))
-                                                                        .background(tokens.surfaceElevated.copy(alpha = 0.6f))
-                                                                        .border(1.dp, if (n.pinned) accentColor.copy(alpha = 0.4f) else tokens.border, RoundedCornerShape(10.dp))
-                                                                        .clickable {
-                                                                            editingNote = n
-                                                                            editNoteContent = n.content
-                                                                            editNotePinned = n.pinned
-                                                                            editNoteColor = n.colorHex
-                                                                        }
-                                                                        .padding(10.dp),
-                                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                                    verticalAlignment = Alignment.Top
-                                                                ) {
-                                                                    if (noteAccent != null) {
-                                                                        Box(
-                                                                            modifier = Modifier
-                                                                                .width(4.dp)
-                                                                                .height(36.dp)
-                                                                                .clip(RoundedCornerShape(2.dp))
-                                                                                .background(noteAccent)
-                                                                        )
-                                                                    }
-                                                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                                        if (n.relatedAppLabel.isNotBlank() || n.pinned) {
-                                                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                                if (n.pinned) {
-                                                                                    Icon(DesktopIcons.Pin, contentDescription = null, tint = accentColor, modifier = Modifier.size(13.dp))
-                                                                                }
-                                                                                if (n.relatedAppLabel.isNotBlank()) {
-                                                                                    Text(n.relatedAppLabel, style = MaterialTheme.typography.labelSmall, color = accentColor)
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        Text(n.content, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
-                                                                    }
-                                                                    Column(horizontalAlignment = Alignment.End) {
-                                                                        TextButton(onClick = {
-                                                                            scope.launch {
-                                                                                sendOrNotify(LinkMsgType.NOTE_PIN_TOGGLE, NotePinToggleReq(id = n.id, pinned = !n.pinned))
-                                                                            }
-                                                                        }) {
-                                                                            Text(if (n.pinned) DesktopStrings.noteUnpin else DesktopStrings.notePin, style = MaterialTheme.typography.labelSmall)
-                                                                        }
-                                                                        TextButton(onClick = {
-                                                                            scope.launch { sendOrNotify(LinkMsgType.NOTE_DELETE, NoteDeleteReq(id = n.id)) }
-                                                                        }) {
-                                                                            Text(DesktopStrings.noteDelete, style = MaterialTheme.typography.labelSmall, color = DesktopPalette.GlassError)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        DesktopTodosNotesPage(
+                                            windowClass = windowClass,
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            cardPad = cardPad,
+                                            listSpace = listSpace,
+                                            todos = todos,
+                                            notes = notes,
+                                            newTodoTitle = newTodoTitle,
+                                            onNewTodoTitleChange = { newTodoTitle = it },
+                                            onOpenNewTodoDialog = {
+                                                editTodoTitle = newTodoTitle.trim()
+                                                editTodoNotes = ""
+                                                editTodoDueAt = System.currentTimeMillis() + 60L * 60L * 1000L
+                                                editTodoDueCustom = formatDueTime(editTodoDueAt)
+                                                editTodoPriority = 1
+                                                editTodoRepeat = ""
+                                                editingTodo = null
+                                                showNewTodoDialog = true
+                                            },
+                                            onOpenEditTodoDialog = { t ->
+                                                editingTodo = t
+                                                editTodoTitle = t.title
+                                                editTodoNotes = t.notes
+                                                editTodoDueAt = if (t.dueAt > 0L) t.dueAt else System.currentTimeMillis() + 3600_000L
+                                                editTodoDueCustom = formatDueTime(editTodoDueAt)
+                                                editTodoPriority = t.priority
+                                                editTodoRepeat = t.repeatRule
+                                                showNewTodoDialog = true
+                                            },
+                                            newNoteContent = newNoteContent,
+                                            onNewNoteContentChange = { newNoteContent = it },
+                                            newNotePinned = newNotePinned,
+                                            onNewNotePinnedChange = { newNotePinned = it },
+                                            newNoteColor = newNoteColor,
+                                            onNewNoteColorChange = { newNoteColor = it },
+                                            onOpenEditNoteDialog = { n ->
+                                                editingNote = n
+                                                editNoteContent = n.content
+                                                editNotePinned = n.pinned
+                                                editNoteColor = n.colorHex
+                                            },
+                                            todosListState = todosListState,
+                                            notesListState = notesListState,
+                                            sendOrNotify = { type, payload -> sendOrNotify(type, payload) }
+                                        )
                                     }
 
                                     DesktopTab.CHAT -> {
-                                        // Multi-Session AI Chat with Markdown + Copy + Quick Commands + Quote Notification + Ctrl+Enter (#499)
-                                        Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                            // Session Sidebar
-                                            GlassCard(modifier = Modifier.width(220.dp).fillMaxHeight()) {
-                                                Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(DesktopStrings.chatSessionsTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
-                                                        TextButton(onClick = {
-                                                            scope.launch { sendOrNotify(LinkMsgType.CHAT_SESSION_NEW, ChatSessionNewReq(title = "Desktop Chat")) }
-                                                        }) { Text(DesktopStrings.chatNewSession, color = accentColor) }
-                                                    }
-                                                    HorizontalDivider(color = tokens.border)
-                                                    LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                        items(chatSessions, key = { it.id }) { s ->
-                                                            val sel = s.id == chatSessionId
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .fillMaxWidth()
-                                                                    .clip(RoundedCornerShape(10.dp))
-                                                                    .background(if (sel) accentColor.copy(alpha = 0.18f) else Color.Transparent)
-                                                                    .clickable {
-                                                                        chatSessionId = s.id
-                                                                        scope.launch { sendOrNotify(LinkMsgType.CHAT_HISTORY, ChatHistoryReq(s.id)) }
-                                                                    }
-                                                                    .padding(horizontal = 10.dp, vertical = 8.dp)
-                                                            ) {
-                                                                Text(s.title, style = MaterialTheme.typography.bodySmall, color = if (sel) accentColor else tokens.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // Chat Main Column
-                                            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                                // Quick Commands Bar + Quote Latest Notification (#499)
-                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 10.dp)) {
-                                                    listOf(
-                                                        DesktopStrings.quickPromptSummary,
-                                                        DesktopStrings.quickPromptUnread,
-                                                        DesktopStrings.quickPromptScam,
-                                                        DesktopStrings.quickPromptTodos
-                                                    ).forEach { prompt ->
-                                                        FilterChip(selected = false, onClick = { sendChatMessage(prompt) }, label = { Text(prompt) })
-                                                    }
-                                                    val latestMsg = messages.maxByOrNull { it.timestamp }
-                                                    if (latestMsg != null) {
-                                                        FilterChip(
-                                                            selected = false,
-                                                            onClick = {
-                                                                val app = DesktopAppLabels.resolveLabel(latestMsg.packageName, latestMsg.appLabel)
-                                                                val quote = "[$app · ${latestMsg.sender}] ${latestMsg.preview.take(120)}\n"
-                                                                chatInput = if (chatInput.isBlank()) quote else "$quote$chatInput"
-                                                            },
-                                                            label = { Text(DesktopStrings.chatQuoteLatest, color = accentColor) }
-                                                        )
-                                                    }
-                                                }
-
-                                                if (chatBubbles.isEmpty()) {
-                                                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                                        Text(DesktopStrings.emptyChat, color = tokens.textMuted, style = MaterialTheme.typography.bodyMedium)
-                                                    }
-                                                } else {
-                                                    LazyColumn(state = chatListState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                        itemsIndexed(
-                                                            items = chatBubbles,
-                                                            key = { idx, b -> "${idx}_${b.id}_${b.role}_${b.createdAt}" }
-                                                        ) { _, b ->
-                                                            val isUser = b.role == "user"
-                                                            Row(
-                                                                modifier = Modifier.fillMaxWidth(),
-                                                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-                                                            ) {
-                                                                val chatCorner = settings.messageCardCornerDp.dp
-                                                                val chatTextStyle = MaterialTheme.typography.bodyMedium.copy(
-                                                                    fontSize = MaterialTheme.typography.bodyMedium.fontSize * settings.chatFontSize.multiplier
-                                                                )
-                                                                Column(
-                                                                    modifier = Modifier
-                                                                        .clip(RoundedCornerShape(chatCorner))
-                                                                        .background(if (isUser) accentColor.copy(alpha = 0.22f) else tokens.surface)
-                                                                        .border(1.dp, if (isUser) accentColor.copy(alpha = 0.35f) else tokens.border, RoundedCornerShape(chatCorner))
-                                                                        .padding(horizontal = 14.dp, vertical = 12.dp)
-                                                                ) {
-                                                                    if (isUser) {
-                                                                        Text(b.content, style = chatTextStyle, color = tokens.textPrimary)
-                                                                    } else {
-                                                                        androidx.compose.material3.ProvideTextStyle(chatTextStyle) {
-                                                                            DesktopMarkdownText(markdown = b.content, accentColor = accentColor)
-                                                                        }
-                                                                        Row(modifier = Modifier.align(Alignment.End)) {
-                                                                            TextButton(onClick = { copyToClipboard(b.content) }) {
-                                                                                Text(DesktopStrings.chatCopy, style = MaterialTheme.typography.labelSmall)
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                AnimatedVisibility(visible = chatSending) {
-                                                    PulsingThinkingLabel(
-                                                        text = DesktopStrings.chatThinking,
-                                                        color = accentColor,
-                                                        animationsEnabled = settings.animationsEnabled && isWindowVisible
-                                                    )
-                                                }
-
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                                    verticalAlignment = Alignment.Bottom
-                                                ) {
-                                                    OutlinedTextField(
-                                                        value = chatInput,
-                                                        onValueChange = { chatInput = it },
-                                                        label = { Text(DesktopStrings.chatInputPlaceholder) },
-                                                        maxLines = 4,
-                                                        modifier = Modifier
-                                                            .weight(1f)
-                                                            .onPreviewKeyEvent { ev ->
-                                                                if (ev.type == KeyEventType.KeyDown && ev.isCtrlPressed && ev.key == Key.Enter) {
-                                                                    sendChatMessage(chatInput)
-                                                                    true
-                                                                } else false
-                                                            }
-                                                    )
-                                                    SpringButton(
-                                                        onClick = { sendChatMessage(chatInput) },
-                                                        enabled = !chatSending && chatInput.isNotBlank(),
-                                                        animationsEnabled = settings.animationsEnabled
-                                                    ) { Text(DesktopStrings.chatSend) }
-                                                }
-                                            }
-                                        }
+                                        DesktopChatPage(
+                                            windowClass = windowClass,
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            isWindowVisible = isWindowVisible,
+                                            chatSessions = chatSessions,
+                                            chatSessionId = chatSessionId,
+                                            onSelectSession = { chatSessionId = it },
+                                            chatBubbles = chatBubbles,
+                                            chatSending = chatSending,
+                                            chatInput = chatInput,
+                                            onChatInputChange = { chatInput = it },
+                                            messages = messages,
+                                            chatListState = chatListState,
+                                            onSendChatMessage = { sendChatMessage(it) },
+                                            onCopyToClipboard = { copyToClipboard(it) },
+                                            sendOrNotify = { type, payload -> sendOrNotify(type, payload) }
+                                        )
                                     }
 
                                     DesktopTab.RULES -> {
-                                        Column(
-                                            modifier = Modifier.fillMaxSize().verticalScroll(rulesScrollState),
-                                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                                        ) {
-                                            // 1. Collapsible Allowlist Rules (#501)
-                                            GlassCard(modifier = Modifier.fillMaxWidth()) {
-                                                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .clickable { DesktopSettingsStore.update { it.copy(rulesCollapseAllowlist = !it.rulesCollapseAllowlist) } },
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                            Icon(DesktopIcons.Rules, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                                                            Text("${DesktopStrings.whitelistTitle} (${whitelistRules.size})", style = MaterialTheme.typography.titleMedium, color = tokens.textPrimary)
-                                                        }
-                                                        Text(if (settings.rulesCollapseAllowlist) "▸" else "▾", color = tokens.textMuted)
-                                                    }
-                                                    AnimatedVisibility(visible = !settings.rulesCollapseAllowlist) {
-                                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                OutlinedTextField(value = newRuleSender, onValueChange = { newRuleSender = it }, label = { Text(DesktopStrings.whitelistSenderHint) }, modifier = Modifier.weight(1f), singleLine = true)
-                                                                OutlinedTextField(value = newRulePkg, onValueChange = { newRulePkg = it }, label = { Text(DesktopStrings.whitelistPkgHint) }, modifier = Modifier.weight(1f), singleLine = true)
-                                                                SpringButton(onClick = {
-                                                                    if (newRuleSender.isNotBlank()) {
-                                                                        scope.launch {
-                                                                            if (sendOrNotify(LinkMsgType.WHITELIST_ADD, WhitelistAddReq(sender = newRuleSender, packageName = newRulePkg, ruleText = newRuleSender))) {
-                                                                                newRuleSender = ""
-                                                                                newRulePkg = ""
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }, animationsEnabled = settings.animationsEnabled) { Text(DesktopStrings.add) }
-                                                            }
-                                                            if (whitelistRules.isEmpty()) {
-                                                                Text(DesktopStrings.emptyWhitelist, style = MaterialTheme.typography.bodySmall, color = tokens.textMuted)
-                                                            } else {
-                                                                whitelistRules.forEach { r ->
-                                                                    HorizontalDivider(color = tokens.border)
-                                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                                        Text("${r.ruleText} ${if (r.packageName.isNotBlank()) "(${r.packageName})" else ""}", style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
-                                                                        TextButton(onClick = { scope.launch { sendOrNotify(LinkMsgType.WHITELIST_REMOVE, RuleRemoveReq(r.id)) } }) {
-                                                                            Text(DesktopStrings.remove, color = DesktopPalette.GlassError)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                        DesktopRulesPage(
+                                            windowClass = windowClass,
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            whitelistRules = whitelistRules,
+                                            tags = tags,
+                                            mutedApps = mutedApps,
+                                            newRuleSender = newRuleSender,
+                                            onNewRuleSenderChange = { newRuleSender = it },
+                                            newRulePkg = newRulePkg,
+                                            onNewRulePkgChange = { newRulePkg = it },
+                                            newTagName = newTagName,
+                                            onNewTagNameChange = { newTagName = it },
+                                            scrollState = rulesScrollState,
+                                            sendOrNotify = { type, payload -> sendOrNotify(type, payload) }
+                                        )
+                                    }
 
-                                            // 2. Collapsible Tags (#501)
-                                            GlassCard(modifier = Modifier.fillMaxWidth()) {
-                                                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .clickable { DesktopSettingsStore.update { it.copy(rulesCollapseTags = !it.rulesCollapseTags) } },
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                            Icon(DesktopIcons.Tag, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                                                            Text("${DesktopStrings.tagsTitle} (${tags.size})", style = MaterialTheme.typography.titleMedium, color = tokens.textPrimary)
-                                                        }
-                                                        Text(if (settings.rulesCollapseTags) "▸" else "▾", color = tokens.textMuted)
-                                                    }
-                                                    AnimatedVisibility(visible = !settings.rulesCollapseTags) {
-                                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                                OutlinedTextField(value = newTagName, onValueChange = { newTagName = it }, label = { Text(DesktopStrings.tagNameHint) }, modifier = Modifier.weight(1f), singleLine = true)
-                                                                SpringButton(onClick = {
-                                                                    if (newTagName.isNotBlank()) {
-                                                                        scope.launch {
-                                                                            if (sendOrNotify(LinkMsgType.TAGS_ADD, TagAddReq(name = newTagName))) newTagName = ""
-                                                                        }
-                                                                    }
-                                                                }, animationsEnabled = settings.animationsEnabled) { Text(DesktopStrings.add) }
-                                                            }
-                                                            if (tags.isEmpty()) {
-                                                                Text(DesktopStrings.emptyTags, style = MaterialTheme.typography.bodySmall, color = tokens.textMuted)
-                                                            } else {
-                                                                tags.forEach { t ->
-                                                                    HorizontalDivider(color = tokens.border)
-                                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                                        Text(t.name, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
-                                                                        TextButton(onClick = { scope.launch { sendOrNotify(LinkMsgType.TAGS_REMOVE, TagRemoveReq(t.id)) } }) {
-                                                                            Text(DesktopStrings.remove, color = DesktopPalette.GlassError)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // 3. Collapsible Muted Apps (#501)
-                                            GlassCard(modifier = Modifier.fillMaxWidth()) {
-                                                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .clickable { DesktopSettingsStore.update { it.copy(rulesCollapseMuted = !it.rulesCollapseMuted) } },
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                            Icon(DesktopIcons.Bell, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                                                            Text("${DesktopStrings.mutedAppsTitle} (${mutedApps.count { it.muted }})", style = MaterialTheme.typography.titleMedium, color = tokens.textPrimary)
-                                                        }
-                                                        Text(if (settings.rulesCollapseMuted) "▸" else "▾", color = tokens.textMuted)
-                                                    }
-                                                    AnimatedVisibility(visible = !settings.rulesCollapseMuted) {
-                                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                            if (mutedApps.isEmpty()) {
-                                                                Text(DesktopStrings.mutedAppsEmpty, style = MaterialTheme.typography.bodySmall, color = tokens.textMuted)
-                                                            } else {
-                                                                mutedApps.forEach { app ->
-                                                                    HorizontalDivider(color = tokens.border)
-                                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                                        Column(modifier = Modifier.weight(1f)) {
-                                                                            Text(DesktopAppLabels.resolveLabel(app.packageName, app.appLabel), style = MaterialTheme.typography.bodySmall, color = tokens.textPrimary)
-                                                                            Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted, fontFamily = FontFamily.Monospace)
-                                                                        }
-                                                                        Switch(
-                                                                            checked = app.muted,
-                                                                            onCheckedChange = { checked ->
-                                                                                scope.launch { sendOrNotify(LinkMsgType.MUTED_APPS_TOGGLE, MutedAppToggleReq(packageName = app.packageName, muted = checked)) }
-                                                                            }
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                    DesktopTab.REPORTS -> {
+                                        LaunchedEffect(uiState.connState) {
+                                            if (uiState.connState == LinkConnState.CONNECTED) {
+                                                server.sendCommand(LinkMsgType.GROUP_REPORTS_LIST, reqId(), emptyMap<String, String>())
                                             }
                                         }
+                                        DesktopGroupReportsPage(
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            isConnected = uiState.connState == LinkConnState.CONNECTED,
+                                            reports = groupReports,
+                                            onRefresh = {
+                                                scope.launch {
+                                                    server.sendCommand(LinkMsgType.GROUP_REPORTS_LIST, reqId(), emptyMap<String, String>())
+                                                }
+                                            }
+                                        )
+                                    }
+
+                                    DesktopTab.TOOLS -> {
+                                        DesktopToolsPage(
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            isConnected = uiState.connState == LinkConnState.CONNECTED,
+                                            latestReceivedClipboard = latestReceivedClipboard,
+                                            server = server,
+                                            onFeedback = { actionFeedback = it }
+                                        )
+                                    }
+
+                                    DesktopTab.HOME -> {
+                                        DesktopHomePage(
+                                            settings = settings,
+                                            tokens = tokens,
+                                            accentColor = accentColor,
+                                            windowClass = windowClass,
+                                            uiState = uiState,
+                                            stats = stats,
+                                            recentMessages = messages,
+                                            server = server,
+                                            onNavigateTab = { tabKey ->
+                                                runCatching { DesktopTab.valueOf(tabKey) }.getOrNull()?.let { activeTab = it }
+                                            },
+                                            onFeedback = { actionFeedback = it }
+                                        )
                                     }
 
                                     DesktopTab.SETTINGS -> {
@@ -2155,127 +1509,33 @@ fun DesktopApp(
                         }
                     }
                 }
-
-                // Deep Analysis Result Dialog (rendered with Markdown)
-                deepAnalysisResult?.let { (_, markdown) ->
-                    AlertDialog(
-                        onDismissRequest = { deepAnalysisResult = null },
-                        title = { Text(DesktopStrings.deepAnalysisTitle, color = tokens.textPrimary) },
-                        text = {
-                            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                                DesktopMarkdownText(markdown = markdown, accentColor = accentColor)
-                            }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = { deepAnalysisResult = null }) { Text(DesktopStrings.ok) }
-                        },
-                        containerColor = tokens.dialogContainer
-                    )
                 }
 
-                // #499 Full Todo Add / Edit Dialog (title, notes, dueAt, priority, repeatRule)
+                // Deep Analysis Result Dialog (rendered with Markdown, PhantomDialog shell maxWidth=720dp)
+                deepAnalysisResult?.let { (_, markdown) ->
+                    PhantomDialog(
+                        onDismissRequest = { deepAnalysisResult = null },
+                        title = DesktopStrings.deepAnalysisTitle,
+                        maxWidth = 720.dp,
+                        confirmButton = {
+                            TextButton(onClick = { deepAnalysisResult = null }) { Text(DesktopStrings.ok) }
+                        }
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                            DesktopMarkdownText(markdown = markdown, accentColor = accentColor)
+                        }
+                    }
+                }
+
+                // #499 / #520 Full Todo Add / Edit Dialog (PhantomDialog shell maxWidth=560dp)
                 if (showNewTodoDialog) {
                     val target = editingTodo
-                    AlertDialog(
+                    PhantomDialog(
                         onDismissRequest = { showNewTodoDialog = false; editingTodo = null },
-                        title = { Text(if (target == null) DesktopStrings.todoAddFull else DesktopStrings.todoEdit, color = tokens.textPrimary) },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                    value = editTodoTitle,
-                                    onValueChange = { editTodoTitle = it },
-                                    label = { Text(DesktopStrings.todoAddHint) },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                OutlinedTextField(
-                                    value = editTodoNotes,
-                                    onValueChange = { editTodoNotes = it },
-                                    label = { Text(DesktopStrings.todoNotesHint) },
-                                    maxLines = 3,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                // Priority chips
-                                Text(DesktopStrings.todoPriorityLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    listOf(
-                                        0 to DesktopStrings.todoPriorityLow,
-                                        1 to DesktopStrings.todoPriorityMed,
-                                        2 to DesktopStrings.todoPriorityHigh
-                                    ).forEach { (p, label) ->
-                                        FilterChip(
-                                            selected = editTodoPriority == p,
-                                            onClick = { editTodoPriority = p },
-                                            label = { Text(label) }
-                                        )
-                                    }
-                                }
-                                // Reminder time presets + custom input
-                                Text(DesktopStrings.todoDueLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    FilterChip(
-                                        selected = false,
-                                        onClick = {
-                                            editTodoDueAt = System.currentTimeMillis() + 60L * 60L * 1000L
-                                            editTodoDueCustom = formatDueTime(editTodoDueAt)
-                                        },
-                                        label = { Text(DesktopStrings.todoDue1h) }
-                                    )
-                                    FilterChip(
-                                        selected = false,
-                                        onClick = {
-                                            val cal = java.util.Calendar.getInstance().apply {
-                                                set(java.util.Calendar.HOUR_OF_DAY, 20)
-                                                set(java.util.Calendar.MINUTE, 0)
-                                                set(java.util.Calendar.SECOND, 0)
-                                                if (timeInMillis <= System.currentTimeMillis()) add(java.util.Calendar.DAY_OF_YEAR, 1)
-                                            }
-                                            editTodoDueAt = cal.timeInMillis
-                                            editTodoDueCustom = formatDueTime(editTodoDueAt)
-                                        },
-                                        label = { Text(DesktopStrings.todoDueTonight) }
-                                    )
-                                    FilterChip(
-                                        selected = false,
-                                        onClick = {
-                                            val cal = java.util.Calendar.getInstance().apply {
-                                                add(java.util.Calendar.DAY_OF_YEAR, 1)
-                                                set(java.util.Calendar.HOUR_OF_DAY, 9)
-                                                set(java.util.Calendar.MINUTE, 0)
-                                                set(java.util.Calendar.SECOND, 0)
-                                            }
-                                            editTodoDueAt = cal.timeInMillis
-                                            editTodoDueCustom = formatDueTime(editTodoDueAt)
-                                        },
-                                        label = { Text(DesktopStrings.todoDueTomorrow) }
-                                    )
-                                }
-                                OutlinedTextField(
-                                    value = editTodoDueCustom,
-                                    onValueChange = { raw ->
-                                        editTodoDueCustom = raw
-                                        parseDueTime(raw)?.let { editTodoDueAt = it }
-                                    },
-                                    label = { Text(DesktopStrings.todoDueCustomHint) },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                // Repeat rule chips
-                                Text(DesktopStrings.todoRepeatLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    listOf(
-                                        "" to DesktopStrings.todoRepeatNone,
-                                        "daily" to DesktopStrings.todoRepeatDaily,
-                                        "weekly" to DesktopStrings.todoRepeatWeekly
-                                    ).forEach { (rule, label) ->
-                                        FilterChip(
-                                            selected = editTodoRepeat == rule,
-                                            onClick = { editTodoRepeat = rule },
-                                            label = { Text(label) }
-                                        )
-                                    }
-                                }
-                            }
+                        title = if (target == null) DesktopStrings.todoAddFull else DesktopStrings.todoEdit,
+                        maxWidth = 560.dp,
+                        dismissButton = {
+                            TextButton(onClick = { showNewTodoDialog = false; editingTodo = null }) { Text(DesktopStrings.dismiss) }
                         },
                         confirmButton = {
                             TextButton(onClick = {
@@ -2315,50 +1575,116 @@ fun DesktopApp(
                                     }
                                 }
                             }) { Text(DesktopStrings.todoSave) }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showNewTodoDialog = false; editingTodo = null }) { Text(DesktopStrings.dismiss) }
-                        },
-                        containerColor = tokens.dialogContainer
-                    )
-                }
-
-                // #499 Edit Note Dialog
-                editingNote?.let { targetNote ->
-                    val noteColorChoices = listOf("", "#A78BFA", "#6EA8FE", "#34D399", "#FBBF24", "#FB7185")
-                    AlertDialog(
-                        onDismissRequest = { editingNote = null },
-                        title = { Text(DesktopStrings.noteEditTitle, color = tokens.textPrimary) },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                    value = editNoteContent,
-                                    onValueChange = { editNoteContent = it },
-                                    minLines = 3,
-                                    maxLines = 8,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                            OutlinedTextField(
+                                value = editTodoTitle,
+                                onValueChange = { editTodoTitle = it },
+                                label = { Text(DesktopStrings.todoAddHint) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = editTodoNotes,
+                                onValueChange = { editTodoNotes = it },
+                                label = { Text(DesktopStrings.todoNotesHint) },
+                                maxLines = 3,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            // Priority chips
+                            Text(DesktopStrings.todoPriorityLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    0 to DesktopStrings.todoPriorityLow,
+                                    1 to DesktopStrings.todoPriorityMed,
+                                    2 to DesktopStrings.todoPriorityHigh
+                                ).forEach { (p, label) ->
                                     FilterChip(
-                                        selected = editNotePinned,
-                                        onClick = { editNotePinned = !editNotePinned },
-                                        label = { Text(if (editNotePinned) DesktopStrings.noteUnpin else DesktopStrings.notePin) }
+                                        selected = editTodoPriority == p,
+                                        onClick = { editTodoPriority = p },
+                                        label = { Text(label) }
                                     )
-                                    Text(DesktopStrings.noteColorLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                    noteColorChoices.forEach { hex ->
-                                        val selected = editNoteColor == hex
-                                        val swatch = DesktopPalette.parseHexColor(hex) ?: tokens.border
-                                        Box(
-                                            modifier = Modifier
-                                                .size(if (selected) 20.dp else 16.dp)
-                                                .clip(CircleShape)
-                                                .background(swatch)
-                                                .border(if (selected) 2.dp else 1.dp, if (selected) tokens.textPrimary else tokens.border, CircleShape)
-                                                .clickable { editNoteColor = hex }
-                                        )
-                                    }
                                 }
                             }
+                            // Reminder time presets + custom input
+                            Text(DesktopStrings.todoDueLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        editTodoDueAt = System.currentTimeMillis() + 60L * 60L * 1000L
+                                        editTodoDueCustom = formatDueTime(editTodoDueAt)
+                                    },
+                                    label = { Text(DesktopStrings.todoDue1h) }
+                                )
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        val cal = java.util.Calendar.getInstance().apply {
+                                            set(java.util.Calendar.HOUR_OF_DAY, 20)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            if (timeInMillis <= System.currentTimeMillis()) add(java.util.Calendar.DAY_OF_YEAR, 1)
+                                        }
+                                        editTodoDueAt = cal.timeInMillis
+                                        editTodoDueCustom = formatDueTime(editTodoDueAt)
+                                    },
+                                    label = { Text(DesktopStrings.todoDueTonight) }
+                                )
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        val cal = java.util.Calendar.getInstance().apply {
+                                            add(java.util.Calendar.DAY_OF_YEAR, 1)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 9)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                        }
+                                        editTodoDueAt = cal.timeInMillis
+                                        editTodoDueCustom = formatDueTime(editTodoDueAt)
+                                    },
+                                    label = { Text(DesktopStrings.todoDueTomorrow) }
+                                )
+                            }
+                            OutlinedTextField(
+                                value = editTodoDueCustom,
+                                onValueChange = { raw ->
+                                    editTodoDueCustom = raw
+                                    parseDueTime(raw)?.let { editTodoDueAt = it }
+                                },
+                                label = { Text(DesktopStrings.todoDueCustomHint) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            // Repeat rule chips
+                            Text(DesktopStrings.todoRepeatLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    "" to DesktopStrings.todoRepeatNone,
+                                    "daily" to DesktopStrings.todoRepeatDaily,
+                                    "weekly" to DesktopStrings.todoRepeatWeekly
+                                ).forEach { (rule, label) ->
+                                    FilterChip(
+                                        selected = editTodoRepeat == rule,
+                                        onClick = { editTodoRepeat = rule },
+                                        label = { Text(label) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // #499 / #520 Edit Note Dialog (PhantomDialog shell maxWidth=560dp)
+                editingNote?.let { targetNote ->
+                    val noteColorChoices = listOf("", "#A78BFA", "#6EA8FE", "#34D399", "#FBBF24", "#FB7185")
+                    PhantomDialog(
+                        onDismissRequest = { editingNote = null },
+                        title = DesktopStrings.noteEditTitle,
+                        maxWidth = 560.dp,
+                        dismissButton = {
+                            TextButton(onClick = { editingNote = null }) { Text(DesktopStrings.dismiss) }
                         },
                         confirmButton = {
                             TextButton(onClick = {
@@ -2371,12 +1697,38 @@ fun DesktopApp(
                                     }
                                 }
                             }) { Text(DesktopStrings.todoSave) }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { editingNote = null }) { Text(DesktopStrings.dismiss) }
-                        },
-                        containerColor = tokens.dialogContainer
-                    )
+                        }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = editNoteContent,
+                                onValueChange = { editNoteContent = it },
+                                minLines = 3,
+                                maxLines = 8,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                FilterChip(
+                                    selected = editNotePinned,
+                                    onClick = { editNotePinned = !editNotePinned },
+                                    label = { Text(if (editNotePinned) DesktopStrings.noteUnpin else DesktopStrings.notePin) }
+                                )
+                                Text(DesktopStrings.noteColorLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                noteColorChoices.forEach { hex ->
+                                    val selected = editNoteColor == hex
+                                    val swatch = DesktopPalette.parseHexColor(hex) ?: tokens.border
+                                    Box(
+                                        modifier = Modifier
+                                            .size(if (selected) 20.dp else 16.dp)
+                                            .clip(CircleShape)
+                                            .background(swatch)
+                                            .border(if (selected) 2.dp else 1.dp, if (selected) tokens.textPrimary else tokens.border, CircleShape)
+                                            .clickable { editNoteColor = hex }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // #478 Desktop Update Available Dialog
@@ -2397,7 +1749,7 @@ fun DesktopApp(
 }
 
 @Composable
-private fun StatBox(
+internal fun StatBox(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
@@ -2425,8 +1777,8 @@ private fun StatBox(
 }
 
 /**
- * #489 隔離式 draw-phase 呼吸點：僅於 pulsing && animationsEnabled 時啟動 rememberInfiniteTransition，
- * 連線中或縮至系統匣時零影格喚醒，且僅於 graphicsLayer lambda 讀取動畫值（零重組）。
+ * #489 / #520 隔離式 draw-phase 呼吸點：三閘門（pulsing ∧ animationsEnabled ∧ 未逾 120 秒），
+ * 省電模式或逾時零 rememberInfiniteTransition，且僅於 graphicsLayer lambda 讀取動畫值（零重組）。
  */
 @Composable
 private fun PulsingStatusDot(
@@ -2434,7 +1786,15 @@ private fun PulsingStatusDot(
     pulsing: Boolean,
     animationsEnabled: Boolean
 ) {
-    if (!pulsing || !animationsEnabled) {
+    var timedOut by remember(pulsing) { mutableStateOf(false) }
+    LaunchedEffect(pulsing, animationsEnabled) {
+        timedOut = false
+        if (pulsing && animationsEnabled) {
+            delay(120_000L)
+            timedOut = true
+        }
+    }
+    if (!pulsing || !animationsEnabled || timedOut) {
         Box(
             modifier = Modifier
                 .size(9.dp)
@@ -2463,12 +1823,20 @@ private fun PulsingStatusDot(
 }
 
 @Composable
-private fun PulsingThinkingLabel(
+internal fun PulsingThinkingLabel(
     text: String,
     color: Color,
     animationsEnabled: Boolean
 ) {
-    if (!animationsEnabled) {
+    var timedOut by remember(text) { mutableStateOf(false) }
+    LaunchedEffect(text, animationsEnabled) {
+        timedOut = false
+        if (animationsEnabled) {
+            delay(130_000L)
+            timedOut = true
+        }
+    }
+    if (!animationsEnabled || timedOut) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
@@ -2497,10 +1865,10 @@ private fun PulsingThinkingLabel(
     )
 }
 
-private fun formatDueTime(ts: Long): String {
+internal fun formatDueTime(ts: Long): String {
     if (ts <= 0L) return ""
     return runCatching {
-        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ts))
+        TODO_DUE_FMT.get().format(java.util.Date(ts))
     }.getOrDefault("")
 }
 

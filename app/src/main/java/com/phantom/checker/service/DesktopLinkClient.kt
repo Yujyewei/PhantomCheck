@@ -104,6 +104,14 @@ object DesktopLinkClient {
     private val _discoveredDesktops = MutableStateFlow<List<DiscoveredDesktop>>(emptyList())
     val discoveredDesktops: StateFlow<List<DiscoveredDesktop>> = _discoveredDesktops.asStateFlow()
 
+    private val _isScanningLan = MutableStateFlow(false)
+    val isScanningLan: StateFlow<Boolean> = _isScanningLan.asStateFlow()
+
+    @Volatile
+    private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
+    @Volatile
+    private var mdnsRestartJob: Job? = null
+
     @Volatile
     private var activeWs: WebSocket? = null
 
@@ -148,6 +156,18 @@ object DesktopLinkClient {
 
     @Volatile
     private var discoveryRequested: Boolean = false
+
+    // #517 事件驅動電量與裝置狀態監聽（僅連線時動態註冊，斷線立即反註冊，零秒級輪詢）
+    @Volatile
+    private var batteryStatusReceiver: android.content.BroadcastReceiver? = null
+    @Volatile
+    private var batteryStatusAppCtx: Context? = null
+    @Volatile
+    private var lastPushedBatteryLevel: Int = -1
+    @Volatile
+    private var lastPushedCharging: Boolean? = null
+    @Volatile
+    private var lastPushedChargeType: String = ""
 
     @Volatile
     private var discoveryAppCtx: Context? = null
@@ -368,6 +388,51 @@ object DesktopLinkClient {
                 bannerDurationSec = bannerDurationSec
             )
         )
+    }
+
+    @Volatile
+    private var lastReceivedClipHash: Int = 0
+    private val PURE_OTP_DIGITS_REGEX = Regex("^\\d{4,8}$")
+
+    /**
+     * #518 手機端手動/前景推送剪貼簿至已配對電腦（預設關、僅 TLS 配對連線、5000 字上限、OtpDetector 驗證碼保護）。
+     * 回傳狀態碼：sent | disabled | disconnected | empty | too_long | otp_blocked | echo_skipped
+     */
+    fun pushClipboardToDesktop(ctx: Context, rawText: String): String {
+        val appCtx = ctx.applicationContext
+        if (!PhantomPrefs.isClipboardSyncEnabled(appCtx)) return "disabled"
+        val ws = activeWs ?: return "disconnected"
+        val trimmed = rawText.trim()
+        if (trimmed.isEmpty()) return "empty"
+        val maxChars = PhantomPrefs.getClipboardMaxChars(appCtx)
+        if (trimmed.length > maxChars) return "too_long"
+        if (PhantomPrefs.isClipboardOtpGuardEnabled(appCtx)) {
+            if (com.phantom.checker.util.OtpDetector.extractOtp(trimmed) != null ||
+                PURE_OTP_DIGITS_REGEX.matches(trimmed)
+            ) {
+                return "otp_blocked"
+            }
+        }
+        val hash = trimmed.hashCode()
+        if (hash == lastReceivedClipHash) return "echo_skipped"
+        lastReceivedClipHash = hash
+        val ok = sendEnvelope(
+            ws,
+            LinkMsgType.CLIPBOARD_SYNC,
+            "",
+            ClipboardSyncPayload(text = trimmed, source = "phone", timestampMs = System.currentTimeMillis())
+        )
+        return if (ok) "sent" else "disconnected"
+    }
+
+    /** #518 手機端推送網址至桌面瀏覽器開啟（嚴格限制 http:// 或 https://） */
+    fun sendOpenUrlToDesktop(rawUrl: String): Boolean {
+        val url = rawUrl.trim()
+        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
+            return false
+        }
+        val ws = activeWs ?: return false
+        return sendEnvelope(ws, LinkMsgType.OPEN_URL_ON_PEER, "", OpenUrlReq(url = url.take(2048)))
     }
 
     fun unpairDesktop(ctx: Context, instanceId: String) {
@@ -648,6 +713,7 @@ object DesktopLinkClient {
                                         connectedDesktopName = finalName,
                                         connectedHostPort = "${target.host}:${target.port}"
                                     )
+                                    startBatteryStatusMonitor(appCtx, webSocket)
                                 } else {
                                     val errCode = resp.errorCode.ifBlank { LinkErrorCode.AUTH_FAILED }
                                     DesktopLinkStore.recordDiagnostic(appCtx, "HANDSHAKE", errCode, resp.errorMessage)
@@ -682,6 +748,7 @@ object DesktopLinkClient {
                                         connectedDesktopName = finalName,
                                         connectedHostPort = "${target.host}:${target.port}"
                                     )
+                                    startBatteryStatusMonitor(appCtx, webSocket)
                                 } else {
                                     val errCode = resp.errorCode.ifBlank { LinkErrorCode.AUTH_FAILED }
                                     DesktopLinkStore.recordDiagnostic(appCtx, "HANDSHAKE", errCode, resp.errorMessage)
@@ -746,6 +813,7 @@ object DesktopLinkClient {
                     messagePushJob?.cancel()
                     messagePushJob = null
                     isSubscribedToMessages = false
+                    stopBatteryStatusMonitor()
                 }
                 DesktopLinkStore.recordDiagnostic(appCtx, "TCP", "CLOSED", "code=$code $reason")
                 val maxCap = if (isScreenOff) SCREEN_OFF_BACKOFF_CAP_SEC else SCREEN_ON_BACKOFF_CAP_SEC
@@ -763,6 +831,7 @@ object DesktopLinkClient {
                     messagePushJob?.cancel()
                     messagePushJob = null
                     isSubscribedToMessages = false
+                    stopBatteryStatusMonitor()
                 }
                 val (stage, code) = classifyThrowable(t)
                 val diagCode = if (t is ConnectException || t.cause is ConnectException) "REFUSED" else code
@@ -1071,8 +1140,35 @@ object DesktopLinkClient {
                     }
                     val existing = db.chatDao().messagesForSession(sid).takeLast(12).map { ChatMessage(it.role, it.content) }
                     db.chatDao().insertMessage(ChatMessageEntity(sessionId = sid, role = ChatMessageEntity.ROLE_USER, content = text))
+                    // #515 修正懸浮球與桌面端 AI 訊息計數失真：直接自手機 Room 注入精確統計與近 30 則淨化摘要
+                    val calToday = java.util.Calendar.getInstance().apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, 0)
+                        set(java.util.Calendar.MINUTE, 0)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    val totalMsgs = runCatching { db.messageDao().todayCount(0L) }.getOrDefault(0)
+                    val todayMsgs = runCatching { db.messageDao().todayCount(calToday) }.getOrDefault(0)
+                    val unreadMsgs = runCatching { db.messageDao().unreadCount() }.getOrDefault(0)
+                    val recentMsgs = runCatching { db.messageDao().recent().take(30) }.getOrDefault(emptyList())
+                    val contextBlock = buildString {
+                        append(AiClient.buildRagSummaryPrompt())
+                        append("\n\n<本機訊息快照>\n")
+                        append("總訊息數：$totalMsgs 則；今日訊息數：$todayMsgs 則；未讀訊息數：$unreadMsgs 則。\n")
+                        if (recentMsgs.isNotEmpty()) {
+                            append("最近 ${recentMsgs.size} 則訊息（最新在前）：\n")
+                            recentMsgs.forEach { m ->
+                                val app = AiClient.sanitizeForPrompt(m.appLabel.ifBlank { m.packageName }).take(20)
+                                val sender = AiClient.sanitizeForPrompt(m.sender).take(24)
+                                val body = AiClient.sanitizeForPrompt(m.content).replace("\n", " ").take(120)
+                                val readTag = if (m.isRead) "已讀" else "未讀"
+                                append("- [$app] $sender ($readTag/${m.riskLabel}): $body\n")
+                            }
+                        }
+                        append("</本機訊息快照>")
+                    }
                     val result = AiClient.chatAssistant(
-                        systemPrompt = AiClient.buildRagSummaryPrompt(),
+                        systemPrompt = contextBlock,
                         history = existing,
                         userMessage = text,
                         context = appCtx
@@ -1637,25 +1733,21 @@ object DesktopLinkClient {
             }
 
             LinkMsgType.PHONE_STATUS_GET -> {
-                val batteryIntent = runCatching { appCtx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) }.getOrNull()
-                val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-                val pct = if (level >= 0 && scale > 0) ((level * 100) / scale).coerceIn(0, 100) else -1
-                val statusExtra = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-                val charging = statusExtra == BatteryManager.BATTERY_STATUS_CHARGING || statusExtra == BatteryManager.BATTERY_STATUS_FULL
+                val ds = collectDeviceStatus(appCtx)
                 val uptime = if (connectedAtMs > 0L) (System.currentTimeMillis() - connectedAtMs).coerceAtLeast(0L) else 0L
-                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.PHONE_STATUS_GET, true, "bat=$pct%")
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.PHONE_STATUS_GET, true, "bat=${ds.batteryLevel}% chg=${ds.chargeType}")
                 sendEnvelope(
                     ws,
                     LinkMsgType.PHONE_STATUS_RES,
                     env.reqId,
                     PhoneStatusDto(
-                        batteryPercent = pct,
-                        isCharging = charging,
+                        batteryPercent = ds.batteryLevel,
+                        isCharging = ds.isCharging,
                         serverUptimeMs = uptime,
-                        deviceName = Build.MODEL.ifBlank { "Android" }
+                        deviceName = ds.deviceName
                     )
                 )
+                sendEnvelope(ws, LinkMsgType.DEVICE_STATUS, "", ds)
             }
 
             LinkMsgType.CHAT_SESSIONS_LIST -> {
@@ -1677,6 +1769,103 @@ object DesktopLinkClient {
                     env.reqId,
                     ChatSessionNewRes(ok = true, session = ChatSessionSummaryDto(id = id, title = title.take(30), updatedAt = System.currentTimeMillis()))
                 )
+            }
+
+            LinkMsgType.CLIPBOARD_SYNC -> {
+                val payload = runCatching { gson.fromJson(env.payloadJson, ClipboardSyncPayload::class.java) }.getOrNull()
+                if (payload != null && PhantomPrefs.isClipboardSyncEnabled(appCtx)) {
+                    val maxChars = PhantomPrefs.getClipboardMaxChars(appCtx)
+                    val text = payload.text.take(maxChars)
+                    if (text.isNotBlank()) {
+                        lastReceivedClipHash = text.hashCode()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            runCatching {
+                                val cm = appCtx.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                cm?.setPrimaryClip(android.content.ClipData.newPlainText("PhantomCheck", text))
+                            }
+                        }
+                        DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.CLIPBOARD_SYNC, true, "len=${text.length}")
+                    }
+                } else {
+                    DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.CLIPBOARD_SYNC, false, "disabled_or_empty")
+                }
+            }
+
+            LinkMsgType.FIND_PHONE_RING -> {
+                val ok = runCatching {
+                    val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+                        ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                    val ringtone = android.media.RingtoneManager.getRingtone(appCtx, uri)
+                    ringtone?.play()
+                    scope.launch {
+                        delay(3_000L)
+                        runCatching { ringtone?.stop() }
+                    }
+                    val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    val notif = androidx.core.app.NotificationCompat.Builder(appCtx, ProactiveEngine.CHANNEL_ASSISTANT_BRIEFING)
+                        .setSmallIcon(com.phantom.checker.R.drawable.ic_launcher_foreground)
+                        .setContentTitle("PhantomCheck")
+                        .setContentText("Find My Phone")
+                        .setAutoCancel(true)
+                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                        .build()
+                    nm?.notify(1151, notif)
+                    true
+                }.getOrDefault(false)
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.FIND_PHONE_RING, ok, "")
+                sendEnvelope(ws, LinkMsgType.FIND_PHONE_RING_RES, env.reqId, CrossEndActionRes(ok = ok, message = if (ok) "ringing" else "failed"))
+            }
+
+            LinkMsgType.SEND_PHONE_NOTIF -> {
+                val req = runCatching { gson.fromJson(env.payloadJson, SendPhoneNotifReq::class.java) }.getOrNull() ?: SendPhoneNotifReq()
+                val title = req.title.trim().take(120).ifBlank { "PhantomCheck Desktop" }
+                val body = req.body.trim().take(400)
+                val ok = if (body.isBlank()) false else runCatching {
+                    val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    val notif = androidx.core.app.NotificationCompat.Builder(appCtx, ProactiveEngine.CHANNEL_ASSISTANT_BRIEFING)
+                        .setSmallIcon(com.phantom.checker.R.drawable.ic_launcher_foreground)
+                        .setContentTitle(title)
+                        .setContentText(body)
+                        .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(body))
+                        .setAutoCancel(true)
+                        .build()
+                    nm?.notify(1152, notif)
+                    true
+                }.getOrDefault(false)
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.SEND_PHONE_NOTIF, ok, "len=${body.length}")
+                sendEnvelope(ws, LinkMsgType.SEND_PHONE_NOTIF_RES, env.reqId, CrossEndActionRes(ok = ok, message = if (ok) "sent" else "empty_or_failed"))
+            }
+
+            LinkMsgType.OPEN_URL_ON_PEER -> {
+                val req = runCatching { gson.fromJson(env.payloadJson, OpenUrlReq::class.java) }.getOrNull() ?: OpenUrlReq()
+                val url = req.url.trim().take(2048)
+                val validScheme = url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+                val ok = if (!validScheme) false else runCatching {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    appCtx.startActivity(intent)
+                    true
+                }.getOrDefault(false)
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.OPEN_URL_ON_PEER, ok, if (validScheme) "http_ok" else "blocked_scheme")
+                sendEnvelope(ws, LinkMsgType.OPEN_URL_ON_PEER_RES, env.reqId, CrossEndActionRes(ok = ok, message = if (ok) "opened" else "invalid_url"))
+            }
+
+            LinkMsgType.GROUP_REPORTS_LIST -> {
+                val reports = runCatching { db.groupReportDao().recentReports(30) }.getOrDefault(emptyList())
+                val dtos = reports.map { r ->
+                    GroupReportSummaryDto(
+                        id = r.id,
+                        appLabel = r.appLabel,
+                        conversationTitle = r.conversationKey,
+                        summaryMarkdown = r.summaryText,
+                        messageCount = r.messageCount,
+                        triggerType = "group_report",
+                        createdAt = r.createdAt
+                    )
+                }
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.GROUP_REPORTS_LIST, true, "count=${dtos.size}")
+                sendEnvelope(ws, LinkMsgType.GROUP_REPORTS_LIST_RES, env.reqId, GroupReportsListRes(items = dtos))
             }
 
             else -> {
@@ -1855,7 +2044,8 @@ object DesktopLinkClient {
                 override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
                     DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "RESOLVE_FAILED", "code=$errorCode attempt=$attempt")
                     synchronized(resolveLock) { isResolvingService = false }
-                    if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE && attempt < 3 && discoveryListener != null) {
+                    val retryable = errorCode == NsdManager.FAILURE_ALREADY_ACTIVE || errorCode == NsdManager.FAILURE_INTERNAL_ERROR
+                    if (retryable && attempt < 3 && discoveryListener != null) {
                         val backoffMs = 500L * (1L shl attempt)
                         scope.launch {
                             delay(backoffMs)
@@ -1903,12 +2093,39 @@ object DesktopLinkClient {
     }
 
     @Synchronized
+    private fun acquireMulticastLock(appCtx: Context) {
+        if (multicastLock?.isHeld == true) return
+        runCatching {
+            val wm = appCtx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return
+            val lock = multicastLock ?: wm.createMulticastLock("phantomcheck:mdns").apply {
+                setReferenceCounted(false)
+                multicastLock = this
+            }
+            if (!lock.isHeld) lock.acquire()
+        }.onFailure { err ->
+            DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "MULTICAST_LOCK_WARN", err.javaClass.simpleName)
+        }
+    }
+
+    @Synchronized
+    private fun releaseMulticastLock() {
+        val lock = multicastLock
+        multicastLock = null
+        if (lock != null && lock.isHeld) {
+            runCatching { lock.release() }
+        }
+    }
+
+    @Synchronized
     private fun startDiscoveryInternal(appCtx: Context) {
         if (discoveryListener != null) return
+        acquireMulticastLock(appCtx)
         runCatching {
             val mgr = appCtx.getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return
             val listener = object : NsdManager.DiscoveryListener {
-                override fun onDiscoveryStarted(regType: String) {}
+                override fun onDiscoveryStarted(regType: String) {
+                    _isScanningLan.value = true
+                }
                 override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                     if (!serviceInfo.serviceType.contains("_phantomcheck", ignoreCase = true)) return
                     enqueueServiceResolve(appCtx, mgr, serviceInfo, attempt = 0)
@@ -1916,18 +2133,23 @@ object DesktopLinkClient {
                 override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                     _discoveredDesktops.value = _discoveredDesktops.value.filterNot { it.serviceName == serviceInfo.serviceName }
                 }
-                override fun onDiscoveryStopped(serviceType: String) {}
+                override fun onDiscoveryStopped(serviceType: String) {
+                    _isScanningLan.value = false
+                }
                 override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    _isScanningLan.value = false
                     DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "DISCOVERY_START_FAILED", "code=$errorCode")
                     pauseDiscoveryForScreenOff()
                 }
                 override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    _isScanningLan.value = false
                     DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "DISCOVERY_STOP_FAILED", "code=$errorCode")
                 }
             }
             mgr.discoverServices(LinkProtocol.MDNS_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
             nsdManager = mgr
             discoveryListener = listener
+            _isScanningLan.value = true
             mdnsTtlSweepJob?.cancel()
             mdnsTtlSweepJob = scope.launch {
                 while (discoveryListener != null) {
@@ -1935,7 +2157,25 @@ object DesktopLinkClient {
                     pruneExpiredDiscovered()
                 }
             }
+            // #516 OEM 省電防卡死：每 35 秒若仍未發現任何電腦且螢幕開啟，安全重啟 discoverServices
+            mdnsRestartJob?.cancel()
+            mdnsRestartJob = scope.launch {
+                while (discoveryRequested && !isScreenOff) {
+                    delay(35_000L)
+                    if (discoveryRequested && !isScreenOff && _discoveredDesktops.value.isEmpty()) {
+                        DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "PERIODIC_RESTART", "refreshing listener")
+                        pauseDiscoveryForScreenOff()
+                        delay(350L)
+                        if (discoveryRequested && !isScreenOff) {
+                            startDiscoveryInternal(appCtx)
+                        }
+                        break
+                    }
+                }
+            }
         }.onFailure { err ->
+            _isScanningLan.value = false
+            releaseMulticastLock()
             DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "DISCOVERY_ERR", err.javaClass.simpleName)
         }
     }
@@ -1944,6 +2184,9 @@ object DesktopLinkClient {
     private fun pauseDiscoveryForScreenOff() {
         mdnsTtlSweepJob?.cancel()
         mdnsTtlSweepJob = null
+        mdnsRestartJob?.cancel()
+        mdnsRestartJob = null
+        _isScanningLan.value = false
         val mgr = nsdManager
         val listener = discoveryListener
         nsdManager = null
@@ -1958,6 +2201,7 @@ object DesktopLinkClient {
                     android.util.Log.w("DesktopLinkClient", "stopServiceDiscovery failed: ${err.javaClass.simpleName}")
                 }
         }
+        releaseMulticastLock()
     }
 
     @Synchronized
@@ -1965,5 +2209,134 @@ object DesktopLinkClient {
         discoveryRequested = false
         pauseDiscoveryForScreenOff()
         unregisterNetworkCallback()
+    }
+
+    // ---- #517 Phone Device Status (event-driven ACTION_BATTERY_CHANGED, zero second-level polling) ----
+
+    internal suspend fun collectDeviceStatus(appCtx: Context, batteryIntentOverride: Intent? = null): DeviceStatusPush {
+        val batteryIntent = batteryIntentOverride
+            ?: runCatching { appCtx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) }.getOrNull()
+        val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val pct = if (level >= 0 && scale > 0) ((level * 100) / scale).coerceIn(0, 100) else -1
+        val statusExtra = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val plugged = batteryIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        val charging = statusExtra == BatteryManager.BATTERY_STATUS_CHARGING ||
+            statusExtra == BatteryManager.BATTERY_STATUS_FULL ||
+            plugged > 0
+        val chargeType = when {
+            (plugged and BatteryManager.BATTERY_PLUGGED_AC) != 0 -> "ac"
+            (plugged and BatteryManager.BATTERY_PLUGGED_USB) != 0 -> "usb"
+            (plugged and BatteryManager.BATTERY_PLUGGED_WIRELESS) != 0 -> "wireless"
+            charging -> "ac"
+            else -> "none"
+        }
+        val cm = appCtx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val caps = runCatching { cm?.getNetworkCapabilities(cm.activeNetwork) }.getOrNull()
+        val netType = when {
+            caps == null -> "none"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            else -> "unknown"
+        }
+        val availMb = runCatching {
+            android.os.StatFs(appCtx.filesDir.absolutePath).availableBytes / (1024L * 1024L)
+        }.getOrDefault(-1L)
+        val (totalMsgs, unreadMsgs) = runCatching {
+            val db = AppDatabaseHolder.db(appCtx)
+            db.messageDao().todayCount(0L) to db.messageDao().unreadCount()
+        }.getOrDefault(-1 to -1)
+        val isDnd = runCatching {
+            val nm = appCtx.getSystemService(android.app.NotificationManager::class.java)
+            val sysDnd = nm != null && nm.currentInterruptionFilter != android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+            sysDnd || PhantomPrefs.isInQuietHoursNow(appCtx)
+        }.getOrDefault(false)
+        val appVer = runCatching {
+            appCtx.packageManager.getPackageInfo(appCtx.packageName, 0).versionName.orEmpty()
+        }.getOrDefault("")
+        return DeviceStatusPush(
+            batteryLevel = pct,
+            isCharging = charging,
+            chargeType = chargeType,
+            networkType = netType,
+            wifiSsid = "",
+            storageAvailMb = availMb,
+            totalMessages = totalMsgs,
+            unreadMessages = unreadMsgs,
+            isDndActive = isDnd,
+            appVersion = appVer,
+            deviceName = Build.MODEL.ifBlank { "Android" },
+            updatedAtMs = System.currentTimeMillis()
+        )
+    }
+
+    @Synchronized
+    private fun startBatteryStatusMonitor(appCtx: Context, ws: WebSocket) {
+        stopBatteryStatusMonitor()
+        lastPushedBatteryLevel = -1
+        lastPushedCharging = null
+        lastPushedChargeType = ""
+        // 連線/重連後立即推送一次（保證 3 秒內刷新）
+        scope.launch {
+            if (activeWs !== ws) return@launch
+            val ds = collectDeviceStatus(appCtx)
+            lastPushedBatteryLevel = ds.batteryLevel
+            lastPushedCharging = ds.isCharging
+            lastPushedChargeType = ds.chargeType
+            sendEnvelope(ws, LinkMsgType.DEVICE_STATUS, "", ds)
+        }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val curWs = activeWs ?: return
+                if (intent?.action != Intent.ACTION_BATTERY_CHANGED) return
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                val pct = if (level >= 0 && scale > 0) ((level * 100) / scale).coerceIn(0, 100) else -1
+                val statusExtra = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
+                val charging = statusExtra == BatteryManager.BATTERY_STATUS_CHARGING ||
+                    statusExtra == BatteryManager.BATTERY_STATUS_FULL ||
+                    plugged > 0
+                val chargeType = when {
+                    (plugged and BatteryManager.BATTERY_PLUGGED_AC) != 0 -> "ac"
+                    (plugged and BatteryManager.BATTERY_PLUGGED_USB) != 0 -> "usb"
+                    (plugged and BatteryManager.BATTERY_PLUGGED_WIRELESS) != 0 -> "wireless"
+                    charging -> "ac"
+                    else -> "none"
+                }
+                val levelChanged = lastPushedBatteryLevel < 0 || kotlin.math.abs(pct - lastPushedBatteryLevel) >= 2
+                val chargeChanged = lastPushedCharging != charging || lastPushedChargeType != chargeType
+                if (!levelChanged && !chargeChanged) return
+                lastPushedBatteryLevel = pct
+                lastPushedCharging = charging
+                lastPushedChargeType = chargeType
+                scope.launch {
+                    if (activeWs !== curWs) return@launch
+                    val ds = collectDeviceStatus(appCtx, batteryIntentOverride = intent)
+                    sendEnvelope(curWs, LinkMsgType.DEVICE_STATUS, "", ds)
+                }
+            }
+        }
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(
+                appCtx,
+                receiver,
+                IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            batteryStatusReceiver = receiver
+            batteryStatusAppCtx = appCtx
+        }
+    }
+
+    @Synchronized
+    private fun stopBatteryStatusMonitor() {
+        val r = batteryStatusReceiver
+        val c = batteryStatusAppCtx
+        batteryStatusReceiver = null
+        batteryStatusAppCtx = null
+        if (r != null && c != null) {
+            runCatching { c.unregisterReceiver(r) }
+        }
     }
 }

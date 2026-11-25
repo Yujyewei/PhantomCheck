@@ -34,6 +34,7 @@ class DesktopMdnsBroadcaster {
     private var stopped = false
 
     private val serviceType = "${LinkProtocol.MDNS_SERVICE_TYPE}local."
+    private val nonHostCharsRegex = Regex("[^A-Za-z0-9_-]")
 
     fun start(port: Int, fingerprint: String, desktopName: String) {
         stop()
@@ -46,14 +47,14 @@ class DesktopMdnsBroadcaster {
                     runCatching { instance.close() }
                     return@runCatching
                 }
-                val cleanHost = desktopName.replace(Regex("[^A-Za-z0-9_-]"), "").take(16).ifBlank { "PC" }
+                val cleanHost = desktopName.replace(nonHostCharsRegex, "").take(16).ifBlank { "PC" }
                 val svcName = "PhantomCheck-$cleanHost"
                 val txtProps = mapOf(
                     "fn" to desktopName.take(28),
                     "fp" to fingerprint.take(8),
                     "v" to LinkProtocol.PROTOCOL_VERSION.toString()
                 )
-                val info = ServiceInfo.create(serviceType, svcName, port, 0, 0, txtProps)
+                val info = ServiceInfo.create(serviceType, svcName, port, 0, 0, true, txtProps)
                 instance.registerService(info)
                 jmdns = instance
                 val ipText = bindAddr?.hostAddress ?: listSiteLocalIpv4Addresses().firstOrNull().orEmpty()
@@ -63,7 +64,7 @@ class DesktopMdnsBroadcaster {
                     serviceName = svcName,
                     lastError = null
                 )
-                DesktopDiagnostics.info("mDNS", "Registered $svcName ($serviceType) on $ipText:$port (v=${LinkProtocol.PROTOCOL_VERSION}, fp=${fingerprint.take(8)})")
+                DesktopDiagnostics.info("mDNS", "Registered persistent $svcName ($serviceType) on $ipText:$port (v=${LinkProtocol.PROTOCOL_VERSION}, fp=${fingerprint.take(8)})")
             }.onFailure { err ->
                 val msg = err.message ?: err.javaClass.simpleName
                 DesktopDiagnostics.warn("mDNS", "Broadcast registration failed: $msg")

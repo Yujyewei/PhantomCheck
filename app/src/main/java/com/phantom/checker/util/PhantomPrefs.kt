@@ -58,6 +58,20 @@ enum class PersistentNotifStyle(val prefValue: String, @StringRes val labelRes: 
     }
 }
 
+enum class PersistentNotifSubtitleMode(val prefValue: String, @StringRes val labelRes: Int) {
+    LINK_STATUS("link_status", R.string.prefs_pnotif_sub_link),
+    UNREAD_COUNT("unread_count", R.string.prefs_pnotif_sub_unread),
+    BOTH("both", R.string.prefs_pnotif_sub_both),
+    HIDDEN("hidden", R.string.prefs_pnotif_sub_hidden);
+
+    val label: String get() = com.phantom.checker.PhantomApplication.str(labelRes)
+
+    companion object {
+        fun fromPref(value: String?): PersistentNotifSubtitleMode =
+            entries.firstOrNull { it.prefValue == value } ?: LINK_STATUS
+    }
+}
+
 enum class CardDensity(val prefValue: String, @StringRes val labelRes: Int) {
     COMFORTABLE("comfortable", R.string.prefs_density_comfortable),
     COMPACT("compact", R.string.prefs_density_compact);
@@ -901,6 +915,14 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
 
     fun setPersistentNotifStyle(ctx: Context, style: PersistentNotifStyle) {
         prefs(ctx).edit().putString(KEY_PERSISTENT_NOTIF_STYLE, style.prefValue).apply()
+    }
+
+    /** #512 常駐通知副標內容（桌面連線狀態／未讀數／兩者／隱藏；預設連線狀態，未配對回退未讀數） */
+    fun getPersistentNotifSubtitleMode(ctx: Context): PersistentNotifSubtitleMode =
+        PersistentNotifSubtitleMode.fromPref(prefs(ctx).getString("persistent_notif_subtitle_mode", null))
+
+    fun setPersistentNotifSubtitleMode(ctx: Context, mode: PersistentNotifSubtitleMode) {
+        prefs(ctx).edit().putString("persistent_notif_subtitle_mode", mode.prefValue).apply()
     }
 
     /** 滑動刪除開關（預設開） */
@@ -2905,6 +2927,26 @@ private const val KEY_EXPANDED_SUBCARDS = "settings_expanded_subcards"
     fun setSettingsAdvancedExpanded(ctx: Context, expanded: Boolean) {
         prefs(ctx).edit().putBoolean("settings_home_advanced_expanded", expanded).apply()
     }
+
+    // ---- #518 Cross-End Clipboard Sync (opt-in, default OFF, OTP guard ON) ----
+
+    fun isClipboardSyncEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("cross_end_clipboard_sync_enabled", false)
+
+    fun setClipboardSyncEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("cross_end_clipboard_sync_enabled", enabled).apply()
+        PhantomSettingsBus.notifyChanged()
+    }
+
+    fun isClipboardOtpGuardEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("cross_end_clipboard_otp_guard", true)
+
+    fun setClipboardOtpGuardEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean("cross_end_clipboard_otp_guard", enabled).apply()
+    }
+
+    fun getClipboardMaxChars(ctx: Context): Int =
+        prefs(ctx).getInt("cross_end_clipboard_max_chars", 5000).coerceIn(500, 5000)
 }
 
 

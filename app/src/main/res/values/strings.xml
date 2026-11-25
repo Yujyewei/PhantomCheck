@@ -3065,4 +3065,102 @@
     <string name="filters_suggest_finance">Finance &amp; OTP</string>
     <string name="filters_suggest_vip">VIP Contacts</string>
     <string name="filters_suggest_work">Work</string>
+    <!-- #510 Light Mode Contrast Fix + High Contrast Toggle -->
+    <string name="catalog_appearance_high_contrast_title">High contrast</string>
+    <string name="catalog_appearance_high_contrast_desc">Boost text, card, and border contrast for both light and dark themes (WCAG 7:1 target)</string>
+    <string name="catalog_appearance_high_contrast_aliases">high contrast,accessibility,readability,wcag,border,clarity</string>
+    <!-- #509 Group Reports -->
+    <string name="group_report_title">Group Reports</string>
+    <string name="group_report_subtitle">Auto AI summaries for selected apps &amp; groups (scheduled or every N messages)</string>
+    <string name="group_report_aliases">group report,group summary,batch summary,scheduled report,line group,ai report</string>
+    <string name="group_report_mode_info_btn">Mode details</string>
+    <string name="group_report_mode_compare_title">Output Mode Comparison</string>
+    <string name="group_report_mode_report_detail">• Standalone Report View (Default): Saved in the dedicated Group Reports table, independent of Notes. Clean chronological list without mixing into personal notes or triggering note deduplication rules.</string>
+    <string name="group_report_mode_note_detail">• Save to Notes: Lands directly in the Notes tab with a source tag and linked message reference. Searchable alongside your notes, and follows existing Notes retention and organization rules.</string>
+    <string name="group_report_add_target">Add Group</string>
+    <string name="group_report_view_reports">Reports (%1$d)</string>
+    <string name="group_report_empty_targets">No group targets yet. Tap "Add Group" to choose from observed groups.</string>
+    <string name="group_report_count_badge">Every %1$d msgs</string>
+    <string name="group_report_mode_report">Standalone Report</string>
+    <string name="group_report_mode_note">Save to Notes</string>
+    <string name="group_report_run_now">Run report now</string>
+    <string name="group_report_triggered_toast">Group report queued</string>
+    <string name="group_report_last_ok">Last report: %1$s</string>
+    <string name="group_report_last_deferred">Deferred: %1$s</string>
+    <string name="group_report_last_failed">Failed: %1$s</string>
+    <string name="group_report_added_toast">Added %1$d group target(s)</string>
+    <string name="group_report_saved_toast">Group report target updated</string>
+    <string name="group_report_deleted_toast">Group report target removed</string>
+    <string name="group_report_viewer_title">Group Reports</string>
+    <string name="group_report_viewer_empty">No standalone group reports generated yet.</string>
+    <string name="group_report_msg_count">%1$d messages</string>
+    <string name="group_report_pick_app_title">Step 1: Choose App</string>
+    <string name="group_report_pick_group_title">Step 2: Choose Groups (%1$s)</string>
+    <string name="group_report_loading">Loading observed groups…</string>
+    <string name="group_report_empty_db">No group conversations recorded yet. Group targets will appear here once notifications with group titles are received.</string>
+    <string name="group_report_group_count">%1$d groups</string>
+    <string name="group_report_back_to_apps">← Back to Apps</string>
+    <string name="group_report_confirm_add">Add (%1$d)</string>
+    <string name="group_report_trigger_schedule">Daily schedule</string>
+    <string name="group_report_schedule_hour">Daily at %1$02d:00</string>
+    <string name="group_report_trigger_count">Trigger every N messages</string>
+    <string name="group_report_count_threshold">Threshold: %1$d messages (10–500)</string>
+    <string name="group_report_both_hint">When both are enabled, whichever triggers first runs the report and resets the counter.</string>
+    <string name="group_report_output_mode">Output mode</string>
+    <string name="group_report_notif_title">Group Report Ready: %1$s</string>
+    <string name="group_report_err_token_saver">Paused by Token Saver</string>
+    <string name="group_report_err_no_ai_key">AI API key not configured</string>
+    <string name="group_report_err_quota">Daily AI quota reached (will retry next cycle)</string>
+    <string name="group_report_err_ai_failed">AI request failed after retries (messages kept for next run)</string>
+    <!-- #511 Cross-App Multi-Select Batch Delete -->
+    <string name="batch_app_multi_select_btn">Multi-select apps</string>
+    <string name="batch_app_selected_summary">%1$d app(s) · ~%2$d msgs</string>
+    <string name="batch_app_delete_confirm_title">Batch delete across apps?</string>
+    <string name="batch_app_delete_confirm_body">Selected %1$d app(s), about %2$d deletable message(s).\n\nProtection rules:\n• Scam-flagged messages (riskLabel=scam) are excluded.\n• Your own reply messages (isOwn) are excluded.\n• Up to 100 messages are deleted per batch (if more remain, tap delete again).</string>
+    <string name="batch_app_delete_done">Deleted %1$d message(s)</string>
+    <string name="batch_app_delete_done_more">Deleted %1$d message(s) (batch limit 100; %2$d remaining — tap Delete again to continue)</string>
+    <string name="batch_app_delete_none">No deletable messages (scam &amp; own replies are protected)</string>
+    <!-- #512 Persistent Notification Desktop Link Status Subtitle -->
+    <string name="prefs_pnotif_sub_link">Link status</string>
+    <string name="prefs_pnotif_sub_unread">Unread count</string>
+    <string name="prefs_pnotif_sub_both">Both</string>
+    <string name="prefs_pnotif_sub_hidden">Hidden</string>
+    <string name="notif_stats_link_connected">Connected: %1$s</string>
+    <string name="notif_stats_link_connecting">Connecting to desktop…</string>
+    <string name="notif_stats_link_disconnected">Not connected to paired PC</string>
+    <string name="catalog_notif_subtitle_mode_title">Persistent notification subtitle</string>
+    <string name="catalog_notif_subtitle_mode_desc">Show desktop link status (falls back to unread count when unpaired), unread count, both, or hide</string>
+    <string name="catalog_notif_subtitle_mode_aliases">persistent notification,subtitle,desktop link,connection status,unread,status bar</string>
+    <!-- #516 mDNS Discovery Reliability -->
+    <string name="link_hub_mdns_scanning">Scanning…</string>
+    <string name="link_hub_mdns_fallback_manual">Can\'t find PC? Use Manual Pairing →</string>
+    <!-- #518 Cross-End Utility Pack (Clipboard Sync & Open URL) -->
+    <string name="cross_end_tools_title">Cross-End Tools</string>
+    <string name="cross_end_clipboard_sync_title">Clipboard Sync (LAN TLS only)</string>
+    <string name="cross_end_clipboard_sync_desc">Off by default. Syncs plain text (max 5,000 chars) over your paired LAN TLS tunnel. OTP/verification codes are automatically blocked. Due to Android 10+ restrictions, phone clipboard can only be pushed while this app is in the foreground.</string>
+    <string name="cross_end_clipboard_otp_guard">Block OTP / verification codes</string>
+    <string name="cross_end_clipboard_push_btn">Push Phone Clipboard to PC</string>
+    <string name="cross_end_clipboard_sent">Clipboard pushed to PC</string>
+    <string name="cross_end_clipboard_otp_blocked">Blocked: OTP / verification code detected</string>
+    <string name="cross_end_clipboard_empty">Phone clipboard is empty</string>
+    <string name="cross_end_clipboard_too_long">Clipboard exceeds 5,000-character limit</string>
+    <string name="cross_end_clipboard_disabled">Enable Clipboard Sync first</string>
+    <string name="cross_end_open_url_hint">https://example.com</string>
+    <string name="cross_end_open_url_btn">Open on PC</string>
+    <string name="cross_end_open_url_sent">URL sent to PC browser</string>
+    <string name="cross_end_open_url_invalid">Only http:// or https:// URLs are allowed</string>
+    <!-- #520 v5.0.0 Orchestration: Global Animation Mode & Phone Link Hub -->
+    <string name="anim_mode_title">Animation mode</string>
+    <string name="anim_mode_desc">Balanced enables full draw-phase transitions; Power-saver minimizes motion for battery savings. Takes effect immediately.</string>
+    <string name="anim_mode_balanced">Balanced</string>
+    <string name="anim_mode_power_saver">Power-saver</string>
+    <string name="catalog_anim_mode_aliases">animation,motion,power saver,battery,reduce motion,transition</string>
+    <string name="link_hub_quick_qr">Scan QR</string>
+    <string name="link_hub_quick_rescan">Rescan LAN</string>
+    <string name="link_hub_quick_manual">Manual</string>
+    <string name="link_hub_quick_wifi">Wi-Fi</string>
+    <string name="link_hub_section_my_pcs">My PCs (%1$d)</string>
+    <string name="link_hub_section_nearby_pcs">Nearby PCs</string>
+    <string name="link_hub_advanced_logs_group">Advanced &amp; Logs</string>
+    <string name="link_hub_connect_recent_pc">Connect to %1$s</string>
 </resources>

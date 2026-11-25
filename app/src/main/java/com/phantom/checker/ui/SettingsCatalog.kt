@@ -34,6 +34,7 @@ object SettingsCatalog {
         SettingSearchItem("quick_scam_popup", "quick", R.string.catalog_quick_scam_popup_title, R.string.catalog_quick_scam_popup_desc, R.string.catalog_quick_scam_popup_aliases),
         SettingSearchItem("ai_auto_tag", "quick", R.string.catalog_ai_auto_tag_title, R.string.catalog_ai_auto_tag_desc, R.string.catalog_ai_auto_tag_aliases),
         SettingSearchItem("ai_providers", "ai", R.string.catalog_ai_providers_title, R.string.catalog_ai_providers_desc, R.string.catalog_ai_providers_aliases, page = "ApiKeySettingsActivity"),
+        SettingSearchItem("ai_group_reports", "ai", R.string.group_report_title, R.string.group_report_subtitle, R.string.group_report_aliases),
         SettingSearchItem("ai_tag_dispatch_test", "ai", R.string.catalog_ai_tag_dispatch_test_title, R.string.catalog_ai_tag_dispatch_test_desc, R.string.catalog_ai_tag_dispatch_test_aliases),
         SettingSearchItem("ai_chat_suggestions", "ai", R.string.catalog_ai_chat_suggestions_title, R.string.catalog_ai_chat_suggestions_desc, R.string.catalog_ai_chat_suggestions_aliases),
         SettingSearchItem("ai_chat_tab_behavior", "ai", R.string.catalog_ai_chat_tab_behavior_title, R.string.catalog_ai_chat_tab_behavior_desc, R.string.catalog_ai_chat_tab_behavior_aliases),
@@ -55,6 +56,7 @@ object SettingsCatalog {
         SettingSearchItem("ai_model_deep_analysis", "ai", R.string.catalog_ai_model_deep_analysis_title, R.string.catalog_ai_model_deep_analysis_desc, R.string.catalog_ai_model_deep_analysis_aliases, page = "ApiKeySettingsActivity"),
         SettingSearchItem("ai_model_settings_search", "ai", R.string.catalog_ai_model_settings_search_title, R.string.catalog_ai_model_settings_search_desc, R.string.catalog_ai_model_settings_search_aliases, page = "ApiKeySettingsActivity"),
         SettingSearchItem("notif_style", "notif", R.string.catalog_notif_style_title, R.string.catalog_notif_style_desc, R.string.catalog_notif_style_aliases),
+        SettingSearchItem("notif_persistent_subtitle", "notif", R.string.catalog_notif_subtitle_mode_title, R.string.catalog_notif_subtitle_mode_desc, R.string.catalog_notif_subtitle_mode_aliases),
         SettingSearchItem("notif_persistent_icons", "notif", R.string.catalog_notif_persistent_icons_title, R.string.catalog_notif_persistent_icons_desc, R.string.catalog_notif_persistent_icons_aliases),
         SettingSearchItem("notif_ongoing", "notif", R.string.catalog_notif_ongoing_title, R.string.catalog_notif_ongoing_desc, R.string.catalog_notif_ongoing_aliases),
         SettingSearchItem("notif_quiet_hours", "notif", R.string.catalog_notif_quiet_hours_title, R.string.catalog_notif_quiet_hours_desc, R.string.catalog_notif_quiet_hours_aliases),
@@ -74,6 +76,8 @@ object SettingsCatalog {
         SettingSearchItem("data_export_clear", "data", R.string.catalog_data_export_clear_title, R.string.catalog_data_export_clear_desc, R.string.catalog_data_export_clear_aliases),
         SettingSearchItem("appearance_widget_tour", "data", R.string.catalog_appearance_widget_tour_title, R.string.catalog_appearance_widget_tour_desc, R.string.catalog_appearance_widget_tour_aliases),
         SettingSearchItem("appearance_theme", "appearance", R.string.catalog_appearance_theme_title, R.string.catalog_appearance_theme_desc, R.string.catalog_appearance_theme_aliases),
+        SettingSearchItem("appearance_high_contrast", "appearance", R.string.catalog_appearance_high_contrast_title, R.string.catalog_appearance_high_contrast_desc, R.string.catalog_appearance_high_contrast_aliases),
+        SettingSearchItem("appearance_anim_mode", "appearance", R.string.anim_mode_title, R.string.anim_mode_desc, R.string.catalog_anim_mode_aliases),
         SettingSearchItem("appearance_language", "appearance", R.string.catalog_appearance_language_title, R.string.catalog_appearance_language_desc, R.string.catalog_appearance_language_aliases),
         SettingSearchItem("appearance_glass_effect", "appearance", R.string.catalog_appearance_glass_effect_title, R.string.catalog_appearance_glass_effect_desc, R.string.catalog_appearance_glass_effect_aliases),
         SettingSearchItem("appearance_tab_bar_mode", "appearance", R.string.catalog_appearance_tab_bar_mode_title, R.string.catalog_appearance_tab_bar_mode_desc, R.string.catalog_appearance_tab_bar_mode_aliases),
@@ -265,6 +269,7 @@ object SettingsCatalog {
             "notif_swipe_delete" -> PhantomPrefs.isSwipeToDeleteEnabled(appCtx)
             "notif_digit_variance" -> PhantomPrefs.isSameKeyDigitVarianceThrottleEnabled(appCtx)
             "notif_reply_proxy" -> PhantomPrefs.isReplyProxyEnabled(appCtx)
+            "appearance_high_contrast" -> ThemePreferences.isHighContrast(appCtx)
             "appearance_glass_effect" -> ThemePreferences.isGlassEffectEnabled(appCtx)
             "appearance_haptic" -> PhantomPrefs.isHapticFeedbackEnabled(appCtx)
             "intel_enabled" -> PhantomPrefs.isIntelEnabled(appCtx)
@@ -363,6 +368,7 @@ object SettingsCatalog {
             "notif_swipe_delete" -> PhantomPrefs.setSwipeToDeleteEnabled(appCtx, enabled)
             "notif_digit_variance" -> PhantomPrefs.setSameKeyDigitVarianceThrottleEnabled(appCtx, enabled)
             "notif_reply_proxy" -> PhantomPrefs.setReplyProxyEnabled(appCtx, enabled)
+            "appearance_high_contrast" -> ThemePreferences.setHighContrast(appCtx, enabled)
             "appearance_glass_effect" -> ThemePreferences.setGlassEffectEnabled(appCtx, enabled)
             "appearance_haptic" -> PhantomPrefs.setHapticFeedbackEnabled(appCtx, enabled)
             "intel_enabled" -> PhantomPrefs.setIntelEnabled(appCtx, enabled)

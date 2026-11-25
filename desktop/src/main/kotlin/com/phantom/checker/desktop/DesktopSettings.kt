@@ -29,6 +29,17 @@ enum class PageTransitionStyle(val key: String) {
     SCALE_FADE("scale_fade"),
     NONE("none")
 }
+enum class FullscreenHideMode(val key: String) {
+    AUTO_HIDE("auto_hide"),
+    NEVER_HIDE("never_hide"),
+    HIDE_WITH_HINT("hide_with_hint")
+}
+
+/** #520 全域動畫模式（平衡＝完整 draw-phase 動效；省電＝瞬切／短 fade、零無限迴圈） */
+enum class AnimationMode(val key: String) {
+    BALANCED("balanced"),
+    POWER_SAVER("power_saver")
+}
 
 /**
  * #468 / #479 / #488 / #497 桌機端設定資料模型（10 系統設定＋16 既有自訂設定＋#488 轉場與深淺＋#497 通知中心四合一＋視窗位置記憶）。
@@ -89,6 +100,35 @@ data class DesktopSettings(
     val rulesCollapseMuted: Boolean = false,
     // #504 Light/Dark theme mode toggle
     val lightTheme: Boolean = false,
+    // #513 Toast customization, frequency control & one-click DND (all additive, preserving existing keys)
+    val quickDndActive: Boolean = false,
+    val toastWidthDp: Int = 360, // 280..480
+    val toastHeightDp: Int = 112, // 84..180
+    val toastShowTitle: Boolean = true,
+    val toastMaxLines: Int = 2, // 1..4
+    val toastShowAppName: Boolean = true,
+    val toastShowTime: Boolean = true,
+    val toastBgImagePath: String = "",
+    val toastTextColorHex: String = "",
+    val toastSoundCustomWavPath: String = "",
+    val toastSoundVolume: Float = 0.8f, // 0.0..1.0
+    val toastMaxPerMinute: Int = 0, // 0 = unlimited, 1..20
+    val toastAggregateMinutes: Int = 0, // 0 = instant, 1..15
+    val toastOnlyStarred: Boolean = false,
+    val floatingMaxPerMinute: Int = 0, // 0 = unlimited, 1..20
+    val floatingOnlyStarred: Boolean = false,
+    // #514 Floating orb edge-snap toggle
+    val floatingSnapToEdge: Boolean = true,
+    // #515 Floating orb radial menu order & fullscreen auto-hide mode
+    val floatingFullscreenMode: FullscreenHideMode = FullscreenHideMode.AUTO_HIDE,
+    val floatingMenuOrder: String = "ai,main,search,todos,dnd,note,clipboard,settings",
+    // #518 Cross-end clipboard sync (opt-in, default OFF)
+    val clipboardSyncEnabled: Boolean = false,
+    val clipboardMaxChars: Int = 5000,
+    val clipboardOtpGuard: Boolean = true,
+    val clipboardOnlyWhenFocused: Boolean = true,
+    // #520 Global Animation Mode (migrated from animationsEnabled; dual-written for downgrade compatibility)
+    val animationMode: AnimationMode = if (animationsEnabled) AnimationMode.BALANCED else AnimationMode.POWER_SAVER,
     // Window geometry persistence
     val windowX: Int = Int.MIN_VALUE,
     val windowY: Int = Int.MIN_VALUE,
@@ -104,6 +144,9 @@ data class DesktopSettings(
             h >= dndStartHour || h < dndEndHour
         }
     }
+
+    fun isEffectiveDndNow(cal: Calendar = Calendar.getInstance()): Boolean =
+        quickDndActive || isInDndWindow(cal)
 }
 
 data class DesktopUpdateCheckResult(
@@ -118,7 +161,7 @@ object DesktopSettingsStore {
     const val CURRENT_DESKTOP_VERSION = "0.6.0"
     private const val WIN_RUN_REG_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
     private const val WIN_RUN_VALUE_NAME = "PhantomCheckDesktop"
-    private val validStartupTabs = setOf("MESSAGES", "STATS", "TODOS", "CHAT", "RULES", "SETTINGS")
+    private val validStartupTabs = setOf("MESSAGES", "STATS", "TODOS", "CHAT", "RULES", "SETTINGS", "HOME", "REPORTS", "TOOLS")
 
     private val _state = MutableStateFlow(loadFromDisk())
     val state: StateFlow<DesktopSettings> = _state.asStateFlow()
@@ -181,16 +224,57 @@ object DesktopSettingsStore {
             rulesCollapseTags = p.getProperty("rulesCollapseTags", "false").toBoolean(),
             rulesCollapseMuted = p.getProperty("rulesCollapseMuted", "false").toBoolean(),
             lightTheme = p.getProperty("lightTheme", "false").toBoolean(),
+            quickDndActive = p.getProperty("quickDndActive", "false").toBoolean(),
+            toastWidthDp = p.getProperty("toastWidthDp", "360").toIntOrNull()?.coerceIn(280, 480) ?: 360,
+            toastHeightDp = p.getProperty("toastHeightDp", "112").toIntOrNull()?.coerceIn(84, 180) ?: 112,
+            toastShowTitle = p.getProperty("toastShowTitle", "true").toBoolean(),
+            toastMaxLines = p.getProperty("toastMaxLines", "2").toIntOrNull()?.coerceIn(1, 4) ?: 2,
+            toastShowAppName = p.getProperty("toastShowAppName", "true").toBoolean(),
+            toastShowTime = p.getProperty("toastShowTime", "true").toBoolean(),
+            toastBgImagePath = p.getProperty("toastBgImagePath", ""),
+            toastTextColorHex = p.getProperty("toastTextColorHex", "").trim(),
+            toastSoundCustomWavPath = p.getProperty("toastSoundCustomWavPath", ""),
+            toastSoundVolume = p.getProperty("toastSoundVolume", "0.8").toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.8f,
+            toastMaxPerMinute = p.getProperty("toastMaxPerMinute", "0").toIntOrNull()?.coerceIn(0, 20) ?: 0,
+            toastAggregateMinutes = p.getProperty("toastAggregateMinutes", "0").toIntOrNull()?.coerceIn(0, 15) ?: 0,
+            toastOnlyStarred = p.getProperty("toastOnlyStarred", "false").toBoolean(),
+            floatingMaxPerMinute = p.getProperty("floatingMaxPerMinute", "0").toIntOrNull()?.coerceIn(0, 20) ?: 0,
+            floatingOnlyStarred = p.getProperty("floatingOnlyStarred", "false").toBoolean(),
+            floatingSnapToEdge = p.getProperty("floatingSnapToEdge", "true").toBoolean(),
+            floatingFullscreenMode = FullscreenHideMode.entries.firstOrNull { it.key == p.getProperty("floatingFullscreenMode", "auto_hide") } ?: FullscreenHideMode.AUTO_HIDE,
+            floatingMenuOrder = p.getProperty("floatingMenuOrder", "ai,main,search,todos,dnd,note,clipboard,settings").ifBlank { "ai,main,search,todos,dnd,note,clipboard,settings" },
+            clipboardSyncEnabled = p.getProperty("clipboardSyncEnabled", "false").toBoolean(),
+            clipboardMaxChars = p.getProperty("clipboardMaxChars", "5000").toIntOrNull()?.coerceIn(500, 5000) ?: 5000,
+            clipboardOtpGuard = p.getProperty("clipboardOtpGuard", "true").toBoolean(),
+            clipboardOnlyWhenFocused = p.getProperty("clipboardOnlyWhenFocused", "true").toBoolean(),
+            animationMode = run {
+                val rawMode = p.getProperty("animationMode")
+                if (!rawMode.isNullOrBlank()) {
+                    AnimationMode.entries.firstOrNull { it.key == rawMode } ?: AnimationMode.BALANCED
+                } else {
+                    val legacyAnim = p.getProperty("animationsEnabled", "true").toBoolean()
+                    if (legacyAnim) AnimationMode.BALANCED else AnimationMode.POWER_SAVER
+                }
+            },
             windowX = p.getProperty("windowX", Int.MIN_VALUE.toString()).toIntOrNull() ?: Int.MIN_VALUE,
             windowY = p.getProperty("windowY", Int.MIN_VALUE.toString()).toIntOrNull() ?: Int.MIN_VALUE,
-            windowWidth = p.getProperty("windowWidth", "1280").toIntOrNull()?.coerceAtLeast(1024) ?: 1280,
-            windowHeight = p.getProperty("windowHeight", "820").toIntOrNull()?.coerceAtLeast(680) ?: 820
+            windowWidth = p.getProperty("windowWidth", "1280").toIntOrNull()?.coerceAtLeast(880) ?: 1280,
+            windowHeight = p.getProperty("windowHeight", "820").toIntOrNull()?.coerceAtLeast(560) ?: 820
         )
     }
 
     @Synchronized
     fun update(transform: (DesktopSettings) -> DesktopSettings) {
-        val next = transform(_state.value)
+        val rawNext = transform(_state.value)
+        // Dual-sync animationMode <-> animationsEnabled so legacy callers & new callers stay consistent
+        val prev = _state.value
+        val next = when {
+            rawNext.animationMode != prev.animationMode ->
+                rawNext.copy(animationsEnabled = rawNext.animationMode == AnimationMode.BALANCED)
+            rawNext.animationsEnabled != prev.animationsEnabled ->
+                rawNext.copy(animationMode = if (rawNext.animationsEnabled) AnimationMode.BALANCED else AnimationMode.POWER_SAVER)
+            else -> rawNext
+        }
         _state.value = next
         DesktopStrings.syncLanguage(next.language)
         saveToDisk(next)
@@ -222,7 +306,8 @@ object DesktopSettingsStore {
             p.setProperty("mirrorMode", s.mirrorMode.key)
             p.setProperty("bgTheme", s.bgTheme.key)
             p.setProperty("customBgImagePath", s.customBgImagePath)
-            p.setProperty("animationsEnabled", s.animationsEnabled.toString())
+            p.setProperty("animationsEnabled", (s.animationMode == AnimationMode.BALANCED).toString())
+            p.setProperty("animationMode", s.animationMode.key)
             p.setProperty("use24HourTime", s.use24HourTime.toString())
             p.setProperty("messageCardCornerDp", s.messageCardCornerDp.toString())
             p.setProperty("glassBlurLevel", s.glassBlurLevel.key)
@@ -250,6 +335,29 @@ object DesktopSettingsStore {
             p.setProperty("rulesCollapseTags", s.rulesCollapseTags.toString())
             p.setProperty("rulesCollapseMuted", s.rulesCollapseMuted.toString())
             p.setProperty("lightTheme", s.lightTheme.toString())
+            p.setProperty("quickDndActive", s.quickDndActive.toString())
+            p.setProperty("toastWidthDp", s.toastWidthDp.toString())
+            p.setProperty("toastHeightDp", s.toastHeightDp.toString())
+            p.setProperty("toastShowTitle", s.toastShowTitle.toString())
+            p.setProperty("toastMaxLines", s.toastMaxLines.toString())
+            p.setProperty("toastShowAppName", s.toastShowAppName.toString())
+            p.setProperty("toastShowTime", s.toastShowTime.toString())
+            p.setProperty("toastBgImagePath", s.toastBgImagePath)
+            p.setProperty("toastTextColorHex", s.toastTextColorHex)
+            p.setProperty("toastSoundCustomWavPath", s.toastSoundCustomWavPath)
+            p.setProperty("toastSoundVolume", "%.2f".format(java.util.Locale.US, s.toastSoundVolume.coerceIn(0f, 1f)))
+            p.setProperty("toastMaxPerMinute", s.toastMaxPerMinute.toString())
+            p.setProperty("toastAggregateMinutes", s.toastAggregateMinutes.toString())
+            p.setProperty("toastOnlyStarred", s.toastOnlyStarred.toString())
+            p.setProperty("floatingMaxPerMinute", s.floatingMaxPerMinute.toString())
+            p.setProperty("floatingOnlyStarred", s.floatingOnlyStarred.toString())
+            p.setProperty("floatingSnapToEdge", s.floatingSnapToEdge.toString())
+            p.setProperty("floatingFullscreenMode", s.floatingFullscreenMode.key)
+            p.setProperty("floatingMenuOrder", s.floatingMenuOrder)
+            p.setProperty("clipboardSyncEnabled", s.clipboardSyncEnabled.toString())
+            p.setProperty("clipboardMaxChars", s.clipboardMaxChars.toString())
+            p.setProperty("clipboardOtpGuard", s.clipboardOtpGuard.toString())
+            p.setProperty("clipboardOnlyWhenFocused", s.clipboardOnlyWhenFocused.toString())
             p.setProperty("windowX", s.windowX.toString())
             p.setProperty("windowY", s.windowY.toString())
             p.setProperty("windowWidth", s.windowWidth.toString())

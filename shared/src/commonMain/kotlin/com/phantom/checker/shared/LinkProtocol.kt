@@ -127,6 +127,20 @@ object LinkMsgType {
 
     // #503 AI semantic / phone-to-desktop notification settings sync (additive)
     const val DESKTOP_SETTINGS_SYNC = "desktop.settings.sync"
+
+    // #517 Phone device status push event (additive, backwards-compatible, no PROTOCOL_VERSION bump)
+    const val DEVICE_STATUS = "device.status"
+
+    // #518 Cross-end utility pack (additive, backwards-compatible, no PROTOCOL_VERSION bump)
+    const val CLIPBOARD_SYNC = "clipboard.sync"
+    const val FIND_PHONE_RING = "device.findPhone"
+    const val FIND_PHONE_RING_RES = "device.findPhone.res"
+    const val SEND_PHONE_NOTIF = "device.sendNotif"
+    const val SEND_PHONE_NOTIF_RES = "device.sendNotif.res"
+    const val OPEN_URL_ON_PEER = "device.openUrl"
+    const val OPEN_URL_ON_PEER_RES = "device.openUrl.res"
+    const val GROUP_REPORTS_LIST = "groupReports.list"
+    const val GROUP_REPORTS_LIST_RES = "groupReports.list.res"
 }
 
 data class LinkEnvelope(
@@ -604,4 +618,60 @@ data class DesktopSettingsSyncPush(
     val floatingAssistantEnabled: Boolean? = null,
     val bannerDurationSec: Int? = null
 )
+
+/** #517 手機裝置狀態推送（事件驅動：電量變化 ≥2%、充電切換即時、重連補齊；向後相容） */
+data class DeviceStatusPush(
+    val batteryLevel: Int = -1,
+    val isCharging: Boolean = false,
+    val chargeType: String = "none", // ac | usb | wireless | none
+    val networkType: String = "unknown", // wifi | cellular | none | unknown
+    val wifiSsid: String = "",
+    val storageAvailMb: Long = -1L,
+    val totalMessages: Int = -1,
+    val unreadMessages: Int = -1,
+    val isDndActive: Boolean = false,
+    val appVersion: String = "",
+    val deviceName: String = "",
+    val updatedAtMs: Long = 0L
+)
+
+/** #518 跨端雙向剪貼簿同步（預設關、限 TLS 配對通道、上限 5000 字元、含 OTP 保護） */
+data class ClipboardSyncPayload(
+    val text: String = "",
+    val source: String = "", // phone | desktop
+    val timestampMs: Long = 0L
+)
+
+/** #518 桌面發送通知至手機 */
+data class SendPhoneNotifReq(
+    val title: String = "",
+    val body: String = ""
+)
+
+/** #518 跨端網址互開（僅允許 http:// 或 https://） */
+data class OpenUrlReq(
+    val url: String = ""
+)
+
+/** #518 跨端動作統一回應 */
+data class CrossEndActionRes(
+    val ok: Boolean = false,
+    val message: String = ""
+)
+
+/** #509 / #518 群組報告摘要 DTO（供桌面端側欄群組報告檢視） */
+data class GroupReportSummaryDto(
+    val id: Long = 0L,
+    val appLabel: String = "",
+    val conversationTitle: String = "",
+    val summaryMarkdown: String = "",
+    val messageCount: Int = 0,
+    val triggerType: String = "",
+    val createdAt: Long = 0L
+)
+
+data class GroupReportsListRes(
+    val items: List<GroupReportSummaryDto> = emptyList()
+)
+
 

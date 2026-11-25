@@ -26,6 +26,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
@@ -535,6 +536,7 @@ fun FilterSettingsScreen(
 
     // 外觀與互動
     val currentThemeMode = ThemePreferences.getThemeMode(appCtx)
+    val highContrastEnabled = ThemePreferences.isHighContrast(appCtx)
     val dynamicColorEnabled = ThemePreferences.isDynamicColor(appCtx)
     val fontScaleMode = ThemePreferences.getFontScaleMode(appCtx)
     var hapticEnabled by remember { mutableStateOf(PhantomPrefs.isHapticFeedbackEnabled(appCtx)) }
@@ -1130,7 +1132,11 @@ fun FilterSettingsScreen(
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         PhantomPredictiveBackContainer(
             enabled = activeCategory != null,
             onBack = {
@@ -2238,7 +2244,14 @@ fun FilterSettingsScreen(
                     ) {
                         Text(stringResource(R.string.settings_s_7263f2))
                     }
-                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                    GroupReportSettingsSection(
+                        onShowMessage = { msg ->
+                            scope.launch { snackbarHostState.showSnackbar(msg) }
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                    Spacer(Modifier.height(4.dp))
 
                     var tagDispatchTesting by remember { mutableStateOf(false) }
                     var tagDispatchResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
@@ -3847,6 +3860,36 @@ fun FilterSettingsScreen(
                             )
                         }
                     }
+                    Spacer(Modifier.height(8.dp))
+                    var persistentSubtitleMode by remember {
+                        mutableStateOf(PhantomPrefs.getPersistentNotifSubtitleMode(appCtx))
+                    }
+                    Text(
+                        text = stringResource(R.string.catalog_notif_subtitle_mode_title),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.catalog_notif_subtitle_mode_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.phantom.checker.util.PersistentNotifSubtitleMode.entries.forEach { subMode ->
+                            FilterChip(
+                                selected = persistentSubtitleMode == subMode,
+                                onClick = {
+                                    persistentSubtitleMode = subMode
+                                    PhantomPrefs.setPersistentNotifSubtitleMode(appCtx, subMode)
+                                    if (persistentStats) {
+                                        StatsForegroundService.startOrRefresh(appCtx, force = true)
+                                    }
+                                },
+                                label = { Text(subMode.label) }
+                            )
+                        }
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                     SettingSwitchRow(
@@ -4343,6 +4386,43 @@ fun FilterSettingsScreen(
                                 selected = currentThemeMode == mode,
                                 onClick = { ThemePreferences.setThemeMode(appCtx, mode) },
                                 label = { Text(mode.label) }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingSwitchRow(
+                        title = stringResource(R.string.catalog_appearance_high_contrast_title),
+                        subtitle = stringResource(R.string.catalog_appearance_high_contrast_desc),
+                        checked = highContrastEnabled,
+                        onCheckedChange = { checked ->
+                            ThemePreferences.setHighContrast(appCtx, checked)
+                        }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    val animVersion = UiLayoutPrefs.version
+                    val animMode = remember(appCtx, animVersion) { UiLayoutPrefs.getAnimationMode(appCtx) }
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = stringResource(R.string.anim_mode_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = stringResource(R.string.anim_mode_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = animMode == UiLayoutPrefs.ANIM_MODE_BALANCED,
+                                onClick = { UiLayoutPrefs.setAnimationMode(appCtx, UiLayoutPrefs.ANIM_MODE_BALANCED) },
+                                label = { Text(stringResource(R.string.anim_mode_balanced)) }
+                            )
+                            FilterChip(
+                                selected = animMode == UiLayoutPrefs.ANIM_MODE_POWER_SAVER,
+                                onClick = { UiLayoutPrefs.setAnimationMode(appCtx, UiLayoutPrefs.ANIM_MODE_POWER_SAVER) },
+                                label = { Text(stringResource(R.string.anim_mode_power_saver)) }
                             )
                         }
                     }

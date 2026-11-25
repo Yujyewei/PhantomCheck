@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -148,6 +149,7 @@ fun LinkHubContent(
         }
     }
 
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(Unit) {
         if (linkEnabled) {
             runCatching { DesktopLinkClient.autoConnectIfPaired(appCtx) }
@@ -156,6 +158,7 @@ fun LinkHubContent(
         val pm = runCatching { appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager }.getOrNull()
         while (true) {
             delay(3000L)
+            if (!lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) continue
             if (pm != null && !pm.isInteractive) continue
             onWifi = DesktopLinkClient.isOnWifi(appCtx)
             linkEnabled = runCatching { DesktopLinkStore.isLinkEnabled(appCtx) }.getOrDefault(linkEnabled)
@@ -166,6 +169,7 @@ fun LinkHubContent(
         }
     }
 
+    val motionProfile = com.phantom.checker.ui.components.rememberMotionProfile()
     val timeFmt = remember { SimpleDateFormat("MM/dd HH:mm:ss", Locale.getDefault()) }
     val classifiedErrorText = resolveClassifiedErrorText(clientStatus.lastErrorCode, clientStatus.lastErrorDetail)
         ?: qrErrorMsg?.takeIf { it.isNotBlank() }
@@ -199,18 +203,38 @@ fun LinkHubContent(
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. 即時連線狀態與六大失敗診斷引導卡 (#500)
+        // L0. Hero 連線狀態卡（#520 狀態驅動主按鈕＋draw-phase 色彩過渡＋六大診斷引導）
         item {
+            val isDarkBg = MaterialTheme.colorScheme.background.luminance() < 0.5f
+            val isHc = com.phantom.checker.ui.LocalHighContrast.current
             val dotColor = when (clientStatus.connState) {
-                PhoneLinkConnState.CONNECTED -> Color(0xFF4ADE80)
-                PhoneLinkConnState.CONNECTING, PhoneLinkConnState.RECONNECTING -> Color(0xFFFBBF24)
+                PhoneLinkConnState.CONNECTED -> when {
+                    isHc && isDarkBg -> Color(0xFF86EFAC)
+                    isHc -> Color(0xFF166534)
+                    isDarkBg -> Color(0xFF4ADE80)
+                    else -> Color(0xFF15803D)
+                }
+                PhoneLinkConnState.CONNECTING, PhoneLinkConnState.RECONNECTING -> when {
+                    isHc && isDarkBg -> Color(0xFFFCD34D)
+                    isHc -> Color(0xFF92400E)
+                    isDarkBg -> Color(0xFFFBBF24)
+                    else -> Color(0xFFB45309)
+                }
                 PhoneLinkConnState.DISCONNECTED -> MaterialTheme.colorScheme.outline
             }
+            val heroBgColor by androidx.compose.animation.animateColorAsState(
+                targetValue = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.55f)),
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = if (motionProfile.isFull) com.phantom.checker.ui.components.PhantomMotion.LinkHeroTintMs else 0
+                ),
+                label = "link_hero_tint"
+            )
+            val mostRecentPc = remember(pairedDevices) { pairedDevices.maxByOrNull { it.lastSeenAt } }
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
-                shape = RoundedCornerShape(16.dp)
+                colors = CardDefaults.cardColors(containerColor = heroBgColor),
+                shape = RoundedCornerShape(20.dp)
             ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -220,13 +244,27 @@ fun LinkHubContent(
                             Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(dotColor))
                             Text(
                                 text = stringResource(R.string.link_hub_status_title),
-                                style = MaterialTheme.typography.titleSmall,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
-                        if (clientStatus.connState != PhoneLinkConnState.DISCONNECTED) {
-                            OutlinedButton(onClick = { DesktopLinkClient.disconnect(clearError = true) }) {
-                                Text(stringResource(R.string.link_hub_disconnect_btn))
+                        when {
+                            clientStatus.connState != PhoneLinkConnState.DISCONNECTED -> {
+                                OutlinedButton(onClick = { DesktopLinkClient.disconnect(clearError = true) }) {
+                                    Text(stringResource(R.string.link_hub_disconnect_btn))
+                                }
+                            }
+                            mostRecentPc != null -> {
+                                Button(onClick = {
+                                    DesktopLinkClient.connectToPaired(appCtx, mostRecentPc)
+                                }) {
+                                    Text(stringResource(R.string.link_hub_connect_recent_pc, mostRecentPc.name.ifBlank { mostRecentPc.host }.take(14)))
+                                }
+                            }
+                            else -> {
+                                Button(onClick = { launchQrScan() }) {
+                                    Text(stringResource(R.string.link_hub_quick_qr))
+                                }
                             }
                         }
                     }
@@ -334,10 +372,47 @@ fun LinkHubContent(
             }
         }
 
+        // L2. #520 快速動作 4 磚列（各 ≥48dp，掃 QR／重掃區網／手動輸入／Wi-Fi 設定）
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val tileShape = RoundedCornerShape(14.dp)
+                val tileColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.55f))
+                val quickTiles = listOf(
+                    stringResource(R.string.link_hub_quick_qr) to { launchQrScan() },
+                    stringResource(R.string.link_hub_quick_rescan) to { DesktopLinkClient.rescanNow(appCtx) },
+                    stringResource(R.string.link_hub_quick_manual) to { manualExpanded = !manualExpanded },
+                    stringResource(R.string.link_hub_quick_wifi) to {
+                        runCatching { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }
+                        Unit
+                    }
+                )
+                quickTiles.forEach { (label, onClick) ->
+                    androidx.compose.material3.Surface(
+                        onClick = onClick,
+                        shape = tileShape,
+                        color = tileColor,
+                        modifier = Modifier.weight(1f).height(48.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // 2. 自動連線總開關 + 主掃碼配對入口
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.5f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -391,7 +466,7 @@ fun LinkHubContent(
         if (cameraPermissionDenied) {
             item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.45f))),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -433,7 +508,7 @@ fun LinkHubContent(
                         (it.fingerprintPrefix.isBlank() || pending.fp.startsWith(it.fingerprintPrefix, ignoreCase = true))
                 }
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.45f))),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -489,10 +564,11 @@ fun LinkHubContent(
             }
         }
 
-        // 3. 區網 mDNS 發現的桌面端（含 TTL 過期自動清理＋重新掃描鈕）
+        // 3. 區網 mDNS 發現的桌面端（含 TTL 過期自動清理＋MulticastLock 掃描狀態＋重新掃描鈕）
         item {
+            val isScanningLan by DesktopLinkClient.isScanningLan.collectAsState()
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.35f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -501,11 +577,23 @@ fun LinkHubContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = stringResource(R.string.link_hub_discovered_pcs_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.link_hub_discovered_pcs_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (isScanningLan) {
+                                Text(
+                                    text = stringResource(R.string.link_hub_mdns_scanning),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         TextButton(onClick = { DesktopLinkClient.rescanNow(appCtx) }) {
                             Text(stringResource(R.string.link_hub_rescan_btn))
                         }
@@ -517,6 +605,10 @@ fun LinkHubContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Spacer(Modifier.height(6.dp))
+                        TextButton(onClick = { manualExpanded = true }) {
+                            Text(stringResource(R.string.link_hub_mdns_fallback_manual))
+                        }
                     } else {
                         discoveredDesktops.forEachIndexed { idx, pc ->
                             if (idx > 0) HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -558,7 +650,7 @@ fun LinkHubContent(
         // 4. 可收合手動配對備援卡 (#500)
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.35f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
@@ -634,7 +726,7 @@ fun LinkHubContent(
         // 5. 已配對電腦列表（以指紋/實例為主鍵動態解析 IP:port，離線淡出顯示待重新掃描，支援單筆刪除 #500）
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.35f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -667,11 +759,16 @@ fun LinkHubContent(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        val onlineDot = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) {
+                                            if (com.phantom.checker.ui.LocalHighContrast.current) Color(0xFF86EFAC) else Color(0xFF4ADE80)
+                                        } else {
+                                            if (com.phantom.checker.ui.LocalHighContrast.current) Color(0xFF166534) else Color(0xFF15803D)
+                                        }
                                         Box(
                                             modifier = Modifier
                                                 .size(8.dp)
                                                 .clip(CircleShape)
-                                                .background(if (isOnline) Color(0xFF4ADE80) else MaterialTheme.colorScheme.outline)
+                                                .background(if (isOnline) onlineDot else MaterialTheme.colorScheme.outline)
                                         )
                                         Text(dev.name.ifBlank { dev.host }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                                     }
@@ -727,188 +824,311 @@ fun LinkHubContent(
             }
         }
 
-        // 6. 連線診斷紀錄（TCP/TLS/HANDSHAKE/PROTOCOL 階段與錯誤碼）
+        // L9. #520 進階與紀錄折疊群（預設收合、計數徽章、同時最多展開 1 子項，保留診斷探測/清除按鈕）
         item {
+            var advancedExpanded by remember { mutableStateOf(false) }
+            var activeSubLog by remember { mutableStateOf<String?>(null) }
+            val totalLogs = diagnostics.size + unknownAttempts.size + auditLogs.size
+
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.38f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { advancedExpanded = !advancedExpanded },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = stringResource(R.string.link_hub_diag_title),
+                            text = "${stringResource(R.string.link_hub_advanced_logs_group)} ($totalLogs)",
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f)
+                            fontWeight = FontWeight.SemiBold
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedButton(
-                                enabled = !clientStatus.isProbing,
-                                onClick = {
-                                    val manualClean = manualHostPort.trim().removePrefix("wss://").removePrefix("ws://").substringBefore("/")
-                                    val manualHost = manualClean.substringBefore(":").trim()
-                                    val manualPort = manualClean.substringAfter(":", "").toIntOrNull()?.coerceIn(1024, 65535)
-                                        ?: LinkProtocol.DEFAULT_PORT
-                                    val targetHostPort: Pair<String, Int>? = when {
-                                        manualHost.isNotBlank() -> manualHost to manualPort
-                                        discoveredDesktops.isNotEmpty() -> discoveredDesktops.first().let { it.host to it.port }
-                                        pairedDevices.any { it.host.isNotBlank() } -> pairedDevices.first { it.host.isNotBlank() }.let { it.host to it.port }
-                                        else -> null
-                                    }
-                                    if (targetHostPort != null) {
-                                        localError = null
-                                        DesktopLinkClient.probeDesktopNow(appCtx, targetHostPort.first, targetHostPort.second)
-                                    } else {
-                                        localError = ctx.getString(R.string.link_hub_diag_no_target)
-                                    }
-                                }
-                            ) {
-                                Text(stringResource(R.string.link_hub_diag_now_btn))
-                            }
-                            if (diagnostics.isNotEmpty()) {
-                                TextButton(onClick = {
-                                    runCatching { DesktopLinkStore.clearDiagnostics(appCtx) }
-                                    diagnostics = emptyList()
-                                }) {
-                                    Text(stringResource(R.string.link_hub_clear))
-                                }
-                            }
-                        }
-                    }
-                    if (clientStatus.isProbing) {
-                        Spacer(Modifier.height(4.dp))
                         Text(
-                            text = stringResource(
-                                R.string.link_hub_diag_probing,
-                                clientStatus.connectedHostPort.ifBlank { discoveredDesktops.firstOrNull()?.let { "${it.host}:${it.port}" }.orEmpty() }
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
+                            text = if (advancedExpanded) "▲" else "▼",
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
-                    if (diagnostics.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.link_hub_diag_empty),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        diagnostics.take(15).forEach { entry ->
-                            val isErr = entry.code.contains("TIMEOUT", ignoreCase = true) ||
-                                entry.code.contains("REFUSED", ignoreCase = true) ||
-                                entry.code.contains("ERR", ignoreCase = true) ||
-                                entry.code.contains("FAIL", ignoreCase = true) ||
-                                entry.code.contains("MISMATCH", ignoreCase = true)
+
+                    if (advancedExpanded) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        // Sub-section 1: Diagnostics (+ Probe Now + Clear)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { activeSubLog = if (activeSubLog == "diag") null else "diag" },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "${timeFmt.format(Date(entry.timestamp))} [${entry.stage}] ${entry.code} ${entry.detail}".trim(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = if (isErr) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(vertical = 2.dp)
+                                text = "${stringResource(R.string.link_hub_diag_title)} (${diagnostics.size})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
                             )
+                            Text(if (activeSubLog == "diag") "▲" else "▼", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (activeSubLog == "diag") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedButton(
+                                    enabled = !clientStatus.isProbing,
+                                    onClick = {
+                                        val manualClean = manualHostPort.trim().removePrefix("wss://").removePrefix("ws://").substringBefore("/")
+                                        val manualHost = manualClean.substringBefore(":").trim()
+                                        val manualPort = manualClean.substringAfter(":", "").toIntOrNull()?.coerceIn(1024, 65535)
+                                            ?: LinkProtocol.DEFAULT_PORT
+                                        val targetHostPort: Pair<String, Int>? = when {
+                                            manualHost.isNotBlank() -> manualHost to manualPort
+                                            discoveredDesktops.isNotEmpty() -> discoveredDesktops.first().let { it.host to it.port }
+                                            pairedDevices.any { it.host.isNotBlank() } -> pairedDevices.first { it.host.isNotBlank() }.let { it.host to it.port }
+                                            else -> null
+                                        }
+                                        if (targetHostPort != null) {
+                                            localError = null
+                                            DesktopLinkClient.probeDesktopNow(appCtx, targetHostPort.first, targetHostPort.second)
+                                        } else {
+                                            localError = ctx.getString(R.string.link_hub_diag_no_target)
+                                        }
+                                    }
+                                ) { Text(stringResource(R.string.link_hub_diag_now_btn)) }
+                                if (diagnostics.isNotEmpty()) {
+                                    TextButton(onClick = {
+                                        runCatching { DesktopLinkStore.clearDiagnostics(appCtx) }
+                                        diagnostics = emptyList()
+                                    }) { Text(stringResource(R.string.link_hub_clear)) }
+                                }
+                            }
+                            if (clientStatus.isProbing) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.link_hub_diag_probing,
+                                        clientStatus.connectedHostPort.ifBlank { discoveredDesktops.firstOrNull()?.let { "${it.host}:${it.port}" }.orEmpty() }
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            if (diagnostics.isEmpty()) {
+                                Text(stringResource(R.string.link_hub_diag_empty), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                diagnostics.take(15).forEach { entry ->
+                                    val isErr = entry.code.contains("TIMEOUT", ignoreCase = true) ||
+                                        entry.code.contains("REFUSED", ignoreCase = true) ||
+                                        entry.code.contains("ERR", ignoreCase = true) ||
+                                        entry.code.contains("FAIL", ignoreCase = true) ||
+                                        entry.code.contains("MISMATCH", ignoreCase = true)
+                                    Text(
+                                        text = "${timeFmt.format(Date(entry.timestamp))} [${entry.stage}] ${entry.code} ${entry.detail}".trim(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (isErr) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        // Sub-section 2: Unknown Attempts
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { activeSubLog = if (activeSubLog == "unknown") null else "unknown" },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${stringResource(R.string.link_hub_unknown_title)} (${unknownAttempts.size})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(if (activeSubLog == "unknown") "▲" else "▼", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (activeSubLog == "unknown") {
+                            if (unknownAttempts.isNotEmpty()) {
+                                TextButton(onClick = {
+                                    runCatching { DesktopLinkStore.clearUnknownAttempts(appCtx) }
+                                    unknownAttempts = emptyList()
+                                }) { Text(stringResource(R.string.link_hub_clear)) }
+                            }
+                            if (unknownAttempts.isEmpty()) {
+                                Text(stringResource(R.string.link_hub_unknown_empty), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                unknownAttempts.take(10).forEach { att ->
+                                    Text(
+                                        text = "${timeFmt.format(Date(att.timestamp))} · ${att.remoteIp} · ${att.reason}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        // Sub-section 3: Command Audit
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { activeSubLog = if (activeSubLog == "audit") null else "audit" },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${stringResource(R.string.link_hub_audit_title)} (${auditLogs.size})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(if (activeSubLog == "audit") "▲" else "▼", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (activeSubLog == "audit") {
+                            if (auditLogs.isNotEmpty()) {
+                                TextButton(onClick = {
+                                    runCatching { DesktopLinkStore.clearAuditLogs(appCtx) }
+                                    auditLogs = emptyList()
+                                }) { Text(stringResource(R.string.link_hub_clear)) }
+                            }
+                            if (auditLogs.isEmpty()) {
+                                Text(stringResource(R.string.link_hub_audit_empty), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                auditLogs.take(20).forEach { entry ->
+                                    val mark = if (entry.ok) "✓" else "✕"
+                                    Text(
+                                        text = "${timeFmt.format(Date(entry.timestamp))} · $mark ${entry.command} ${entry.detail}".trim(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (entry.ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 7. 未知連線嘗試紀錄
+        // 8.5 #518 跨端實用工具（剪貼簿雙向同步＋網址互開）
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.link_hub_unknown_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (unknownAttempts.isNotEmpty()) {
-                            TextButton(onClick = {
-                                runCatching { DesktopLinkStore.clearUnknownAttempts(appCtx) }
-                                unknownAttempts = emptyList()
-                            }) {
-                                Text(stringResource(R.string.link_hub_clear))
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (unknownAttempts.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.link_hub_unknown_empty),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        unknownAttempts.take(10).forEach { att ->
-                            Text(
-                                text = "${timeFmt.format(Date(att.timestamp))} · ${att.remoteIp} · ${att.reason}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
+            var clipEnabled by remember { mutableStateOf(com.phantom.checker.util.PhantomPrefs.isClipboardSyncEnabled(appCtx)) }
+            var otpGuard by remember { mutableStateOf(com.phantom.checker.util.PhantomPrefs.isClipboardOtpGuardEnabled(appCtx)) }
+            var clipFeedback by remember { mutableStateOf<String?>(null) }
+            var urlInput by remember { mutableStateOf("") }
+            var urlFeedback by remember { mutableStateOf<String?>(null) }
+            val strSent = stringResource(R.string.cross_end_clipboard_sent)
+            val strOtpBlocked = stringResource(R.string.cross_end_clipboard_otp_blocked)
+            val strEmpty = stringResource(R.string.cross_end_clipboard_empty)
+            val strTooLong = stringResource(R.string.cross_end_clipboard_too_long)
+            val strDisabled = stringResource(R.string.cross_end_clipboard_disabled)
+            val strUrlSent = stringResource(R.string.cross_end_open_url_sent)
+            val strUrlInvalid = stringResource(R.string.cross_end_open_url_invalid)
 
-        // 8. 指令審計紀錄（上限 200 筆）
-        item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.45f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = stringResource(R.string.cross_end_tools_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = stringResource(R.string.link_hub_audit_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
+                            text = stringResource(R.string.cross_end_clipboard_sync_title),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
                         )
-                        if (auditLogs.isNotEmpty()) {
-                            TextButton(onClick = {
-                                runCatching { DesktopLinkStore.clearAuditLogs(appCtx) }
-                                auditLogs = emptyList()
-                            }) {
-                                Text(stringResource(R.string.link_hub_clear))
+                        Switch(
+                            checked = clipEnabled,
+                            onCheckedChange = { v ->
+                                clipEnabled = v
+                                com.phantom.checker.util.PhantomPrefs.setClipboardSyncEnabled(appCtx, v)
                             }
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (auditLogs.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.link_hub_audit_empty),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        auditLogs.take(20).forEach { entry ->
-                            val mark = if (entry.ok) "✓" else "✕"
+                    }
+                    Text(
+                        text = stringResource(R.string.cross_end_clipboard_sync_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (clipEnabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "${timeFmt.format(Date(entry.timestamp))} · $mark ${entry.command} ${entry.detail}".trim(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = if (entry.ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(vertical = 2.dp)
+                                text = stringResource(R.string.cross_end_clipboard_otp_guard),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = otpGuard,
+                                onCheckedChange = { v ->
+                                    otpGuard = v
+                                    com.phantom.checker.util.PhantomPrefs.setClipboardOtpGuardEnabled(appCtx, v)
+                                }
                             )
                         }
+                        OutlinedButton(
+                            onClick = {
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                val clipText = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+                                clipFeedback = when (DesktopLinkClient.pushClipboardToDesktop(appCtx, clipText)) {
+                                    "sent" -> strSent
+                                    "otp_blocked" -> strOtpBlocked
+                                    "empty" -> strEmpty
+                                    "too_long" -> strTooLong
+                                    "disabled" -> strDisabled
+                                    else -> strDisabled
+                                }
+                            },
+                            enabled = clientStatus.connState == PhoneLinkConnState.CONNECTED
+                        ) {
+                            Text(stringResource(R.string.cross_end_clipboard_push_btn))
+                        }
+                        clipFeedback?.let { fb ->
+                            Text(fb, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = urlInput,
+                            onValueChange = { urlInput = it },
+                            placeholder = { Text(stringResource(R.string.cross_end_open_url_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                val ok = DesktopLinkClient.sendOpenUrlToDesktop(urlInput)
+                                urlFeedback = if (ok) {
+                                    urlInput = ""
+                                    strUrlSent
+                                } else strUrlInvalid
+                            },
+                            enabled = clientStatus.connState == PhoneLinkConnState.CONNECTED && urlInput.isNotBlank()
+                        ) {
+                            Text(stringResource(R.string.cross_end_open_url_btn))
+                        }
+                    }
+                    urlFeedback?.let { fb ->
+                        Text(fb, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -919,7 +1139,7 @@ fun LinkHubContent(
             val pm = remember { runCatching { ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager }.getOrNull() }
             val isIgnoringBattery = runCatching { pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true }.getOrDefault(false)
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = com.phantom.checker.ui.phantomSurfaceAlpha(0.35f))),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
