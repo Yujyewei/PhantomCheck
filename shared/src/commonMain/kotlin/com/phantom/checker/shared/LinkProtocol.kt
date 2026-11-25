@@ -116,6 +116,17 @@ object LinkMsgType {
     const val CHAT_SESSIONS_LIST_RES = "chat.sessions.list.res"
     const val CHAT_SESSION_NEW = "chat.session.new"
     const val CHAT_SESSION_NEW_RES = "chat.session.new.res"
+
+    // #499 Full Note CRUD & Pin sync extensions (additive, backwards-compatible)
+    const val NOTE_EDIT = "note.edit"
+    const val NOTE_EDIT_RES = "note.edit.res"
+    const val NOTE_DELETE = "note.delete"
+    const val NOTE_DELETE_RES = "note.delete.res"
+    const val NOTE_PIN_TOGGLE = "note.pin.toggle"
+    const val NOTE_PIN_TOGGLE_RES = "note.pin.toggle.res"
+
+    // #503 AI semantic / phone-to-desktop notification settings sync (additive)
+    const val DESKTOP_SETTINGS_SYNC = "desktop.settings.sync"
 }
 
 data class LinkEnvelope(
@@ -200,7 +211,9 @@ data class MessageSummaryDto(
     val isStarred: Boolean = false,
     val isRead: Boolean = false,
     val conversationKey: String = "",
-    val tagIds: List<Long> = emptyList()
+    val tagIds: List<Long> = emptyList(),
+    val appLabel: String = "",
+    val isGroup: Boolean = false
 )
 
 data class MessagesListReq(
@@ -249,6 +262,13 @@ data class HourCountDto(
     val count: Int = 0
 )
 
+data class ActiveAppStatDto(
+    val packageName: String = "",
+    val appLabel: String = "",
+    val count: Int = 0,
+    val colorHex: String = ""
+)
+
 data class StatsSnapshotDto(
     val total: Int = 0,
     val today: Int = 0,
@@ -258,7 +278,10 @@ data class StatsSnapshotDto(
     val recentPackages: List<String> = emptyList(),
     val suspicious: Int = 0,
     val dailyCounts: List<DayCountDto> = emptyList(),
-    val hourlyCounts: List<HourCountDto> = emptyList()
+    val hourlyCounts: List<HourCountDto> = emptyList(),
+    val dailyCounts30: List<DayCountDto> = emptyList(),
+    val activeAppsToday: List<ActiveAppStatDto> = emptyList(),
+    val weeklyTopApps: List<ActiveAppStatDto> = emptyList()
 )
 
 data class ChatSendReq(
@@ -296,7 +319,11 @@ data class TodoItemDto(
     val title: String = "",
     val dueAt: Long = 0L,
     val isDone: Boolean = false,
-    val repeatRule: String = ""
+    val repeatRule: String = "",
+    val priority: Int = 1,
+    val notes: String = "",
+    val createdAt: Long = 0L,
+    val completedAt: Long = 0L
 )
 
 data class TodosListReq(
@@ -423,7 +450,8 @@ data class TodoAddReq(
     val title: String = "",
     val dueAt: Long = 0L,
     val repeatRule: String = "",
-    val notes: String = ""
+    val notes: String = "",
+    val priority: Int = 1
 )
 
 data class TodoEditReq(
@@ -431,7 +459,8 @@ data class TodoEditReq(
     val title: String = "",
     val dueAt: Long = 0L,
     val repeatRule: String = "",
-    val notes: String = ""
+    val notes: String = "",
+    val priority: Int = 1
 )
 
 data class TodoDeleteReq(
@@ -452,7 +481,8 @@ data class NoteItemDto(
     val source: String = "manual",
     val relatedMessageId: Long = 0L,
     val relatedAppLabel: String = "",
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val colorHex: String = ""
 )
 
 data class NotesListReq(
@@ -465,12 +495,31 @@ data class NotesListRes(
 
 data class NoteAddReq(
     val content: String = "",
-    val relatedMessageId: Long = 0L
+    val relatedMessageId: Long = 0L,
+    val pinned: Boolean = false,
+    val colorHex: String = ""
+)
+
+data class NoteEditReq(
+    val id: Long = 0L,
+    val content: String = "",
+    val pinned: Boolean = false,
+    val colorHex: String = ""
+)
+
+data class NoteDeleteReq(
+    val id: Long = 0L
+)
+
+data class NotePinToggleReq(
+    val id: Long = 0L,
+    val pinned: Boolean = false
 )
 
 data class NoteMutateRes(
     val ok: Boolean = false,
     val item: NoteItemDto? = null,
+    val deletedId: Long = 0L,
     val errorMessage: String = ""
 )
 
@@ -547,5 +596,12 @@ data class ChatSessionNewRes(
     val ok: Boolean = false,
     val session: ChatSessionSummaryDto? = null,
     val errorMessage: String = ""
+)
+
+data class DesktopSettingsSyncPush(
+    val mirrorMode: String = "",
+    val dndEnabled: Boolean? = null,
+    val floatingAssistantEnabled: Boolean? = null,
+    val bannerDurationSec: Int? = null
 )
 

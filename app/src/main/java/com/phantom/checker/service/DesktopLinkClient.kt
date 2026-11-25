@@ -3,6 +3,9 @@ package com.phantom.checker.service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.BatteryManager
@@ -65,7 +68,8 @@ data class DiscoveredDesktop(
     val host: String,
     val port: Int,
     val fingerprintPrefix: String,
-    val protocolVersion: Int
+    val protocolVersion: Int,
+    val discoveredAtMs: Long = System.currentTimeMillis()
 )
 
 data class PhoneLinkStatus(
@@ -264,9 +268,38 @@ object DesktopLinkClient {
         startConnectionFlow(appCtx, target)
     }
 
+    /**
+     * #500 依憑證指紋前綴或服務/裝置名稱從即時 mDNS 清單解析已配對電腦之最新 IP:port（解決埠漂移 49515→49513）。
+     */
+    fun findDiscoveredForPaired(desktop: PairedDesktop): DiscoveredDesktop? {
+        val now = System.currentTimeMillis()
+        val live = _discoveredDesktops.value.filter { now - it.discoveredAtMs <= MDNS_TTL_MS }
+        val fpLower = desktop.fingerprint.trim().lowercase()
+        if (fpLower.length >= 6) {
+            live.firstOrNull { d ->
+                val prefix = d.fingerprintPrefix.trim().lowercase()
+                prefix.length >= 6 && fpLower.startsWith(prefix)
+            }?.let { return it }
+        }
+        return live.firstOrNull { d ->
+            (desktop.instanceId.isNotBlank() && d.serviceName.equals(desktop.instanceId, ignoreCase = true)) ||
+                (desktop.name.isNotBlank() && d.friendlyName.equals(desktop.name, ignoreCase = true))
+        }
+    }
+
+    fun isOnWifi(ctx: Context): Boolean = runCatching {
+        val cm = ctx.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }.getOrDefault(false)
+
     fun connectToPaired(ctx: Context, desktop: PairedDesktop) {
         val appCtx = ctx.applicationContext
-        if (desktop.host.isBlank() || desktop.hmacSecret.isBlank()) {
+        val liveMatch = findDiscoveredForPaired(desktop)
+        val resolvedHost = liveMatch?.host?.takeIf { it.isNotBlank() } ?: desktop.host
+        val resolvedPort = (liveMatch?.port ?: desktop.port).coerceIn(1024, 65535)
+        if (resolvedHost.isBlank() || desktop.hmacSecret.isBlank()) {
             _status.value = _status.value.copy(
                 connState = PhoneLinkConnState.DISCONNECTED,
                 lastErrorCode = LinkErrorCode.INVALID_REQUEST,
@@ -274,14 +307,23 @@ object DesktopLinkClient {
             )
             return
         }
+        if (liveMatch != null && (liveMatch.host != desktop.host || liveMatch.port != desktop.port)) {
+            DesktopLinkStore.recordDiagnostic(
+                appCtx,
+                "mDNS",
+                "ENDPOINT_UPDATED",
+                "${desktop.host}:${desktop.port} -> ${liveMatch.host}:${liveMatch.port}"
+            )
+            DesktopLinkStore.upsertPairedDevice(appCtx, desktop.copy(host = resolvedHost, port = resolvedPort))
+        }
         DesktopLinkStore.setLinkEnabled(appCtx, true)
         DesktopLinkStore.setLastConnectedDesktopId(appCtx, desktop.instanceId)
         val target = ConnectTarget(
-            host = desktop.host,
-            port = desktop.port.coerceIn(1024, 65535),
+            host = resolvedHost,
+            port = resolvedPort,
             expectedFingerprint = desktop.fingerprint.trim().lowercase(),
             desktopId = desktop.instanceId,
-            desktopName = desktop.name.ifBlank { desktop.host },
+            desktopName = desktop.name.ifBlank { resolvedHost },
             hmacSecret = desktop.hmacSecret,
             pairCode = null
         )
@@ -302,6 +344,29 @@ object DesktopLinkClient {
             reconnectTotalSec = 0,
             lastErrorCode = if (clearError) null else _status.value.lastErrorCode,
             lastErrorDetail = if (clearError) null else _status.value.lastErrorDetail
+        )
+    }
+
+    /**
+     * #503 手機端設定或 AI 語意改設定後即時同步桌面端通知中心設定（鏡射模式、勿擾、懸浮助手、橫幅秒數）。
+     */
+    fun pushDesktopSettingsSync(
+        mirrorMode: String = "",
+        dndEnabled: Boolean? = null,
+        floatingAssistantEnabled: Boolean? = null,
+        bannerDurationSec: Int? = null
+    ): Boolean {
+        val ws = activeWs ?: return false
+        return sendEnvelope(
+            ws,
+            LinkMsgType.DESKTOP_SETTINGS_SYNC,
+            "",
+            DesktopSettingsSyncPush(
+                mirrorMode = mirrorMode,
+                dndEnabled = dndEnabled,
+                floatingAssistantEnabled = floatingAssistantEnabled,
+                bannerDurationSec = bannerDurationSec
+            )
         )
     }
 
@@ -842,7 +907,9 @@ object DesktopLinkClient {
                         isStarred = m.isStarred,
                         isRead = m.isRead,
                         conversationKey = m.conversationKey,
-                        tagIds = tagMap[m.id].orEmpty()
+                        tagIds = tagMap[m.id].orEmpty(),
+                        appLabel = resolveAppDisplayLabel(appCtx, m.packageName, m.appLabel),
+                        isGroup = m.conversationKey.isNotBlank() && m.conversationKey != m.sender
                     )
                 }
                 val latestCursor = items.maxOfOrNull { it.id } ?: req.sinceCursor
@@ -881,6 +948,7 @@ object DesktopLinkClient {
                     }
                 }
                 DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.MESSAGES_MARK_READ, true, "count=$updated")
+                com.phantom.checker.widget.WidgetUpdater.scheduleRefresh(appCtx)
                 sendEnvelope(ws, LinkMsgType.MESSAGES_MARK_READ_RES, env.reqId, MarkReadRes(ok = true, updatedCount = updated, note = "Marked read in PhantomCheck list only"))
             }
 
@@ -896,16 +964,57 @@ object DesktopLinkClient {
                     add(java.util.Calendar.DAY_OF_YEAR, -6)
                 }
                 val sevenDaysAgo = cal.timeInMillis
-                val dayMap = runCatching { db.messageDao().countByDaySince(sevenDaysAgo).associate { it.dayKey to it.cnt } }.getOrDefault(emptyMap())
+                val cal30 = java.util.Calendar.getInstance().apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, 0)
+                    set(java.util.Calendar.MINUTE, 0)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                    add(java.util.Calendar.DAY_OF_YEAR, -29)
+                }
+                val thirtyDaysAgo = cal30.timeInMillis
+                val dayMap30 = runCatching { db.messageDao().countByDaySince(thirtyDaysAgo).associate { it.dayKey to it.cnt } }.getOrDefault(emptyMap())
                 val keyFmt = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
                 val labelFmt = java.text.SimpleDateFormat("M/d", java.util.Locale.getDefault())
                 val dailyCounts = (0..6).map { offset ->
                     val c = (cal.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, offset) }
                     val key = keyFmt.format(c.time)
-                    DayCountDto(label = labelFmt.format(c.time), count = dayMap[key] ?: 0)
+                    DayCountDto(label = labelFmt.format(c.time), count = dayMap30[key] ?: 0)
+                }
+                val dailyCounts30 = (0..29).map { offset ->
+                    val c = (cal30.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, offset) }
+                    val key = keyFmt.format(c.time)
+                    DayCountDto(label = labelFmt.format(c.time), count = dayMap30[key] ?: 0)
                 }
                 val hourMap = runCatching { db.messageDao().countByHourSince(startOfDay).associate { it.hour to it.cnt } }.getOrDefault(emptyMap())
                 val hourlyCounts = (0..23).map { h -> HourCountDto(hour = h, count = hourMap[h] ?: 0) }
+                // #498 Active apps today & Weekly Top 5 with resolved display labels
+                val recentForStats = runCatching { db.messageDao().paged(600, 0) }.getOrDefault(emptyList())
+                val activeAppsToday = recentForStats
+                    .filter { it.timestamp >= startOfDay && it.packageName.isNotBlank() }
+                    .groupBy { it.packageName }
+                    .map { (pkg, list) ->
+                        val sampleLabel = list.firstOrNull { it.appLabel.isNotBlank() }?.appLabel.orEmpty()
+                        ActiveAppStatDto(
+                            packageName = pkg,
+                            appLabel = resolveAppDisplayLabel(appCtx, pkg, sampleLabel),
+                            count = list.size
+                        )
+                    }
+                    .sortedByDescending { it.count }
+                    .take(12)
+                val weeklyTopApps = recentForStats
+                    .filter { it.timestamp >= sevenDaysAgo && it.packageName.isNotBlank() }
+                    .groupBy { it.packageName }
+                    .map { (pkg, list) ->
+                        val sampleLabel = list.firstOrNull { it.appLabel.isNotBlank() }?.appLabel.orEmpty()
+                        ActiveAppStatDto(
+                            packageName = pkg,
+                            appLabel = resolveAppDisplayLabel(appCtx, pkg, sampleLabel),
+                            count = list.size
+                        )
+                    }
+                    .sortedByDescending { it.count }
+                    .take(5)
                 sendEnvelope(
                     ws,
                     LinkMsgType.STATS_SNAPSHOT_RES,
@@ -919,7 +1028,10 @@ object DesktopLinkClient {
                         recentPackages = snap.recentPackages(),
                         suspicious = suspicious,
                         dailyCounts = dailyCounts,
-                        hourlyCounts = hourlyCounts
+                        hourlyCounts = hourlyCounts,
+                        dailyCounts30 = dailyCounts30,
+                        activeAppsToday = activeAppsToday,
+                        weeklyTopApps = weeklyTopApps
                     )
                 )
             }
@@ -980,7 +1092,17 @@ object DesktopLinkClient {
                 val all = db.todoDao().all()
                 val filtered = if (req.done != null) all.filter { it.isDone == req.done } else all
                 val items = filtered.map {
-                    TodoItemDto(id = it.id, title = it.title, dueAt = it.dueAt, isDone = it.isDone, repeatRule = it.repeatRule)
+                    TodoItemDto(
+                        id = it.id,
+                        title = it.title,
+                        dueAt = it.dueAt,
+                        isDone = it.isDone,
+                        repeatRule = it.repeatRule,
+                        priority = it.priority,
+                        notes = it.notes,
+                        createdAt = it.createdAt,
+                        completedAt = it.completedAt ?: 0L
+                    )
                 }
                 sendEnvelope(ws, LinkMsgType.TODOS_LIST_RES, env.reqId, TodosListRes(items = items))
             }
@@ -1161,13 +1283,32 @@ object DesktopLinkClient {
                 val now = System.currentTimeMillis()
                 val dueAt = if (req.dueAt > 0L) req.dueAt else now + 60L * 60L * 1000L
                 val repeat = req.repeatRule.takeIf { it == TodoEntity.REPEAT_DAILY || it == TodoEntity.REPEAT_WEEKLY } ?: TodoEntity.REPEAT_NONE
-                val entity = TodoEntity(title = title, dueAt = dueAt, repeatRule = repeat, notes = req.notes.trim())
+                val priority = req.priority.coerceIn(TodoEntity.PRIORITY_LOW, TodoEntity.PRIORITY_HIGH)
+                val notesStr = req.notes.trim()
+                val entity = TodoEntity(title = title, dueAt = dueAt, repeatRule = repeat, notes = notesStr, priority = priority)
                 val id = db.todoDao().insert(entity)
                 if (dueAt > now) {
                     ReminderScheduler.scheduleTodo(appCtx, id, dueAt)
                 }
                 DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.TODOS_ADD, true, "id=$id")
-                sendEnvelope(ws, LinkMsgType.TODOS_ADD_RES, env.reqId, TodoMutateRes(ok = true, item = TodoItemDto(id = id, title = title, dueAt = dueAt, isDone = false, repeatRule = repeat)))
+                sendEnvelope(
+                    ws,
+                    LinkMsgType.TODOS_ADD_RES,
+                    env.reqId,
+                    TodoMutateRes(
+                        ok = true,
+                        item = TodoItemDto(
+                            id = id,
+                            title = title,
+                            dueAt = dueAt,
+                            isDone = false,
+                            repeatRule = repeat,
+                            priority = priority,
+                            notes = notesStr,
+                            createdAt = entity.createdAt
+                        )
+                    )
+                )
             }
 
             LinkMsgType.TODOS_EDIT -> {
@@ -1181,14 +1322,33 @@ object DesktopLinkClient {
                 val title = req.title.trim().ifBlank { existing.title }
                 val dueAt = if (req.dueAt > 0L) req.dueAt else existing.dueAt
                 val repeat = req.repeatRule.takeIf { it == TodoEntity.REPEAT_DAILY || it == TodoEntity.REPEAT_WEEKLY || it.isEmpty() } ?: existing.repeatRule
-                val updated = existing.copy(title = title, dueAt = dueAt, repeatRule = repeat, notes = req.notes.trim())
+                val priority = req.priority.coerceIn(TodoEntity.PRIORITY_LOW, TodoEntity.PRIORITY_HIGH)
+                val updated = existing.copy(title = title, dueAt = dueAt, repeatRule = repeat, notes = req.notes.trim(), priority = priority)
                 db.todoDao().update(updated)
                 ReminderScheduler.cancelTodo(appCtx, updated.id)
                 if (!updated.isDone && updated.dueAt > System.currentTimeMillis()) {
                     ReminderScheduler.scheduleTodo(appCtx, updated.id, updated.dueAt)
                 }
                 DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.TODOS_EDIT, true, "id=${updated.id}")
-                sendEnvelope(ws, LinkMsgType.TODOS_EDIT_RES, env.reqId, TodoMutateRes(ok = true, item = TodoItemDto(id = updated.id, title = updated.title, dueAt = updated.dueAt, isDone = updated.isDone, repeatRule = updated.repeatRule)))
+                sendEnvelope(
+                    ws,
+                    LinkMsgType.TODOS_EDIT_RES,
+                    env.reqId,
+                    TodoMutateRes(
+                        ok = true,
+                        item = TodoItemDto(
+                            id = updated.id,
+                            title = updated.title,
+                            dueAt = updated.dueAt,
+                            isDone = updated.isDone,
+                            repeatRule = updated.repeatRule,
+                            priority = updated.priority,
+                            notes = updated.notes,
+                            createdAt = updated.createdAt,
+                            completedAt = updated.completedAt ?: 0L
+                        )
+                    )
+                )
             }
 
             LinkMsgType.TODOS_DELETE -> {
@@ -1215,7 +1375,8 @@ object DesktopLinkClient {
                         source = n.source,
                         relatedMessageId = n.relatedMessageId ?: 0L,
                         relatedAppLabel = n.relatedAppLabel.orEmpty(),
-                        updatedAt = n.updatedAt
+                        updatedAt = n.updatedAt,
+                        colorHex = n.colorHex.orEmpty()
                     )
                 }
                 DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTES_LIST, true, "count=${items.size}")
@@ -1250,15 +1411,19 @@ object DesktopLinkClient {
                                 source = existing.source,
                                 relatedMessageId = existing.relatedMessageId ?: 0L,
                                 relatedAppLabel = existing.relatedAppLabel.orEmpty(),
-                                updatedAt = existing.updatedAt
+                                updatedAt = existing.updatedAt,
+                                colorHex = existing.colorHex.orEmpty()
                             )
                         )
                     )
                     return
                 }
                 val now = System.currentTimeMillis()
+                val colorHex = req.colorHex.trim().takeIf { it.matches(Regex("^#[0-9A-Fa-f]{6}$")) }
                 val note = NoteEntity(
                     content = content,
+                    colorHex = colorHex,
+                    pinned = req.pinned,
                     source = NoteEntity.SOURCE_MANUAL,
                     relatedMessageId = relatedId,
                     relatedAppLabel = relatedMsg?.appLabel?.ifBlank { relatedMsg.packageName },
@@ -1280,7 +1445,89 @@ object DesktopLinkClient {
                             source = note.source,
                             relatedMessageId = note.relatedMessageId ?: 0L,
                             relatedAppLabel = note.relatedAppLabel.orEmpty(),
-                            updatedAt = note.updatedAt
+                            updatedAt = note.updatedAt,
+                            colorHex = note.colorHex.orEmpty()
+                        )
+                    )
+                )
+            }
+
+            LinkMsgType.NOTE_EDIT -> {
+                val req = runCatching { gson.fromJson(env.payloadJson, NoteEditReq::class.java) }.getOrNull()
+                val existing = if (req != null && req.id > 0L) db.noteDao().all().firstOrNull { it.id == req.id } else null
+                if (req == null || existing == null) {
+                    DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTE_EDIT, false, "not_found")
+                    sendEnvelope(ws, LinkMsgType.NOTE_EDIT_RES, env.reqId, NoteMutateRes(ok = false, errorMessage = "Note not found"))
+                    return
+                }
+                val newContent = req.content.trim().ifBlank { existing.content }
+                val newColor = req.colorHex.trim().takeIf { it.matches(Regex("^#[0-9A-Fa-f]{6}$")) }
+                val updated = existing.copy(
+                    content = newContent,
+                    pinned = req.pinned,
+                    colorHex = newColor,
+                    updatedAt = System.currentTimeMillis()
+                )
+                db.noteDao().update(updated)
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTE_EDIT, true, "id=${updated.id}")
+                sendEnvelope(
+                    ws,
+                    LinkMsgType.NOTE_EDIT_RES,
+                    env.reqId,
+                    NoteMutateRes(
+                        ok = true,
+                        item = NoteItemDto(
+                            id = updated.id,
+                            content = updated.content,
+                            pinned = updated.pinned,
+                            source = updated.source,
+                            relatedMessageId = updated.relatedMessageId ?: 0L,
+                            relatedAppLabel = updated.relatedAppLabel.orEmpty(),
+                            updatedAt = updated.updatedAt,
+                            colorHex = updated.colorHex.orEmpty()
+                        )
+                    )
+                )
+            }
+
+            LinkMsgType.NOTE_DELETE -> {
+                val req = runCatching { gson.fromJson(env.payloadJson, NoteDeleteReq::class.java) }.getOrNull()
+                if (req == null || req.id <= 0L) {
+                    DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTE_DELETE, false, "invalid_id")
+                    sendEnvelope(ws, LinkMsgType.NOTE_DELETE_RES, env.reqId, NoteMutateRes(ok = false, errorMessage = "Invalid note id"))
+                    return
+                }
+                db.noteDao().deleteById(req.id)
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTE_DELETE, true, "id=${req.id}")
+                sendEnvelope(ws, LinkMsgType.NOTE_DELETE_RES, env.reqId, NoteMutateRes(ok = true, deletedId = req.id))
+            }
+
+            LinkMsgType.NOTE_PIN_TOGGLE -> {
+                val req = runCatching { gson.fromJson(env.payloadJson, NotePinToggleReq::class.java) }.getOrNull()
+                val existing = if (req != null && req.id > 0L) db.noteDao().all().firstOrNull { it.id == req.id } else null
+                if (req == null || existing == null) {
+                    DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTE_PIN_TOGGLE, false, "not_found")
+                    sendEnvelope(ws, LinkMsgType.NOTE_PIN_TOGGLE_RES, env.reqId, NoteMutateRes(ok = false, errorMessage = "Note not found"))
+                    return
+                }
+                val updated = existing.copy(pinned = req.pinned, updatedAt = System.currentTimeMillis())
+                db.noteDao().update(updated)
+                DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.NOTE_PIN_TOGGLE, true, "id=${updated.id},pin=${updated.pinned}")
+                sendEnvelope(
+                    ws,
+                    LinkMsgType.NOTE_PIN_TOGGLE_RES,
+                    env.reqId,
+                    NoteMutateRes(
+                        ok = true,
+                        item = NoteItemDto(
+                            id = updated.id,
+                            content = updated.content,
+                            pinned = updated.pinned,
+                            source = updated.source,
+                            relatedMessageId = updated.relatedMessageId ?: 0L,
+                            relatedAppLabel = updated.relatedAppLabel.orEmpty(),
+                            updatedAt = updated.updatedAt,
+                            colorHex = updated.colorHex.orEmpty()
                         )
                     )
                 )
@@ -1354,7 +1601,7 @@ object DesktopLinkClient {
                     sendEnvelope(ws, LinkMsgType.MESSAGES_CONVERSATION_RES, env.reqId, ConversationRes())
                     return
                 }
-                val limit = req.limit.coerceIn(1, 60)
+                val limit = req.limit.coerceIn(1, 100)
                 val offset = req.offset.coerceAtLeast(0)
                 val raw = db.messageDao().byConversationPaged(req.packageName, req.conversationKey, limit, offset)
                 val tagMap = if (raw.isNotEmpty()) {
@@ -1375,7 +1622,9 @@ object DesktopLinkClient {
                         isStarred = m.isStarred,
                         isRead = m.isRead,
                         conversationKey = m.conversationKey,
-                        tagIds = tagMap[m.id].orEmpty()
+                        tagIds = tagMap[m.id].orEmpty(),
+                        appLabel = resolveAppDisplayLabel(appCtx, m.packageName, m.appLabel),
+                        isGroup = m.conversationKey.isNotBlank() && m.conversationKey != m.sender
                     )
                 }
                 DesktopLinkStore.recordAuditLog(appCtx, desktopId, LinkMsgType.MESSAGES_CONVERSATION, true, "count=${items.size}")
@@ -1460,7 +1709,9 @@ object DesktopLinkClient {
                         riskLabel = m.riskLabel,
                         isStarred = m.isStarred,
                         isRead = m.isRead,
-                        conversationKey = m.conversationKey
+                        conversationKey = m.conversationKey,
+                        appLabel = resolveAppDisplayLabel(appCtx, m.packageName, m.appLabel),
+                        isGroup = m.conversationKey.isNotBlank() && m.conversationKey != m.sender
                     )
                 }
                 if (sendEnvelope(ws, LinkMsgType.MESSAGE_NEW, "", MessageNewPush(items = dtos, latestCursor = nextCursor))) {
@@ -1470,7 +1721,28 @@ object DesktopLinkClient {
         }
     }
 
-    // ---- Android NsdManager LAN Discovery for Desktop WSS Servers (#490 E1 serialized resolve queue) ----
+    private val appLabelCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun resolveAppDisplayLabel(appCtx: Context, packageName: String, dbLabel: String): String {
+        val cleanDb = dbLabel.trim()
+        if (cleanDb.isNotEmpty() && cleanDb != packageName) return cleanDb
+        if (packageName.isBlank()) return ""
+        appLabelCache[packageName]?.let { return it }
+        val resolved = runCatching {
+            val pm = appCtx.packageManager
+            val appInfo = pm.getApplicationInfo(packageName, 0)
+            pm.getApplicationLabel(appInfo)?.toString()?.trim().orEmpty()
+        }.getOrDefault("").ifBlank { packageName }
+        if (appLabelCache.size < 256) {
+            appLabelCache[packageName] = resolved
+        }
+        return resolved
+    }
+
+    // ---- Android NsdManager LAN Discovery for Desktop WSS Servers (#490 E1 serialized resolve queue + #500 TTL & NetworkCallback) ----
+
+    private const val MDNS_TTL_MS = 60_000L
+    private const val MDNS_SWEEP_INTERVAL_MS = 15_000L
 
     private val resolveLock = Any()
     private val resolveQueue = ArrayDeque<Pair<NsdServiceInfo, Int>>()
@@ -1478,12 +1750,84 @@ object DesktopLinkClient {
     @Volatile
     private var isResolvingService: Boolean = false
 
+    private var mdnsTtlSweepJob: Job? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private fun pruneExpiredDiscovered(nowMs: Long = System.currentTimeMillis()) {
+        val current = _discoveredDesktops.value
+        val fresh = current.filter { nowMs - it.discoveredAtMs <= MDNS_TTL_MS }
+        if (fresh.size != current.size) {
+            _discoveredDesktops.value = fresh
+        }
+    }
+
+    @Synchronized
+    private fun ensureNetworkCallbackRegistered(appCtx: Context) {
+        if (networkCallback != null) return
+        runCatching {
+            val cm = appCtx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    handleNetworkChanged(appCtx, "AVAILABLE")
+                }
+
+                override fun onLost(network: Network) {
+                    handleNetworkChanged(appCtx, "LOST")
+                }
+            }
+            cm.registerDefaultNetworkCallback(cb)
+            connectivityManager = cm
+            networkCallback = cb
+        }.onFailure { err ->
+            DesktopLinkStore.recordDiagnostic(appCtx, "NET", "CALLBACK_REG_ERR", err.javaClass.simpleName)
+        }
+    }
+
+    @Synchronized
+    private fun unregisterNetworkCallback() {
+        val cm = connectivityManager
+        val cb = networkCallback
+        connectivityManager = null
+        networkCallback = null
+        if (cm != null && cb != null) {
+            runCatching { cm.unregisterNetworkCallback(cb) }
+        }
+    }
+
+    private fun handleNetworkChanged(appCtx: Context, event: String) {
+        DesktopLinkStore.recordDiagnostic(appCtx, "NET", "NETWORK_$event", "Clearing stale mDNS cache")
+        _discoveredDesktops.value = emptyList()
+        synchronized(this) {
+            if (discoveryRequested && !isScreenOff) {
+                pauseDiscoveryForScreenOff()
+                startDiscoveryInternal(appCtx)
+            }
+        }
+    }
+
+    @Synchronized
+    fun rescanNow(ctx: Context) {
+        val appCtx = ctx.applicationContext
+        _discoveredDesktops.value = emptyList()
+        discoveryRequested = true
+        discoveryAppCtx = appCtx
+        ensureScreenReceiverRegistered(appCtx)
+        ensureNetworkCallbackRegistered(appCtx)
+        pauseDiscoveryForScreenOff()
+        if (!isScreenOff) {
+            startDiscoveryInternal(appCtx)
+        }
+    }
+
     @Synchronized
     fun startDiscovery(ctx: Context) {
         val appCtx = ctx.applicationContext
         ensureScreenReceiverRegistered(appCtx)
+        ensureNetworkCallbackRegistered(appCtx)
         discoveryRequested = true
         discoveryAppCtx = appCtx
+        pruneExpiredDiscovered()
         if (isScreenOff) return
         startDiscoveryInternal(appCtx)
     }
@@ -1529,6 +1873,7 @@ object DesktopLinkClient {
                     @Suppress("DEPRECATION")
                     val host = info.host?.hostAddress
                     if (!host.isNullOrBlank()) {
+                        val now = System.currentTimeMillis()
                         val port = info.port.takeIf { it in 1024..65535 } ?: LinkProtocol.DEFAULT_PORT
                         val attrs = info.attributes
                         val fn = attrs["fn"]?.toString(Charsets.UTF_8).orEmpty().ifBlank { info.serviceName }
@@ -1540,10 +1885,11 @@ object DesktopLinkClient {
                             host = host,
                             port = port,
                             fingerprintPrefix = fp,
-                            protocolVersion = ver
+                            protocolVersion = ver,
+                            discoveredAtMs = now
                         )
                         _discoveredDesktops.value = _discoveredDesktops.value
-                            .filterNot { it.serviceName == item.serviceName } + item
+                            .filter { now - it.discoveredAtMs <= MDNS_TTL_MS && it.serviceName != item.serviceName } + item
                     }
                     synchronized(resolveLock) { isResolvingService = false }
                     drainResolveQueue(appCtx, mgr)
@@ -1582,6 +1928,13 @@ object DesktopLinkClient {
             mgr.discoverServices(LinkProtocol.MDNS_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
             nsdManager = mgr
             discoveryListener = listener
+            mdnsTtlSweepJob?.cancel()
+            mdnsTtlSweepJob = scope.launch {
+                while (discoveryListener != null) {
+                    delay(MDNS_SWEEP_INTERVAL_MS)
+                    pruneExpiredDiscovered()
+                }
+            }
         }.onFailure { err ->
             DesktopLinkStore.recordDiagnostic(appCtx, "mDNS", "DISCOVERY_ERR", err.javaClass.simpleName)
         }
@@ -1589,6 +1942,8 @@ object DesktopLinkClient {
 
     @Synchronized
     private fun pauseDiscoveryForScreenOff() {
+        mdnsTtlSweepJob?.cancel()
+        mdnsTtlSweepJob = null
         val mgr = nsdManager
         val listener = discoveryListener
         nsdManager = null
@@ -1609,5 +1964,6 @@ object DesktopLinkClient {
     fun stopDiscovery() {
         discoveryRequested = false
         pauseDiscoveryForScreenOff()
+        unregisterNetworkCallback()
     }
 }

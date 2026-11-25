@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -24,7 +25,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -494,19 +498,99 @@ fun DesktopSettingsCenter(
                         }
                     }
 
-                    // 2. Auto-start + 3. Close Behavior
+                    // 2. Auto-start + 3. Close Behavior (#495 read-back verification & StartupApproved detection)
+                    var autoStartDiag by remember { mutableStateOf<DesktopSettingsStore.AutoStartDiagnostic?>(null) }
+                    LaunchedEffect(subTab) {
+                        if (subTab == SettingsSubTab.SYSTEM && DesktopSettingsStore.isWindowsOs()) {
+                            autoStartDiag = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                DesktopSettingsStore.queryWindowsAutoStartStatus()
+                            }
+                        }
+                    }
                     GlassCard(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(DesktopStrings.sysAutoStartTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary, modifier = Modifier.weight(1f))
                                 Switch(
-                                    checked = settings.autoStart,
+                                    checked = settings.autoStart && autoStartDiag?.status != DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER,
                                     onCheckedChange = { enable ->
-                                        DesktopSettingsStore.applyWindowsAutoStart(enable)
-                                            .onSuccess { onFeedback(DesktopStrings.feedbackAutoStart(enable)) }
-                                            .onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
+                                        scope.launch {
+                                            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                DesktopSettingsStore.applyWindowsAutoStart(enable)
+                                            }
+                                            result.onSuccess { diag ->
+                                                autoStartDiag = diag
+                                                when (diag.status) {
+                                                    DesktopSettingsStore.AutoStartStatus.ENABLED ->
+                                                        onFeedback(DesktopStrings.autoStartVerifiedEnabled)
+                                                    DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER ->
+                                                        onFeedback(DesktopStrings.autoStartDisabledByTaskMgrTitle)
+                                                    else ->
+                                                        onFeedback(DesktopStrings.feedbackAutoStart(enable))
+                                                }
+                                            }.onFailure { err ->
+                                                onFeedback(err.message ?: err.javaClass.simpleName)
+                                            }
+                                        }
                                     }
                                 )
+                            }
+                            when (autoStartDiag?.status) {
+                                DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER -> {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(DesktopPalette.GlassWarning.copy(alpha = 0.14f))
+                                            .border(1.dp, DesktopPalette.GlassWarning.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(DesktopStrings.autoStartDisabledByTaskMgrTitle, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = DesktopPalette.GlassWarning)
+                                        Text(DesktopStrings.autoStartDisabledByTaskMgrDesc, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SpringOutlinedButton(
+                                                onClick = {
+                                                    DesktopSettingsStore.openWindowsStartupSettings()
+                                                        .onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
+                                                },
+                                                animationsEnabled = settings.animationsEnabled
+                                            ) { Text(DesktopStrings.autoStartOpenTaskMgrBtn) }
+                                            TextButton(onClick = {
+                                                scope.launch {
+                                                    autoStartDiag = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                        DesktopSettingsStore.verifyAndRepairAutoStartOnLaunch()
+                                                    }
+                                                }
+                                            }) { Text(DesktopStrings.autoStartRecheckBtn) }
+                                        }
+                                    }
+                                }
+                                DesktopSettingsStore.AutoStartStatus.PATH_MISMATCH -> {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(DesktopPalette.GlassWarning.copy(alpha = 0.14f))
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(DesktopStrings.autoStartPathMismatchDesc, style = MaterialTheme.typography.bodySmall, color = DesktopPalette.GlassWarning, modifier = Modifier.weight(1f))
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                val res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                    DesktopSettingsStore.applyWindowsAutoStart(true)
+                                                }
+                                                res.onSuccess {
+                                                    autoStartDiag = it
+                                                    onFeedback(DesktopStrings.autoStartVerifiedEnabled)
+                                                }.onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
+                                            }
+                                        }) { Text(DesktopStrings.autoStartRepairBtn) }
+                                    }
+                                }
+                                else -> Unit
                             }
                             HorizontalDivider(color = tokens.border)
                             Text(DesktopStrings.sysCloseBehaviorTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
@@ -526,10 +610,122 @@ fun DesktopSettingsCenter(
                         }
                     }
 
-                    // 4. Native Notifications & DND (with Start/End Hour Picker supporting overnight window)
+                    // 4. Notification Center (#497 Banner / Corner Toast / Floating Assistant / Native / DND)
                     GlassCard(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(DesktopStrings.sysNativeNotifTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
+                            Text(DesktopStrings.notifCenterTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
+
+                            // A. Top Banner
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(DesktopStrings.enableBanner, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
+                                Switch(
+                                    checked = settings.bannerEnabled,
+                                    onCheckedChange = { v -> DesktopSettingsStore.update { it.copy(bannerEnabled = v) } }
+                                )
+                            }
+                            if (settings.bannerEnabled) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(DesktopStrings.bannerDurationLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    listOf(3, 5, 8, 0).forEach { sec ->
+                                        FilterChip(
+                                            selected = settings.bannerDurationSec == sec,
+                                            onClick = { DesktopSettingsStore.update { it.copy(bannerDurationSec = sec) } },
+                                            label = { Text(DesktopStrings.durationSecLabel(sec)) }
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(color = tokens.border)
+
+                            // B. Bottom-Right Corner Toast
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(DesktopStrings.enableToast, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
+                                Switch(
+                                    checked = settings.toastEnabled,
+                                    onCheckedChange = { v -> DesktopSettingsStore.update { it.copy(toastEnabled = v) } }
+                                )
+                            }
+                            if (settings.toastEnabled) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(DesktopStrings.toastDurationLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    listOf(3, 5, 8).forEach { sec ->
+                                        FilterChip(
+                                            selected = settings.toastDurationSec == sec,
+                                            onClick = { DesktopSettingsStore.update { it.copy(toastDurationSec = sec) } },
+                                            label = { Text(DesktopStrings.durationSecLabel(sec)) }
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(color = tokens.border)
+
+                            // C. Floating Assistant Orb
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(DesktopStrings.enableFloatingAssistant, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary, modifier = Modifier.weight(1f))
+                                Switch(
+                                    checked = settings.floatingAssistantEnabled,
+                                    onCheckedChange = { v -> DesktopSettingsStore.update { it.copy(floatingAssistantEnabled = v) } }
+                                )
+                            }
+                            if (settings.floatingAssistantEnabled) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(DesktopStrings.floatingOrbSizeLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    listOf(28, 36, 48).forEach { sz ->
+                                        FilterChip(
+                                            selected = settings.floatingOrbSizeDp == sz,
+                                            onClick = { DesktopSettingsStore.update { it.copy(floatingOrbSizeDp = sz) } },
+                                            label = { Text("${sz}px") }
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(DesktopStrings.floatingOrbOpacityLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    listOf(0.45f to "45%", 0.72f to "72%", 0.95f to "95%").forEach { (op, lbl) ->
+                                        FilterChip(
+                                            selected = kotlin.math.abs(settings.floatingOrbOpacity - op) < 0.05f,
+                                            onClick = { DesktopSettingsStore.update { it.copy(floatingOrbOpacity = op) } },
+                                            label = { Text(lbl) }
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(DesktopStrings.floatingBubbleSecLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    listOf(3, 5, 8).forEach { sec ->
+                                        FilterChip(
+                                            selected = settings.floatingBubbleSec == sec,
+                                            onClick = { DesktopSettingsStore.update { it.copy(floatingBubbleSec = sec) } },
+                                            label = { Text(DesktopStrings.durationSecLabel(sec)) }
+                                        )
+                                    }
+                                }
+                                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(DesktopStrings.floatingBubbleContentLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    FloatingBubbleContent.entries.forEach { contentMode ->
+                                        FilterChip(
+                                            selected = settings.floatingBubbleContent == contentMode,
+                                            onClick = { DesktopSettingsStore.update { it.copy(floatingBubbleContent = contentMode) } },
+                                            label = { Text(DesktopStrings.floatingBubbleContentLabel(contentMode)) }
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(DesktopStrings.floatingClickActionLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                    FloatingClickAction.entries.forEach { act ->
+                                        FilterChip(
+                                            selected = settings.floatingClickAction == act,
+                                            onClick = { DesktopSettingsStore.update { it.copy(floatingClickAction = act) } },
+                                            label = { Text(DesktopStrings.floatingClickActionLabel(act)) }
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(color = tokens.border)
+
+                            // Native OS Tray Notifications & DND
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(DesktopStrings.enableNativeNotif, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
                                 Switch(
@@ -947,6 +1143,15 @@ fun DesktopSettingsCenter(
                                 Switch(
                                     checked = settings.highContrastText,
                                     onCheckedChange = { hc -> DesktopSettingsStore.update { it.copy(highContrastText = hc) } }
+                                )
+                            }
+                            HorizontalDivider(color = tokens.border)
+                            // #504 Light Mode Toggle
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(DesktopStrings.custLightThemeTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary, modifier = Modifier.weight(1f))
+                                Switch(
+                                    checked = settings.lightTheme,
+                                    onCheckedChange = { lt -> DesktopSettingsStore.update { it.copy(lightTheme = lt) } }
                                 )
                             }
                             HorizontalDivider(color = tokens.border)

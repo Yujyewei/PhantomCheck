@@ -16,7 +16,9 @@ enum class CloseBehavior { MINIMIZE_TO_TRAY, EXIT_APP }
 enum class AccentPreset(val key: String) { PURPLE("purple"), BLUE("blue"), GREEN("green"), ORANGE("orange"), PINK("pink"), CYAN("cyan") }
 enum class UiDensity(val key: String) { COMPACT("compact"), STANDARD("standard"), COMFORTABLE("comfortable") }
 enum class MessageCardStyle(val key: String) { CARD("card"), COMPACT_LIST("compact_list") }
-enum class MirrorDisplayMode(val key: String) { BANNER("banner"), NATIVE("native"), BOTH("both") }
+enum class MirrorDisplayMode(val key: String) { BANNER("banner"), TOAST("toast"), NATIVE("native"), BOTH("both"), COMBO("combo") }
+enum class FloatingBubbleContent(val key: String) { APP_ONLY("app_only"), SENDER_PREVIEW("sender_preview"), FULL_PREVIEW("full_preview") }
+enum class FloatingClickAction(val key: String) { OPEN_AI("open_ai"), OPEN_MAIN("open_main") }
 enum class BgThemePreset(val key: String) { MIDNIGHT("midnight"), AURORA("aurora"), OBSIDIAN("obsidian"), DEEP_OCEAN("deep_ocean") }
 enum class GlassBlurLevel(val key: String) { LOW("low"), MEDIUM("medium"), HIGH("high") }
 enum class ChatFontSize(val key: String, val multiplier: Float) { SMALL("small", 0.9f), STANDARD("standard", 1.0f), LARGE("large", 1.18f) }
@@ -29,7 +31,7 @@ enum class PageTransitionStyle(val key: String) {
 }
 
 /**
- * #468 / #479 / #488 桌機端設定資料模型（10 系統設定＋16 既有自訂設定＋#488 轉場動畫與深淺自訂＋視窗位置記憶）。
+ * #468 / #479 / #488 / #497 桌機端設定資料模型（10 系統設定＋16 既有自訂設定＋#488 轉場與深淺＋#497 通知中心四合一＋視窗位置記憶）。
  */
 data class DesktopSettings(
     // 10 System settings
@@ -52,7 +54,7 @@ data class DesktopSettings(
     val sidebarWidthDp: Int = 244, // 210 | 244 | 280
     val sidebarCollapsed: Boolean = false,
     val messageCardStyle: MessageCardStyle = MessageCardStyle.CARD,
-    val mirrorMode: MirrorDisplayMode = MirrorDisplayMode.BOTH,
+    val mirrorMode: MirrorDisplayMode = MirrorDisplayMode.COMBO,
     val bgTheme: BgThemePreset = BgThemePreset.MIDNIGHT,
     val customBgImagePath: String = "",
     val animationsEnabled: Boolean = true,
@@ -68,6 +70,25 @@ data class DesktopSettings(
     val surfaceOpacity: Float = 0.74f, // 0.55f..0.96f (default matches existing MEDIUM glass alpha)
     val bgScrimAlpha: Float = 0.56f, // 0.15f..0.85f (controls custom background emergence)
     val highContrastText: Boolean = false,
+    // #497 Notification Center 4-in-1 (banner auto-dismiss, bottom-right toast, floating assistant orb)
+    val bannerEnabled: Boolean = true,
+    val bannerDurationSec: Int = 5, // 3 | 5 | 8 | 0 (never)
+    val toastEnabled: Boolean = true,
+    val toastDurationSec: Int = 5, // 3 | 5 | 8
+    val floatingAssistantEnabled: Boolean = false,
+    val floatingOrbSizeDp: Int = 36, // 28 | 36 | 48
+    val floatingOrbOpacity: Float = 0.72f, // 0.45 | 0.72 | 0.95
+    val floatingBubbleSec: Int = 5, // 3 | 5 | 8
+    val floatingBubbleContent: FloatingBubbleContent = FloatingBubbleContent.SENDER_PREVIEW,
+    val floatingClickAction: FloatingClickAction = FloatingClickAction.OPEN_AI,
+    val floatingOrbX: Int = Int.MIN_VALUE,
+    val floatingOrbY: Int = Int.MIN_VALUE,
+    // #501 Filters & Focus collapsible section persistence
+    val rulesCollapseAllowlist: Boolean = false,
+    val rulesCollapseTags: Boolean = false,
+    val rulesCollapseMuted: Boolean = false,
+    // #504 Light/Dark theme mode toggle
+    val lightTheme: Boolean = false,
     // Window geometry persistence
     val windowX: Int = Int.MIN_VALUE,
     val windowY: Int = Int.MIN_VALUE,
@@ -144,6 +165,22 @@ object DesktopSettingsStore {
             surfaceOpacity = p.getProperty("surfaceOpacity", "0.74").toFloatOrNull()?.coerceIn(0.55f, 0.96f) ?: 0.74f,
             bgScrimAlpha = p.getProperty("bgScrimAlpha", "0.56").toFloatOrNull()?.coerceIn(0.15f, 0.85f) ?: 0.56f,
             highContrastText = p.getProperty("highContrastText", "false").toBoolean(),
+            bannerEnabled = p.getProperty("bannerEnabled", "true").toBoolean(),
+            bannerDurationSec = p.getProperty("bannerDurationSec", "5").toIntOrNull()?.takeIf { it in listOf(0, 3, 5, 8) } ?: 5,
+            toastEnabled = p.getProperty("toastEnabled", "true").toBoolean(),
+            toastDurationSec = p.getProperty("toastDurationSec", "5").toIntOrNull()?.takeIf { it in listOf(3, 5, 8) } ?: 5,
+            floatingAssistantEnabled = p.getProperty("floatingAssistantEnabled", "false").toBoolean(),
+            floatingOrbSizeDp = p.getProperty("floatingOrbSizeDp", "36").toIntOrNull()?.takeIf { it in listOf(28, 36, 48) } ?: 36,
+            floatingOrbOpacity = p.getProperty("floatingOrbOpacity", "0.72").toFloatOrNull()?.coerceIn(0.35f, 1.0f) ?: 0.72f,
+            floatingBubbleSec = p.getProperty("floatingBubbleSec", "5").toIntOrNull()?.takeIf { it in listOf(3, 5, 8) } ?: 5,
+            floatingBubbleContent = FloatingBubbleContent.entries.firstOrNull { it.key == p.getProperty("floatingBubbleContent", "sender_preview") } ?: FloatingBubbleContent.SENDER_PREVIEW,
+            floatingClickAction = FloatingClickAction.entries.firstOrNull { it.key == p.getProperty("floatingClickAction", "open_ai") } ?: FloatingClickAction.OPEN_AI,
+            floatingOrbX = p.getProperty("floatingOrbX", Int.MIN_VALUE.toString()).toIntOrNull() ?: Int.MIN_VALUE,
+            floatingOrbY = p.getProperty("floatingOrbY", Int.MIN_VALUE.toString()).toIntOrNull() ?: Int.MIN_VALUE,
+            rulesCollapseAllowlist = p.getProperty("rulesCollapseAllowlist", "false").toBoolean(),
+            rulesCollapseTags = p.getProperty("rulesCollapseTags", "false").toBoolean(),
+            rulesCollapseMuted = p.getProperty("rulesCollapseMuted", "false").toBoolean(),
+            lightTheme = p.getProperty("lightTheme", "false").toBoolean(),
             windowX = p.getProperty("windowX", Int.MIN_VALUE.toString()).toIntOrNull() ?: Int.MIN_VALUE,
             windowY = p.getProperty("windowY", Int.MIN_VALUE.toString()).toIntOrNull() ?: Int.MIN_VALUE,
             windowWidth = p.getProperty("windowWidth", "1280").toIntOrNull()?.coerceAtLeast(1024) ?: 1280,
@@ -197,6 +234,22 @@ object DesktopSettingsStore {
             p.setProperty("surfaceOpacity", "%.2f".format(java.util.Locale.US, s.surfaceOpacity.coerceIn(0.55f, 0.96f)))
             p.setProperty("bgScrimAlpha", "%.2f".format(java.util.Locale.US, s.bgScrimAlpha.coerceIn(0.15f, 0.85f)))
             p.setProperty("highContrastText", s.highContrastText.toString())
+            p.setProperty("bannerEnabled", s.bannerEnabled.toString())
+            p.setProperty("bannerDurationSec", s.bannerDurationSec.toString())
+            p.setProperty("toastEnabled", s.toastEnabled.toString())
+            p.setProperty("toastDurationSec", s.toastDurationSec.toString())
+            p.setProperty("floatingAssistantEnabled", s.floatingAssistantEnabled.toString())
+            p.setProperty("floatingOrbSizeDp", s.floatingOrbSizeDp.toString())
+            p.setProperty("floatingOrbOpacity", "%.2f".format(java.util.Locale.US, s.floatingOrbOpacity.coerceIn(0.35f, 1.0f)))
+            p.setProperty("floatingBubbleSec", s.floatingBubbleSec.toString())
+            p.setProperty("floatingBubbleContent", s.floatingBubbleContent.key)
+            p.setProperty("floatingClickAction", s.floatingClickAction.key)
+            p.setProperty("floatingOrbX", s.floatingOrbX.toString())
+            p.setProperty("floatingOrbY", s.floatingOrbY.toString())
+            p.setProperty("rulesCollapseAllowlist", s.rulesCollapseAllowlist.toString())
+            p.setProperty("rulesCollapseTags", s.rulesCollapseTags.toString())
+            p.setProperty("rulesCollapseMuted", s.rulesCollapseMuted.toString())
+            p.setProperty("lightTheme", s.lightTheme.toString())
             p.setProperty("windowX", s.windowX.toString())
             p.setProperty("windowY", s.windowY.toString())
             p.setProperty("windowWidth", s.windowWidth.toString())
@@ -216,38 +269,251 @@ object DesktopSettingsStore {
     }
 
     /**
-     * #468 系統設定 2：Windows 開機自動啟動（HKCU\...\Run 機碼，reg.exe 實作，開關可互逆，啟動參數 --minimized 進系統匣）。
+     * #495 Windows 開機自啟動診斷狀態：
+     * - ENABLED：Run 機碼存在、目標 exe 存在、且未被工作管理員（StartupApproved\Run）停用
+     * - DISABLED：Run 機碼未設定
+     * - DISABLED_BY_TASK_MANAGER：Run 機碼存在，但 StartupApproved\Run 旗標被工作管理員設為停用
+     * - PATH_MISMATCH：Run 機碼存在，但指向的 exe 檔案不存在或為錯誤路徑
      */
-    fun applyWindowsAutoStart(enable: Boolean): Result<String> = runCatching {
-        val os = System.getProperty("os.name").orEmpty().lowercase()
-        if (!os.contains("win")) {
-            throw UnsupportedOperationException("Windows HKCU Run auto-start is only supported on Windows")
+    enum class AutoStartStatus {
+        ENABLED,
+        DISABLED,
+        DISABLED_BY_TASK_MANAGER,
+        PATH_MISMATCH,
+        NOT_WINDOWS,
+        ERROR
+    }
+
+    data class AutoStartDiagnostic(
+        val status: AutoStartStatus,
+        val registeredCommand: String = "",
+        val resolvedExe: String = "",
+        val detail: String = ""
+    )
+
+    private const val WIN_STARTUP_APPROVED_KEY =
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run"
+
+    fun isWindowsOs(): Boolean = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+
+    /**
+     * #495 查詢目前 HKCU\...\Run 與 StartupApproved\Run 的真實狀態（讀回驗證）。
+     */
+    fun queryWindowsAutoStartStatus(): AutoStartDiagnostic {
+        if (!isWindowsOs()) return AutoStartDiagnostic(AutoStartStatus.NOT_WINDOWS)
+        val resolvedExe = resolveCurrentWindowsExecutable()
+        val runQuery = runRegCommand(listOf("reg.exe", "query", WIN_RUN_REG_KEY, "/v", WIN_RUN_VALUE_NAME))
+        if (runQuery.first != 0) {
+            return AutoStartDiagnostic(AutoStartStatus.DISABLED, resolvedExe = resolvedExe)
         }
-        val cmd = if (enable) {
-            val exePath = resolveCurrentWindowsExecutable()
-            listOf("reg.exe", "add", WIN_RUN_REG_KEY, "/v", WIN_RUN_VALUE_NAME, "/t", "REG_SZ", "/d", "\"$exePath\" --minimized", "/f")
+        val regValue = parseRegSzValue(runQuery.second, WIN_RUN_VALUE_NAME)
+        if (regValue.isBlank()) {
+            return AutoStartDiagnostic(AutoStartStatus.DISABLED, resolvedExe = resolvedExe)
+        }
+        val registeredExe = extractExePathFromCommand(regValue)
+        if (registeredExe.isBlank() || !File(registeredExe).exists()) {
+            return AutoStartDiagnostic(
+                status = AutoStartStatus.PATH_MISMATCH,
+                registeredCommand = regValue,
+                resolvedExe = resolvedExe,
+                detail = registeredExe
+            )
+        }
+        // Check Windows Task Manager StartupApproved\Run binary flag (02/06 = enabled; 03/odd/other = disabled)
+        val approvedQuery = runRegCommand(listOf("reg.exe", "query", WIN_STARTUP_APPROVED_KEY, "/v", WIN_RUN_VALUE_NAME))
+        if (approvedQuery.first == 0) {
+            val hex = parseRegBinaryHex(approvedQuery.second, WIN_RUN_VALUE_NAME)
+            if (isStartupApprovedDisabled(hex)) {
+                return AutoStartDiagnostic(
+                    status = AutoStartStatus.DISABLED_BY_TASK_MANAGER,
+                    registeredCommand = regValue,
+                    resolvedExe = resolvedExe,
+                    detail = hex.take(8)
+                )
+            }
+        }
+        return AutoStartDiagnostic(
+            status = AutoStartStatus.ENABLED,
+            registeredCommand = regValue,
+            resolvedExe = resolvedExe
+        )
+    }
+
+    /**
+     * #468 / #495 系統設定 2：Windows 開機自動啟動（寫入後 reg query 讀回驗證 + StartupApproved 偵測 + 錯誤誠實回報）。
+     */
+    fun applyWindowsAutoStart(enable: Boolean): Result<AutoStartDiagnostic> = runCatching {
+        if (!isWindowsOs()) {
+            throw UnsupportedOperationException(DesktopStrings.autoStartNotWindows)
+        }
+        val exePath = resolveCurrentWindowsExecutable()
+        if (enable) {
+            if (exePath.isBlank() || (!File(exePath).exists() && !exePath.endsWith(".exe", ignoreCase = true))) {
+                throw IllegalStateException(DesktopStrings.autoStartExeNotFound(exePath))
+            }
+            val cmd = listOf(
+                "reg.exe", "add", WIN_RUN_REG_KEY,
+                "/v", WIN_RUN_VALUE_NAME,
+                "/t", "REG_SZ",
+                "/d", "\"$exePath\" --minimized",
+                "/f"
+            )
+            val (exit, output) = runRegCommand(cmd)
+            if (exit != 0) {
+                DesktopDiagnostics.error("AutoStart", "reg.exe add failed (exit=$exit): $output")
+                throw IllegalStateException(DesktopStrings.autoStartRegFailed(exit, output))
+            }
+            // Read-back verification
+            val verified = queryWindowsAutoStartStatus()
+            when (verified.status) {
+                AutoStartStatus.ENABLED -> {
+                    update { it.copy(autoStart = true) }
+                    DesktopDiagnostics.info("AutoStart", "Windows autoStart enabled & verified: ${verified.registeredCommand}")
+                    verified
+                }
+                AutoStartStatus.DISABLED_BY_TASK_MANAGER -> {
+                    // Honest state: do NOT pretend enabled when Task Manager blocks it
+                    update { it.copy(autoStart = false) }
+                    DesktopDiagnostics.warn("AutoStart", "HKCU Run written but disabled by Windows Task Manager (StartupApproved=${verified.detail})")
+                    verified
+                }
+                AutoStartStatus.PATH_MISMATCH -> {
+                    update { it.copy(autoStart = false) }
+                    DesktopDiagnostics.error("AutoStart", "Read-back exe path does not exist: ${verified.detail}")
+                    throw IllegalStateException(DesktopStrings.autoStartPathInvalid(verified.detail))
+                }
+                else -> {
+                    update { it.copy(autoStart = false) }
+                    DesktopDiagnostics.error("AutoStart", "Read-back verification failed: ${verified.status}")
+                    throw IllegalStateException(DesktopStrings.autoStartVerifyFailed)
+                }
+            }
         } else {
-            listOf("reg.exe", "delete", WIN_RUN_REG_KEY, "/v", WIN_RUN_VALUE_NAME, "/f")
+            val (exit, output) = runRegCommand(listOf("reg.exe", "delete", WIN_RUN_REG_KEY, "/v", WIN_RUN_VALUE_NAME, "/f"))
+            // delete returns non-zero when value doesn't exist — verify via read-back
+            val verified = queryWindowsAutoStartStatus()
+            if (verified.status == AutoStartStatus.ENABLED || verified.status == AutoStartStatus.PATH_MISMATCH) {
+                DesktopDiagnostics.error("AutoStart", "reg.exe delete failed (exit=$exit): $output")
+                throw IllegalStateException(DesktopStrings.autoStartRegFailed(exit, output))
+            }
+            update { it.copy(autoStart = false) }
+            DesktopDiagnostics.info("AutoStart", "Windows autoStart disabled & verified")
+            AutoStartDiagnostic(AutoStartStatus.DISABLED, resolvedExe = exePath)
         }
+    }
+
+    /**
+     * #495 啟動時自動校驗與修復：若 Run 指向舊路徑（例如更新換目錄）自動改寫為正確 exe；若被工作管理員停用則同步誠實狀態。
+     */
+    fun verifyAndRepairAutoStartOnLaunch(): AutoStartDiagnostic {
+        if (!isWindowsOs()) return AutoStartDiagnostic(AutoStartStatus.NOT_WINDOWS)
+        val diag = queryWindowsAutoStartStatus()
+        val cur = _state.value
+        when (diag.status) {
+            AutoStartStatus.PATH_MISMATCH -> {
+                if (cur.autoStart) {
+                    DesktopDiagnostics.warn("AutoStart", "Stale Run path detected (${diag.detail}); repairing to ${diag.resolvedExe}")
+                    return applyWindowsAutoStart(true).getOrDefault(diag)
+                }
+            }
+            AutoStartStatus.DISABLED_BY_TASK_MANAGER -> {
+                if (cur.autoStart) {
+                    update { it.copy(autoStart = false) }
+                    DesktopDiagnostics.warn("AutoStart", "Auto-start is disabled in Windows Task Manager; synced UI state to false")
+                }
+            }
+            AutoStartStatus.ENABLED -> {
+                if (!cur.autoStart) {
+                    update { it.copy(autoStart = true) }
+                }
+            }
+            else -> Unit
+        }
+        return diag
+    }
+
+    /**
+     * #495 引導使用者開啟 Windows「啟動應用程式」設定（備援開啟工作管理員）。
+     */
+    fun openWindowsStartupSettings(): Result<Unit> = runCatching {
+        if (!isWindowsOs()) throw UnsupportedOperationException(DesktopStrings.autoStartNotWindows)
+        val launched = runCatching {
+            ProcessBuilder("cmd.exe", "/c", "start", "", "ms-settings:startupapps").start()
+            true
+        }.getOrDefault(false)
+        if (!launched) {
+            ProcessBuilder("taskmgr.exe").start()
+        }
+    }
+
+    private fun runRegCommand(cmd: List<String>): Pair<Int, String> = runCatching {
         val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
         val output = proc.inputStream.bufferedReader().readText().trim()
         val exit = proc.waitFor()
-        // delete 若機碼本就不存在會回傳非 0，視為成功關閉
-        if (exit != 0 && enable) {
-            DesktopDiagnostics.error("AutoStart", "reg.exe failed (exit=$exit): $output")
-            throw IllegalStateException("reg.exe failed (exit=$exit): $output")
+        exit to output
+    }.getOrElse { err -> -1 to (err.message ?: err.javaClass.simpleName) }
+
+    internal fun parseRegSzValue(output: String, valueName: String): String {
+        val line = output.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith(valueName, ignoreCase = true) && it.contains("REG_SZ", ignoreCase = true) }
+            ?: return ""
+        val idx = line.indexOf("REG_SZ", ignoreCase = true)
+        return if (idx >= 0) line.substring(idx + 6).trim() else ""
+    }
+
+    internal fun parseRegBinaryHex(output: String, valueName: String): String {
+        val line = output.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith(valueName, ignoreCase = true) && it.contains("REG_BINARY", ignoreCase = true) }
+            ?: return ""
+        val idx = line.indexOf("REG_BINARY", ignoreCase = true)
+        return if (idx >= 0) line.substring(idx + 10).trim().replace(" ", "") else ""
+    }
+
+    internal fun isStartupApprovedDisabled(hex: String): Boolean {
+        if (hex.length < 2) return false
+        val firstByte = hex.take(2).toIntOrNull(16) ?: return false
+        // Windows Explorer StartupApproved: 0x02 or 0x06 = enabled; 0x03/0x01/0x07 (odd or other) = disabled
+        return firstByte != 0x02 && firstByte != 0x06
+    }
+
+    internal fun extractExePathFromCommand(cmd: String): String {
+        val trimmed = cmd.trim()
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.startsWith("\"")) {
+            val endQuote = trimmed.indexOf('"', 1)
+            if (endQuote > 1) return trimmed.substring(1, endQuote).trim()
         }
-        update { it.copy(autoStart = enable) }
-        DesktopDiagnostics.info("AutoStart", "Windows autoStart set to $enable")
-        if (enable) "Enabled" else "Disabled"
+        return trimmed.substringBefore(" --").trim()
     }
 
     internal fun resolveCurrentWindowsExecutable(): String {
-        val jpackagePath = System.getProperty("jpackage.app-path").orEmpty().trim()
-        if (jpackagePath.isNotBlank() && File(jpackagePath).exists()) return jpackagePath
+        val candidates = buildList {
+            val jpackagePath = System.getProperty("jpackage.app-path").orEmpty().trim()
+            if (jpackagePath.isNotBlank()) add(jpackagePath)
+            val procCmd = ProcessHandle.current().info().command().orElse("").trim()
+            if (procCmd.isNotBlank() && procCmd.endsWith("PhantomCheckDesktop.exe", ignoreCase = true)) {
+                add(procCmd)
+            }
+            val localAppData = System.getenv("LOCALAPPDATA").orEmpty().trim()
+            if (localAppData.isNotBlank()) {
+                add(File(localAppData, "PhantomCheckDesktop\\PhantomCheckDesktop.exe").absolutePath)
+            }
+            val userDir = System.getProperty("user.dir").orEmpty().trim()
+            if (userDir.isNotBlank()) {
+                add(File(userDir, "PhantomCheckDesktop.exe").absolutePath)
+            }
+        }
+        val validPackaged = candidates.firstOrNull { path ->
+            val f = File(path)
+            f.exists() && f.isFile && !f.name.equals("java.exe", ignoreCase = true) && !f.name.equals("javaw.exe", ignoreCase = true)
+        }
+        if (validPackaged != null) return validPackaged
         val localAppData = System.getenv("LOCALAPPDATA").orEmpty().trim()
-        val defaultExe = File(localAppData, "PhantomCheckDesktop\\PhantomCheckDesktop.exe")
-        if (defaultExe.exists()) return defaultExe.absolutePath
+        if (localAppData.isNotBlank()) {
+            return File(localAppData, "PhantomCheckDesktop\\PhantomCheckDesktop.exe").absolutePath
+        }
         return ProcessHandle.current().info().command().orElse("PhantomCheckDesktop.exe")
     }
 
