@@ -153,7 +153,7 @@ object DesktopStrings {
     val settingsTabSystem get() = t("系統設定 (10)", "System (10)")
     val settingsTabCustom get() = t("介面自訂 (8)", "Customize (8)")
     val sysLangTitle get() = t("1. 界面語言（即時生效）", "1. Interface Language (Instant)")
-    val sysAutoStartTitle get() = t("2. 開機自動啟動（Windows HKCU\\Run，啟動縮至系統匣）", "2. Launch at Startup (starts in system tray)")
+    val sysAutoStartTitle get() = t("2. 開機自動啟動（雙軌：HKCU\\Run＋排程器，啟動縮至系統匣）", "2. Launch at Startup (Dual-track: HKCU\\Run + Task Scheduler, starts in tray)")
     val sysCloseBehaviorTitle get() = t("3. 關閉視窗行為", "3. Window Close Behavior")
     val closeMinimizeTray get() = t("縮到系統匣背景運行（預設）", "Minimize to System Tray (Default)")
     val closeExitApp get() = t("直接結束程式", "Exit Application")
@@ -317,7 +317,7 @@ object DesktopStrings {
     val custGlassBlurTitle get() = t("12. 玻璃模糊通透強度", "12. Glass Blur / Translucency")
     val custChatFontSizeTitle get() = t("13. AI 聊天字級", "13. AI Chat Font Size")
     val custNotifSoundTitle get() = t("14. 新訊息通知音效", "14. Notification Sound")
-    val custAutoConnectTitle get() = t("15. 啟動時自動啟動伺服器接收已配對手機", "15. Auto-start Server for Paired Phone on Launch")
+    val custAutoConnectTitle get() = t("15. 開啟時自動監聽並等待已配對手機連線", "15. Auto-listen for Paired Phone on Launch")
     val custDefaultTabTitle get() = t("16. 啟動預設分頁", "16. Default Startup Tab")
 
     fun densityLabel(d: UiDensity): String = when (d) {
@@ -615,4 +615,61 @@ object DesktopStrings {
     val closeDialogDesc get() = t("關閉對話框", "Close dialog")
     val copyManualPairInfo get() = t("複製手動配對資訊", "Copy Manual Pair Info")
     val manualPairInfoCopied get() = t("已複製手動配對資訊（IP / 埠號 / 配對碼 / 指紋）", "Copied manual pairing info (IP / Port / Code / Fingerprint)")
+
+    // #531 Messages pagination, title fallback, and group-by-app view
+    val unnamedMessage get() = t("未命名訊息", "Unnamed Message")
+    val messagesViewConversation get() = t("對話檢視", "Conversations")
+    val messagesViewByApp get() = t("依 App 分組", "By App")
+    fun syncedMessagesStatus(count: Int, lastSyncTime: String): String =
+        if (lastSyncTime.isBlank()) t("已同步 $count 則", "Synced $count")
+        else t("已同步 $count 則 · 上次同步 $lastSyncTime", "Synced $count · Last sync $lastSyncTime")
+    val loadingMoreMessages get() = t("載入更多歷史訊息中…", "Loading more messages…")
+    val loadMoreFailed get() = t("載入更多失敗（未連線或逾時）", "Failed to load more (disconnected or timed out)")
+    val retryLoadMore get() = t("重試", "Retry")
+    val allMessagesLoaded get() = t("已顯示全部已同步訊息", "All synced messages loaded")
+    fun appGroupConversationsCount(n: Int): String = t("$n 個對話", "$n threads")
+
+    // #528 Floating orb hover action customization
+    val floatingHoverActionLabel get() = t("懸停顯示內容", "Hover Display Content")
+    fun floatingHoverActionName(action: FloatingHoverAction): String = when (action) {
+        FloatingHoverAction.CONNECTION_BATTERY -> t("連線與電量", "Connection & Battery")
+        FloatingHoverAction.LATEST_MESSAGE -> t("最近一則訊息", "Latest Message")
+        FloatingHoverAction.TODAY_STATS -> t("今日統計", "Today's Stats")
+        FloatingHoverAction.LATEST_INTEL_REPORT -> t("最近情報／報告", "Latest Intel / Report")
+        FloatingHoverAction.CLOCK_DATE -> t("時鐘與日期", "Clock & Date")
+        FloatingHoverAction.CUSTOM_TEXT -> t("自訂文字", "Custom Text")
+    }
+    val floatingHoverCustomTextHint get() = t("輸入懸停顯示文字（上限 40 字）…", "Hover text (max 40 chars)…")
+    val floatingHoverNoMessage get() = t("尚無最近訊息", "No recent message")
+    val floatingHoverNoIntel get() = t("尚無主動情報或群組報告", "No recent intel or report")
+    fun floatingHoverStatsLine(today: Int, unread: Int, scam: Int): String =
+        t("今日 $today · 未讀 $unread · 風險 $scam", "Today $today · Unread $unread · Risk $scam")
+
+    // #529 Toast background image UI, scrim, text color, countdown badge, 3..20s slider
+    val toastPickBgImageBtn get() = t("選擇背景圖片", "Choose Background Image")
+    val toastClearBgImageBtn get() = t("清除背景", "Clear Background")
+    val toastBgImageTooLarge get() = t("圖片超過 5 MB 上限，請選擇較小的檔案", "Image exceeds 5 MB limit; please choose a smaller file")
+    val toastBgImageInvalid get() = t("僅支援 PNG / JPG / JPEG / WEBP 格式", "Only PNG / JPG / JPEG / WEBP images are supported")
+    val toastTextColorLabel get() = t("文字顏色（HEX）", "Text Color (HEX)")
+    val toastTextColorHint get() = t("#FFFFFF（留空跟隨主題）", "#FFFFFF (blank = theme default)")
+    val toastScrimLabel get() = t("背景遮罩濃度", "Background Scrim Opacity")
+    val toastShowCountdownLabel get() = t("顯示倒數秒數角標", "Show Countdown Badge")
+    fun toastDurationSliderLabel(sec: Int): String = t("顯示時長：${sec} 秒（3–20 秒）", "Display Duration: ${sec}s (3–20s)")
+
+    // #530 Dual-track auto-start status badges
+    val autoStartTrackRunLabel get() = t("HKCU Run", "HKCU Run")
+    val autoStartTrackTaskLabel get() = t("排程器 OnLogon", "Task Scheduler OnLogon")
+    fun autoStartTrackStatusLabel(st: DesktopSettingsStore.AutoStartStatus): String = when (st) {
+        DesktopSettingsStore.AutoStartStatus.ENABLED -> t("已啟用", "Enabled")
+        DesktopSettingsStore.AutoStartStatus.DISABLED -> t("未啟用", "Disabled")
+        DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER -> t("工作管理員已停用", "Disabled by Task Mgr")
+        DesktopSettingsStore.AutoStartStatus.PATH_MISMATCH -> t("路徑失效", "Path Mismatch")
+        DesktopSettingsStore.AutoStartStatus.NOT_WINDOWS -> t("非 Windows", "Non-Windows")
+        DesktopSettingsStore.AutoStartStatus.ERROR -> t("失敗", "Error")
+    }
+
+    // #532 Proactive Intel v3 desktop mirror & mute writeback
+    val proactiveIntelMirrorTitle get() = t("主動情報推送", "Proactive Intel Alerts")
+    val proactiveIntelMuteBtn get() = t("不再關注", "Mute Topic")
+    val proactiveIntelMutedFeedback get() = t("已回寫手機：不再關注此主題", "Synced to phone: topic muted")
 }

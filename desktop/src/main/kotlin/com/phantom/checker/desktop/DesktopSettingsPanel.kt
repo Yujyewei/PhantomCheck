@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -567,62 +568,93 @@ fun DesktopSettingsCenter(
                                     }
                                 )
                             }
-                            when (autoStartDiag?.status) {
-                                DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER -> {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(DesktopPalette.GlassWarning.copy(alpha = 0.14f))
-                                            .border(1.dp, DesktopPalette.GlassWarning.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-                                            .padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            autoStartDiag?.let { diag ->
+                                if (diag.status != DesktopSettingsStore.AutoStartStatus.NOT_WINDOWS) {
+                                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                    androidx.compose.foundation.layout.FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text(DesktopStrings.autoStartDisabledByTaskMgrTitle, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = DesktopPalette.GlassWarning)
-                                        Text(DesktopStrings.autoStartDisabledByTaskMgrDesc, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            SpringOutlinedButton(
-                                                onClick = {
-                                                    DesktopSettingsStore.openWindowsStartupSettings()
-                                                        .onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
-                                                },
-                                                animationsEnabled = settings.animationsEnabled
-                                            ) { Text(DesktopStrings.autoStartOpenTaskMgrBtn) }
-                                            TextButton(onClick = {
-                                                scope.launch {
-                                                    autoStartDiag = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                        DesktopSettingsStore.verifyAndRepairAutoStartOnLaunch()
-                                                    }
-                                                }
-                                            }) { Text(DesktopStrings.autoStartRecheckBtn) }
+                                        listOf(
+                                            DesktopStrings.autoStartTrackRunLabel to diag.runTrackStatus,
+                                            DesktopStrings.autoStartTrackTaskLabel to diag.taskTrackStatus
+                                        ).forEach { (trackName, trackStatus) ->
+                                            val badgeColor = when (trackStatus) {
+                                                DesktopSettingsStore.AutoStartStatus.ENABLED -> tokens.success
+                                                DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER,
+                                                DesktopSettingsStore.AutoStartStatus.PATH_MISMATCH -> DesktopPalette.GlassWarning
+                                                DesktopSettingsStore.AutoStartStatus.ERROR -> tokens.error
+                                                else -> tokens.textMuted
+                                            }
+                                            Text(
+                                                text = "$trackName: ${DesktopStrings.autoStartTrackStatusLabel(trackStatus)}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = badgeColor,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(badgeColor.copy(alpha = 0.14f))
+                                                    .border(1.dp, badgeColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
                                         }
                                     }
                                 }
-                                DesktopSettingsStore.AutoStartStatus.PATH_MISMATCH -> {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(DesktopPalette.GlassWarning.copy(alpha = 0.14f))
-                                            .padding(10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(DesktopStrings.autoStartPathMismatchDesc, style = MaterialTheme.typography.bodySmall, color = DesktopPalette.GlassWarning, modifier = Modifier.weight(1f))
+                            }
+                            if (autoStartDiag?.status == DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER ||
+                                autoStartDiag?.runTrackStatus == DesktopSettingsStore.AutoStartStatus.DISABLED_BY_TASK_MANAGER
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(DesktopPalette.GlassWarning.copy(alpha = 0.14f))
+                                        .border(1.dp, DesktopPalette.GlassWarning.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(DesktopStrings.autoStartDisabledByTaskMgrTitle, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = DesktopPalette.GlassWarning)
+                                    Text(DesktopStrings.autoStartDisabledByTaskMgrDesc, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        SpringOutlinedButton(
+                                            onClick = {
+                                                DesktopSettingsStore.openWindowsStartupSettings()
+                                                    .onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
+                                            },
+                                            animationsEnabled = settings.animationsEnabled
+                                        ) { Text(DesktopStrings.autoStartOpenTaskMgrBtn) }
                                         TextButton(onClick = {
                                             scope.launch {
-                                                val res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                    DesktopSettingsStore.applyWindowsAutoStart(true)
+                                                autoStartDiag = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                    DesktopSettingsStore.verifyAndRepairAutoStartOnLaunch()
                                                 }
-                                                res.onSuccess {
-                                                    autoStartDiag = it
-                                                    onFeedback(DesktopStrings.autoStartVerifiedEnabled)
-                                                }.onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
                                             }
-                                        }) { Text(DesktopStrings.autoStartRepairBtn) }
+                                        }) { Text(DesktopStrings.autoStartRecheckBtn) }
                                     }
                                 }
-                                else -> Unit
+                            }
+                            if (autoStartDiag?.status == DesktopSettingsStore.AutoStartStatus.PATH_MISMATCH) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(DesktopPalette.GlassWarning.copy(alpha = 0.14f))
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(DesktopStrings.autoStartPathMismatchDesc, style = MaterialTheme.typography.bodySmall, color = DesktopPalette.GlassWarning, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            val res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                DesktopSettingsStore.applyWindowsAutoStart(true)
+                                            }
+                                            res.onSuccess {
+                                                autoStartDiag = it
+                                                onFeedback(DesktopStrings.autoStartVerifiedEnabled)
+                                            }.onFailure { onFeedback(it.message ?: it.javaClass.simpleName) }
+                                        }
+                                    }) { Text(DesktopStrings.autoStartRepairBtn) }
+                                }
                             }
                             HorizontalDivider(color = tokens.border)
                             Text(DesktopStrings.sysCloseBehaviorTitle, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
@@ -679,19 +711,42 @@ fun DesktopSettingsCenter(
                                 )
                             }
                             if (settings.toastEnabled) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(DesktopStrings.toastDurationLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
-                                    listOf(3, 5, 8).forEach { sec ->
-                                        FilterChip(
-                                            selected = settings.toastDurationSec == sec,
-                                            onClick = { DesktopSettingsStore.update { it.copy(toastDurationSec = sec) } },
-                                            label = { Text(DesktopStrings.durationSecLabel(sec)) }
-                                        )
-                                    }
-                                }
+                                // #529 Duration slider 3..20s (backward-compatible with legacy 3|5|8 values)
+                                Text(
+                                    DesktopStrings.toastDurationSliderLabel(settings.toastDurationSec.coerceIn(3, 20)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = tokens.textMuted
+                                )
+                                Slider(
+                                    value = settings.toastDurationSec.coerceIn(3, 20).toFloat(),
+                                    onValueChange = { v ->
+                                        DesktopSettingsStore.update { it.copy(toastDurationSec = v.toInt().coerceIn(3, 20)) }
+                                    },
+                                    valueRange = 3f..20f,
+                                    steps = 16
+                                )
                                 HorizontalDivider(color = tokens.border)
                                 Text(DesktopStrings.toastCustomizeSection, style = MaterialTheme.typography.titleSmall, color = tokens.textPrimary)
-                                // Live preview card reflecting toastWidthDp / toastHeightDp / content toggles
+
+                                // #529 Live preview card reflecting toastWidthDp / toastHeightDp / bg image / scrim / text color / countdown
+                                val previewBgBitmap = remember(settings.toastBgImagePath) {
+                                    val path = settings.toastBgImagePath.trim()
+                                    if (path.isBlank()) null else runCatching {
+                                        val file = java.io.File(path)
+                                        if (file.exists() && file.isFile && file.length() <= 5L * 1024L * 1024L) {
+                                            org.jetbrains.skia.Image.makeFromEncoded(file.readBytes()).toComposeImageBitmap()
+                                        } else null
+                                    }.onFailure { err ->
+                                        DesktopDiagnostics.warn("ToastPreview", "Failed decoding preview bg: ${err.message}")
+                                    }.getOrNull()
+                                }
+                                val previewTextColor = remember(settings.toastTextColorHex, tokens.textPrimary) {
+                                    val hex = settings.toastTextColorHex.trim().removePrefix("#")
+                                    if (hex.length == 6) {
+                                        runCatching { Color(0xFF000000.toInt() or hex.toInt(16)) }.getOrNull() ?: tokens.textPrimary
+                                    } else tokens.textPrimary
+                                }
+                                val previewScrim = settings.toastBgScrimAlpha.coerceIn(0.30f, 0.90f)
                                 Box(
                                     modifier = Modifier
                                         .width((settings.toastWidthDp.coerceIn(280, 480) * 0.72f).dp)
@@ -699,30 +754,171 @@ fun DesktopSettingsCenter(
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(tokens.popupBg)
                                         .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-                                        .padding(10.dp)
                                 ) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    if (previewBgBitmap != null) {
+                                        androidx.compose.foundation.Image(
+                                            bitmap = previewBgBitmap,
+                                            contentDescription = null,
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(if (settings.lightTheme) Color.White.copy(alpha = previewScrim) else Color.Black.copy(alpha = previewScrim))
+                                        )
+                                    }
+                                    Column(
+                                        modifier = Modifier.fillMaxSize().padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
                                         val hdr = buildList {
                                             if (settings.toastShowAppName) add("LINE")
                                             if (settings.toastShowTitle) add("Phantom")
                                         }.joinToString(" · ")
                                         if (hdr.isNotBlank() || settings.toastShowTime) {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text(hdr, style = MaterialTheme.typography.labelMedium, color = tokens.textPrimary, maxLines = 1)
+                                                Text(hdr, style = MaterialTheme.typography.labelMedium, color = previewTextColor, maxLines = 1)
                                                 if (settings.toastShowTime) {
-                                                    Text("12:00", style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                                    Text("12:00", style = MaterialTheme.typography.labelSmall, color = previewTextColor.copy(alpha = 0.75f))
                                                 }
                                             }
                                         }
                                         Text(
                                             text = DesktopStrings.testNotifSent,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = tokens.textSecondary,
+                                            color = previewTextColor.copy(alpha = 0.85f),
                                             maxLines = settings.toastMaxLines.coerceIn(1, 4),
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    if (settings.toastShowCountdown) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(end = 6.dp, bottom = 4.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color.Black.copy(alpha = 0.42f))
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(
+                                                text = "${settings.toastDurationSec.coerceIn(3, 20)}s",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = previewTextColor.copy(alpha = 0.9f)
+                                            )
+                                        }
+                                    }
                                 }
+
+                                // #529 Background image chooser (png/jpg/jpeg/webp, <= 5MB) + Clear
+                                var toastBgError by remember { mutableStateOf<String?>(null) }
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    SpringOutlinedButton(
+                                        onClick = {
+                                            runCatching {
+                                                val chooser = javax.swing.JFileChooser().apply {
+                                                    fileFilter = javax.swing.filechooser.FileNameExtensionFilter(
+                                                        "Images (PNG, JPG, JPEG, WEBP)",
+                                                        "png", "jpg", "jpeg", "webp"
+                                                    )
+                                                    isAcceptAllFileFilterUsed = false
+                                                }
+                                                val result = chooser.showOpenDialog(null)
+                                                if (result == javax.swing.JFileChooser.APPROVE_OPTION) {
+                                                    val f = chooser.selectedFile
+                                                    val ext = f.extension.lowercase()
+                                                    if (ext !in setOf("png", "jpg", "jpeg", "webp")) {
+                                                        toastBgError = DesktopStrings.toastBgImageInvalid
+                                                    } else if (f.length() > 5L * 1024L * 1024L) {
+                                                        toastBgError = DesktopStrings.toastBgImageTooLarge
+                                                    } else {
+                                                        toastBgError = null
+                                                        DesktopSettingsStore.update { it.copy(toastBgImagePath = f.absolutePath) }
+                                                    }
+                                                }
+                                            }.onFailure { err ->
+                                                DesktopDiagnostics.warn("ToastBgPicker", "FileChooser failed: ${err.message}")
+                                                toastBgError = err.message
+                                            }
+                                        },
+                                        animationsEnabled = settings.animationsEnabled
+                                    ) { Text(DesktopStrings.toastPickBgImageBtn) }
+                                    if (settings.toastBgImagePath.isNotBlank()) {
+                                        SpringOutlinedButton(
+                                            onClick = {
+                                                toastBgError = null
+                                                DesktopSettingsStore.update { it.copy(toastBgImagePath = "") }
+                                            },
+                                            animationsEnabled = settings.animationsEnabled
+                                        ) { Text(DesktopStrings.toastClearBgImageBtn) }
+                                    }
+                                }
+                                if (settings.toastBgImagePath.isNotBlank()) {
+                                    Text(
+                                        text = java.io.File(settings.toastBgImagePath).name,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = tokens.textMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                toastBgError?.let { errMsg ->
+                                    Text(errMsg, style = MaterialTheme.typography.labelSmall, color = tokens.error)
+                                }
+
+                                // #529 Scrim opacity slider (0.30..0.90)
+                                Text(
+                                    "${DesktopStrings.toastScrimLabel}: ${(settings.toastBgScrimAlpha.coerceIn(0.30f, 0.90f) * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = tokens.textMuted
+                                )
+                                Slider(
+                                    value = settings.toastBgScrimAlpha.coerceIn(0.30f, 0.90f),
+                                    onValueChange = { v ->
+                                        DesktopSettingsStore.update { it.copy(toastBgScrimAlpha = v.coerceIn(0.30f, 0.90f)) }
+                                    },
+                                    valueRange = 0.30f..0.90f
+                                )
+
+                                // #529 Text color HEX input + 6 preset swatches
+                                Text(DesktopStrings.toastTextColorLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    OutlinedTextField(
+                                        value = settings.toastTextColorHex,
+                                        onValueChange = { raw ->
+                                            DesktopSettingsStore.update { it.copy(toastTextColorHex = raw.trim().take(7)) }
+                                        },
+                                        placeholder = { Text(DesktopStrings.toastTextColorHint, style = MaterialTheme.typography.labelSmall) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    listOf("#FFFFFF", "#0F172A", "#38BDF8", "#FACC15", "#4ADE80", "#F472B6").forEach { hex ->
+                                        val swatchColor = DesktopAppLabels.parseHexColorOrNull(hex) ?: Color.White
+                                        val selected = settings.toastTextColorHex.equals(hex, ignoreCase = true)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(swatchColor)
+                                                .border(
+                                                    width = if (selected) 2.5.dp else 1.dp,
+                                                    color = if (selected) accentColor else tokens.border,
+                                                    shape = CircleShape
+                                                )
+                                                .clickable {
+                                                    DesktopSettingsStore.update { it.copy(toastTextColorHex = hex) }
+                                                }
+                                        )
+                                    }
+                                }
+
                                 Text("${DesktopStrings.toastSizeLabel}: ${settings.toastWidthDp} × ${settings.toastHeightDp}", style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                                     Slider(
@@ -738,7 +934,11 @@ fun DesktopSettingsCenter(
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                androidx.compose.foundation.layout.FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
                                     FilterChip(
                                         selected = settings.toastShowAppName,
                                         onClick = { DesktopSettingsStore.update { it.copy(toastShowAppName = !it.toastShowAppName) } },
@@ -753,6 +953,11 @@ fun DesktopSettingsCenter(
                                         selected = settings.toastShowTime,
                                         onClick = { DesktopSettingsStore.update { it.copy(toastShowTime = !it.toastShowTime) } },
                                         label = { Text(DesktopStrings.toastShowTimeLabel) }
+                                    )
+                                    FilterChip(
+                                        selected = settings.toastShowCountdown,
+                                        onClick = { DesktopSettingsStore.update { it.copy(toastShowCountdown = !it.toastShowCountdown) } },
+                                        label = { Text(DesktopStrings.toastShowCountdownLabel) }
                                     )
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -893,6 +1098,32 @@ fun DesktopSettingsCenter(
                                             label = { Text(DesktopStrings.floatingClickActionLabel(act)) }
                                         )
                                     }
+                                }
+                                // #528 Floating Orb Hover Action (6 options)
+                                Text(DesktopStrings.floatingHoverActionLabel, style = MaterialTheme.typography.labelSmall, color = tokens.textMuted)
+                                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                androidx.compose.foundation.layout.FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    FloatingHoverAction.entries.forEach { hoverAct ->
+                                        FilterChip(
+                                            selected = settings.floatingHoverAction == hoverAct,
+                                            onClick = { DesktopSettingsStore.update { it.copy(floatingHoverAction = hoverAct) } },
+                                            label = { Text(DesktopStrings.floatingHoverActionName(hoverAct)) }
+                                        )
+                                    }
+                                }
+                                if (settings.floatingHoverAction == FloatingHoverAction.CUSTOM_TEXT) {
+                                    OutlinedTextField(
+                                        value = settings.floatingHoverCustomText,
+                                        onValueChange = { raw ->
+                                            DesktopSettingsStore.update { it.copy(floatingHoverCustomText = raw.take(40)) }
+                                        },
+                                        placeholder = { Text(DesktopStrings.floatingHoverCustomTextHint, style = MaterialTheme.typography.labelSmall) },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                                 // #515 Fullscreen Auto-Hide Mode
                                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
