@@ -48,19 +48,15 @@ import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.CertificateException
-import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLException
 import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 enum class PhoneLinkConnState {
     DISCONNECTED,
@@ -280,12 +276,13 @@ object DesktopLinkClient {
         host: String,
         port: Int,
         code: String,
-        expectedFingerprint: String = "",
+        expectedFingerprint: String,
         desktopName: String = ""
     ) {
         val appCtx = ctx.applicationContext
         val cleanHost = host.trim().removePrefix("wss://").removePrefix("ws://").substringBefore("/").substringBefore(":")
         val cleanPort = port.coerceIn(1024, 65535)
+        val cleanFingerprint = expectedFingerprint.trim().lowercase()
         if (cleanHost.isBlank()) {
             _status.update {
                 it.copy(
@@ -296,11 +293,21 @@ object DesktopLinkClient {
             }
             return
         }
+        if (!isValidDesktopFingerprint(cleanFingerprint)) {
+            _status.update {
+                it.copy(
+                    connState = PhoneLinkConnState.DISCONNECTED,
+                    lastErrorCode = LinkErrorCode.FINGERPRINT_MISMATCH,
+                    lastErrorDetail = "A full 64-character SHA-256 certificate fingerprint is required"
+                )
+            }
+            return
+        }
         DesktopLinkStore.setLinkEnabled(appCtx, true)
         val target = ConnectTarget(
             host = cleanHost,
             port = cleanPort,
-            expectedFingerprint = expectedFingerprint.trim().lowercase(),
+            expectedFingerprint = cleanFingerprint,
             desktopId = null,
             desktopName = desktopName.ifBlank { cleanHost },
             hmacSecret = null,
@@ -595,17 +602,8 @@ object DesktopLinkClient {
         }
         DesktopLinkStore.recordDiagnostic(appCtx, "TCP", "CONNECTING", "${target.host}:${target.port}")
 
-        val observedCertFp = AtomicReference("")
-        val trustManager = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                val cert = chain?.firstOrNull()
-                    ?: throw CertificateException("Server presented empty certificate chain")
-                val digest = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
-                observedCertFp.set(digest.joinToString("") { "%02x".format(it) })
-            }
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        }
+        val trustManager = DesktopCertificateTrustManager(target.expectedFingerprint)
+        val observedCertFp = trustManager.observedFingerprint
 
         val client = runCatching {
             val sslCtx = SSLContext.getInstance("TLS")
@@ -709,13 +707,8 @@ object DesktopLinkClient {
                                 }
 
                                 val expected = target.expectedFingerprint.trim().lowercase()
-                                val isPairedConnection = target.pairCode == null
-                                // 已配對連線強制完整 64 字元 SHA-256 比對（移除 8 字元前綴匹配 MITM 風險）
-                                val fpMatches = if (isPairedConnection) {
-                                    expected.length == 64 && actualFp == expected
-                                } else {
-                                    expected.isBlank() || (expected.length == 64 && actualFp == expected)
-                                }
+                                // Require a full SHA-256 pin before either pairing or authenticating.
+                                val fpMatches = expected.length == 64 && actualFp == expected
                                 if (!fpMatches) {
                                     DesktopLinkStore.recordDiagnostic(
                                         appCtx,
@@ -975,7 +968,11 @@ object DesktopLinkClient {
                 messagePushJob = null
                 isSubscribedToMessages = false
                 stopBatteryStatusMonitor()
-                val (stage, code) = classifyThrowable(t)
+                val (stage, code) = if (trustManager.fingerprintMismatch.get()) {
+                    "TLS" to LinkErrorCode.FINGERPRINT_MISMATCH
+                } else {
+                    classifyThrowable(t)
+                }
                 val diagCode = if (t is ConnectException || t.cause is ConnectException) "REFUSED" else code
                 val detail = t.message ?: t.javaClass.simpleName
                 if (code == LinkErrorCode.TIMEOUT) {
@@ -983,6 +980,10 @@ object DesktopLinkClient {
                     lastTimeoutAtMs = System.currentTimeMillis()
                 }
                 DesktopLinkStore.recordDiagnostic(appCtx, stage, diagCode, detail)
+                if (code == LinkErrorCode.FINGERPRINT_MISMATCH) {
+                    DesktopLinkStore.recordUnknownAttempt(appCtx, target.host, "fingerprint_mismatch")
+                    shouldKeepConnected = false
+                }
 
                 // Do not auto-retry pairing failures or TLS/fingerprint failures
                 val nextTarget = activeTarget
