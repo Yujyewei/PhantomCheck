@@ -59,6 +59,7 @@ import androidx.core.content.ContextCompat
 import com.phantom.checker.R
 import com.phantom.checker.service.DesktopLinkClient
 import com.phantom.checker.service.PhoneLinkConnState
+import com.phantom.checker.service.isValidDesktopFingerprint
 import com.phantom.checker.shared.LinkErrorCode
 import com.phantom.checker.shared.LinkProtocol
 import com.phantom.checker.shared.QrPairingPayloadV2
@@ -726,7 +727,9 @@ fun LinkHubContent(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Button(
-                                enabled = manualHostPort.isNotBlank() && manualCode.length == 6,
+                                enabled = manualHostPort.isNotBlank() &&
+                                    manualCode.length == 6 &&
+                                    isValidDesktopFingerprint(manualFp),
                                 onClick = {
                                     val clean = manualHostPort.trim().removePrefix("wss://").removePrefix("ws://").substringBefore("/")
                                     val host = clean.substringBefore(":").trim()

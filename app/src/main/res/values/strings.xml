@@ -2988,14 +2988,14 @@
     <string name="link_hub_manual_pair_title">Manual Pairing (Fallback)</string>
     <string name="link_hub_manual_host_port_label">Desktop IP:Port (e.g. 192.168.1.50:49515)</string>
     <string name="link_hub_manual_code_label">6-digit Pairing Code (shown on Desktop)</string>
-    <string name="link_hub_manual_fp_label">Cert Fingerprint (optional, 8+ hex chars)</string>
+    <string name="link_hub_manual_fp_label">Cert Fingerprint (required, 64 hex characters)</string>
     <string name="link_hub_pair_connect_btn">Pair &amp; Connect</string>
     <string name="link_hub_diag_title">Connection Diagnostics (last 60)</string>
     <string name="link_hub_diag_empty">No connection diagnostics recorded yet</string>
     <string name="link_hub_err_timeout">Connection timed out (TCP silent drop): Very likely blocked by Windows Firewall (especially on Mobile Hotspot / Public network 192.168.137.x).\nSteps:\n1. Open PhantomCheck Desktop → Settings → Connection → click \"One-Click Allow Firewall\"\n2. Ensure both devices are on the same LAN without AP client isolation</string>
     <string name="link_hub_err_unreachable">Cannot reach desktop (TCP refused or unreachable). Verify the Desktop server is running, check IP:Port, and confirm Windows Firewall inbound rules.</string>
     <string name="link_hub_err_tls">TLS handshake failed. Please verify the desktop server is running and retry.</string>
-    <string name="link_hub_err_fp_mismatch">Certificate fingerprint mismatch! Connection blocked for your security — please re-pair with the desktop.</string>
+    <string name="link_hub_err_fp_mismatch">A full 64-character SHA-256 certificate fingerprint is required and must match the desktop.</string>
     <string name="link_hub_err_version_mismatch">Protocol version mismatch. Please update both Android and Desktop apps and pair again.</string>
     <string name="link_hub_err_code_expired">Pairing code expired (3 min TTL). Regenerate a new code on Desktop.</string>
     <string name="link_hub_err_code_invalid">Invalid 6-digit pairing code. Please check the code shown on Desktop.</string>

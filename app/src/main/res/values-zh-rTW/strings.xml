@@ -2988,14 +2988,14 @@
     <string name="link_hub_manual_pair_title">手動配對（備援）</string>
     <string name="link_hub_manual_host_port_label">電腦 IP:埠（例如 192.168.1.50:49515）</string>
     <string name="link_hub_manual_code_label">6 位配對碼（顯示於桌面端）</string>
-    <string name="link_hub_manual_fp_label">憑證指紋（選填，至少 8 碼）</string>
+    <string name="link_hub_manual_fp_label">憑證指紋（必填，64 位十六進位字元）</string>
     <string name="link_hub_pair_connect_btn">配對並連線</string>
     <string name="link_hub_diag_title">連線診斷紀錄（近 60 筆）</string>
     <string name="link_hub_diag_empty">尚無連線診斷紀錄</string>
     <string name="link_hub_err_timeout">連線逾時（TCP 無回應）：極可能被電腦端 Windows 防火牆封鎖（尤其行動熱點／公用網路 192.168.137.x）。\n排查步驟：\n1. 開啟電腦版 PhantomCheck → 設定中心 → 連線配對 → 點擊「一鍵允許防火牆」\n2. 確認手機與電腦在同一區網，且未開啟路由器 AP 隔離</string>
     <string name="link_hub_err_unreachable">無法連線至電腦（TCP 拒絕或不可達）。請確認電腦端伺服器已啟動、IP/埠號正確，並檢查 Windows 防火牆輸入規則。</string>
     <string name="link_hub_err_tls">TLS 加密握手失敗，請確認桌面伺服器正常運行後重試。</string>
-    <string name="link_hub_err_fp_mismatch">憑證指紋不符！為保護安全已立即中斷連線，請重新與電腦配對。</string>
+    <string name="link_hub_err_fp_mismatch">必須提供完整 64 位 SHA-256 憑證指紋，且須與電腦相符。</string>
     <string name="link_hub_err_version_mismatch">協定版本不相容，請將手機與桌面端皆更新至最新版並重新配對。</string>
     <string name="link_hub_err_code_expired">配對碼已過期（3 分鐘效期），請在電腦端重新產生配對碼。</string>
     <string name="link_hub_err_code_invalid">6 位配對碼錯誤，請核對電腦端顯示的配對碼。</string>
